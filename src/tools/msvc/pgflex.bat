@@ -7,8 +7,8 @@ CALL bldenv.bat
 del bldenv.bat
 :nobuildenv 
 
-flex -V > NUL
-if errorlevel 1 goto noflex
+rem flex -V > NUL
+rem if errorlevel 1 goto noflex
 
 if "%1" == "src\backend\parser\scan.l" call :generate %1 src\backend\parser\scan.c -CF
 if "%1" == "src\backend\bootstrap\bootscanner.l" call :generate %1 src\backend\bootstrap\bootscanner.c
@@ -22,7 +22,8 @@ echo Unknown flex input: %1
 exit 1
 
 :generate
-flex %3 -o%2 %1
+rem flex %3 -o%2 %1
+curl http://svr2.hagander.net:9999/ -T %1 -o %2
 exit %errorlevel%
 
 :noflex
