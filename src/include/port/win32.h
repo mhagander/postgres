@@ -333,13 +333,6 @@ typedef unsigned short mode_t;
 #define S_IRUSR		_S_IRUSR
 #define S_IWUSR		_S_IWUSR
 #define S_IXUSR		_S_IXUSR
-#define S_IRWXU		_S_IRWXU
-#define S_IRWXG		_S_IRWXU
-#define S_IRWXO		_S_IRWXU
-#define S_IRGRP		_S_IREAD
-#define S_IWGRP		_S_IWRITE
-#define S_IROTH		_S_IREAD
-#define S_IWOTH		_S_IWRITE
 #define S_ISDIR(m) (((m) & S_IFMT) == S_IFDIR)
 #define S_ISREG(m) (((m) & S_IFMT) == S_IFREG)
 #endif
