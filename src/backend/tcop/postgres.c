@@ -78,8 +78,7 @@
 extern char *optarg;
 extern int	optind;
 
-/* If not HAVE_GETOPT, we are using src/port/getopt.c, which has optreset */
-#if defined(HAVE_INT_OPTRESET) || !defined(HAVE_GETOPT)
+#ifdef HAVE_INT_OPTRESET
 extern int	optreset;			/* might not be declared by system headers */
 #endif
 
@@ -3443,7 +3442,7 @@ process_postgres_switches(int argc, char *argv[], GucContext ctx)
 	 * or when this function is called a second time with another array.
 	 */
 	optind = 1;
-#if defined(HAVE_INT_OPTRESET) || !defined(HAVE_GETOPT)
+#ifdef HAVE_INT_OPTRESET
 	optreset = 1;				/* some systems need this too */
 #endif
 
@@ -3995,8 +3994,9 @@ PostgresMain(int argc, char *argv[], const char *username)
 				/* Set statement_timestamp() */
 				SetCurrentStatementStartTimestamp();
 
-				/* Tell the collector what we're doing */
+				/* Report query to various monitoring facilities. */
 				pgstat_report_activity("<FASTPATH> function call");
+				set_ps_display("<FASTPATH>", false);
 
 				/* start an xact for this function invocation */
 				start_xact_command();

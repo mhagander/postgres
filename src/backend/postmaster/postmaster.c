@@ -313,8 +313,7 @@ extern char *optarg;
 extern int	optind,
 			opterr;
 
-/* If not HAVE_GETOPT, we are using src/port/getopt.c, which has optreset */
-#if defined(HAVE_INT_OPTRESET) || !defined(HAVE_GETOPT)
+#ifdef HAVE_INT_OPTRESET
 extern int	optreset;			/* might not be declared by system headers */
 #endif
 
@@ -358,7 +357,6 @@ static void signal_child(pid_t pid, int signal);
 static bool SignalSomeChildren(int signal, int targets);
 
 #define SignalChildren(sig)			   SignalSomeChildren(sig, BACKEND_TYPE_ALL)
-#define SignalAutovacWorkers(sig)  SignalSomeChildren(sig, BACKEND_TYPE_AUTOVAC)
 
 /*
  * Possible types of a backend. These are OR-able request flag bits
@@ -752,7 +750,7 @@ PostmasterMain(int argc, char *argv[])
 	 * getopt(3) library so that it will work correctly in subprocesses.
 	 */
 	optind = 1;
-#if defined(HAVE_INT_OPTRESET) || !defined(HAVE_GETOPT)
+#ifdef HAVE_INT_OPTRESET
 	optreset = 1;				/* some systems need this too */
 #endif
 
@@ -2180,7 +2178,7 @@ pmdie(SIGNAL_ARGS)
 				pmState == PM_HOT_STANDBY || pmState == PM_STARTUP)
 			{
 				/* autovacuum workers are told to shut down immediately */
-				SignalAutovacWorkers(SIGTERM);
+				SignalSomeChildren(SIGTERM, BACKEND_TYPE_AUTOVAC);
 				/* and the autovac launcher too */
 				if (AutoVacPID != 0)
 					signal_child(AutoVacPID, SIGTERM);
@@ -2974,7 +2972,7 @@ PostmasterStateMachine(void)
 					pmState = PM_WAIT_DEAD_END;
 
 					/* Kill the walsenders, archiver and stats collector too */
-					SignalSomeChildren(SIGQUIT, BACKEND_TYPE_ALL);
+					SignalChildren(SIGQUIT);
 					if (PgArchPID != 0)
 						signal_child(PgArchPID, SIGQUIT);
 					if (PgStatPID != 0)
