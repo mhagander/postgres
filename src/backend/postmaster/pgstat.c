@@ -3154,7 +3154,6 @@ pgstat_get_db_entry(Oid databaseid, bool create)
 		result->n_tuples_updated = 0;
 		result->n_tuples_deleted = 0;
 		result->last_autovac_time = 0;
-		result->n_conflict_database = 0;
 		result->n_conflict_tablespace = 0;
 		result->n_conflict_lock = 0;
 		result->n_conflict_snapshot = 0;
@@ -4249,7 +4248,11 @@ pgstat_recv_recoveryconflict(PgStat_MsgRecoveryConflict *msg, int len)
 	switch (msg->m_reason)
 	{
 		case PROCSIG_RECOVERY_CONFLICT_DATABASE:
-			dbentry->n_conflict_database++;
+			/*
+			 * Since we drop the information about the database as soon
+			 * as it replicates, there is no point in counting these
+			 * conflicts.
+			 */
 			break;
 		case PROCSIG_RECOVERY_CONFLICT_TABLESPACE:
 			dbentry->n_conflict_tablespace++;
