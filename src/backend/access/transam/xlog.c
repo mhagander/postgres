@@ -8829,6 +8829,29 @@ pg_last_xlog_replay_location(PG_FUNCTION_ARGS)
 }
 
 /*
+ * Report the connection info that the walreceiver is using to talk to the
+ * primary.
+ */
+Datum
+pg_primary_conninfo(PG_FUNCTION_ARGS)
+{
+	/* use volatile pointer to prevent code rearrangement */
+	volatile WalRcvData *walrcv = WalRcv;
+	XLogRecPtr	recptr;
+	char		conninfo[MAXCONNINFO];
+
+	SpinLockAcquire(&walrcv->mutex);
+	recptr = walrcv->receivedUpto;
+	memcpy(conninfo, walrcv->conninfo, MAXCONNINFO);
+	SpinLockRelease(&walrcv->mutex);
+
+	if (recptr.xlogid == 0 && recptr.xrecoff == 0 && conninfo[0] != '\0')
+		PG_RETURN_NULL();
+
+	PG_RETURN_TEXT_P(cstring_to_text(conninfo));
+}
+
+/*
  * Compute an xlog file name and decimal byte offset given a WAL location,
  * such as is returned by pg_stop_backup() or pg_xlog_switch().
  *
