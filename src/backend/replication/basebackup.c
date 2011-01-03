@@ -28,7 +28,8 @@
 
 static void sendDir(char *path);
 static void sendFile(char *path);
-static void _tarWriteHeader(char *filename, char *linktarget, uint64 fileLen);
+static void _tarWriteHeader(char *filename, char *linktarget,
+							struct stat *statbuf);
 static void SendBackupDirectory(char *location);
 
 /*
@@ -167,7 +168,7 @@ sendDir(char *path)
 				elog(WARNING, "Unable to read symbolic link \"%s\": %m",
 					 pathbuf);
 			}
-			_tarWriteHeader(pathbuf, linkpath, 0);
+			_tarWriteHeader(pathbuf, linkpath, &statbuf);
 		}
 		else if (S_ISDIR(statbuf.st_mode))
 		{
@@ -229,7 +230,7 @@ _tarChecksum(char *header)
 	return sum + 256;			/* Assume 8 blanks in checksum field */
 }
 
-/* Given the member, write the TAR header & copy the file */
+/* Given the member, write the TAR header & send the file */
 static void
 sendFile(char *filename)
 {
@@ -238,35 +239,31 @@ sendFile(char *filename)
 	size_t		cnt;
 	pgoff_t		len = 0;
 	size_t		pad;
-	pgoff_t		fileLen;
+	struct stat statbuf;
+
+	if (lstat(filename, &statbuf) != 0)
+		elog(ERROR, "could not stat file \"%s\": %m", filename);
 
 	fp = AllocateFile(filename, "rb");
 	if (fp == NULL)
 		elog(ERROR, "could not open file \"%s\": %m", filename);
 
 	/*
-	 * Find file len & go back to start.
-	 */
-	fseeko(fp, 0, SEEK_END);
-	fileLen = ftello(fp);
-	fseeko(fp, 0, SEEK_SET);
-
-	/*
 	 * Some compilers will throw a warning knowing this test can never be true
 	 * because pgoff_t can't exceed the compared maximum on their platform.
 	 */
-	if (fileLen > MAX_TAR_MEMBER_FILELEN)
+	if (statbuf.st_size > MAX_TAR_MEMBER_FILELEN)
 		elog(ERROR, "archive member too large for tar format");
 
-	_tarWriteHeader(filename, NULL, fileLen);
+	_tarWriteHeader(filename, NULL, &statbuf);
 
-	while ((cnt = fread(buf, 1, Min(sizeof(buf), fileLen - len), fp)) > 0)
+	while ((cnt = fread(buf, 1, Min(sizeof(buf), statbuf.st_size - len), fp)) > 0)
 	{
 		/* Send the chunk as a CopyData message */
 		pq_putmessage('d', buf, cnt);
 		len += cnt;
 
-		if (len >= fileLen)
+		if (len >= statbuf.st_size)
 		{
 			/*
 			 * Reached end of file. The file could be longer, if it was
@@ -278,12 +275,12 @@ sendFile(char *filename)
 	}
 
 	/* If the file was truncated while we were sending it, pad it with zeros */
-	if (len < fileLen)
+	if (len < statbuf.st_size)
 	{
 		MemSet(buf, 0, sizeof(buf));
-		while(len < fileLen)
+		while(len < statbuf.st_size)
 		{
-			cnt = Min(sizeof(buf), fileLen - len);
+			cnt = Min(sizeof(buf), statbuf.st_size - len);
 			pq_putmessage('d', buf, cnt);
 			len += cnt;
 		}
@@ -302,7 +299,7 @@ sendFile(char *filename)
 
 
 static void
-_tarWriteHeader(char *filename, char *linktarget, uint64 fileLen)
+_tarWriteHeader(char *filename, char *linktarget, struct stat *statbuf)
 {
 	char		h[512];
 	int			lastSum = 0;
@@ -332,12 +329,11 @@ _tarWriteHeader(char *filename, char *linktarget, uint64 fileLen)
 	sprintf(&h[116], "002000 ");
 
 	/* File size 12 - 11 digits, 1 space, no NUL */
-	print_val(&h[124], fileLen, 8, 11);
+	print_val(&h[124], (linktarget==NULL)?statbuf->st_size:0, 8, 11);
 	sprintf(&h[135], " ");
 
 	/* Mod Time 12 */
-	/* XXX: do we really want it to be time(NULL)? */
-	sprintf(&h[136], "%011o ", (int) time(NULL));
+	sprintf(&h[136], "%011o ", (int) statbuf->st_mtime);
 
 	/* Checksum 8 */
 	sprintf(&h[148], "%06o ", lastSum);
