@@ -28,7 +28,7 @@
 
 static void sendDir(char *path);
 static void sendFile(char *path);
-static void _tarWriteHeader(char *filename, uint64 fileLen);
+static void _tarWriteHeader(char *filename, char *linktarget, uint64 fileLen);
 static void SendBackupDirectory(char *location);
 
 /*
@@ -76,7 +76,8 @@ SendBaseBackup(void)
 
 		sprintf(fullpath, "pg_tblspc/%s", de->d_name);
 
-		if (readlink(fullpath, linkpath, sizeof(linkpath)) == -1)
+		MemSet(linkpath, 0, sizeof(linkpath));
+		if (readlink(fullpath, linkpath, sizeof(linkpath) - 1) == -1)
 		{
 			ereport(WARNING, (errmsg("unable to read symbolic link %s", fullpath)));
 			continue;
@@ -155,7 +156,20 @@ sendDir(char *path)
 			continue;
 		}
 
-		if (S_ISDIR(statbuf.st_mode))
+		if (S_ISLNK(statbuf.st_mode) && strcmp(path, "./pg_tblspc") == 0)
+		{
+			/* Allow symbolic links in pg_tblspc */
+			char	linkpath[MAXPGPATH];
+
+			MemSet(linkpath, 0, sizeof(linkpath));
+			if (readlink(pathbuf, linkpath, sizeof(linkpath)-1) == -1)
+			{
+				elog(WARNING, "Unable to read symbolic link \"%s\": %m",
+					 pathbuf);
+			}
+			_tarWriteHeader(pathbuf, linkpath, 0);
+		}
+		else if (S_ISDIR(statbuf.st_mode))
 		{
 			/* call ourselves recursively for a directory */
 			sendDir(pathbuf);
@@ -240,7 +254,7 @@ sendFile(char *filename)
 	if (fileLen > MAX_TAR_MEMBER_FILELEN)
 		elog(ERROR, "archive member too large for tar format");
 
-	_tarWriteHeader(filename, fileLen);
+	_tarWriteHeader(filename, NULL, fileLen);
 
 	while ((cnt = fread(buf, 1, Min(sizeof(buf), fileLen - len), fp)) > 0)
 	{
@@ -280,7 +294,7 @@ sendFile(char *filename)
 
 
 static void
-_tarWriteHeader(char *filename, uint64 fileLen)
+_tarWriteHeader(char *filename, char *linktarget, uint64 fileLen)
 {
 	char		h[512];
 	int			lastSum = 0;
@@ -290,6 +304,15 @@ _tarWriteHeader(char *filename, uint64 fileLen)
 
 	/* Name 100 */
 	sprintf(&h[0], "%.99s", filename);
+	if (linktarget != NULL)
+	{
+		/*
+		 * We only support symbolic links to directories, and this is indicated
+		 * in the tar format by adding a slash at the end of the name.
+		 */
+		h[strlen(filename)] = '/';
+		h[strlen(filename)+1] = '\0';
+	}
 
 	/* Mode 8 */
 	sprintf(&h[100], "100600 ");
@@ -311,8 +334,15 @@ _tarWriteHeader(char *filename, uint64 fileLen)
 	/* Checksum 8 */
 	sprintf(&h[148], "%06o ", lastSum);
 
-	/* Type - regular file */
-	sprintf(&h[156], "0");
+	if (linktarget != NULL)
+	{
+		/* Symbolic link */
+		sprintf(&h[156], "2");
+		strcpy(&h[157], linktarget);
+	}
+	else
+		/* Type - regular file */
+		sprintf(&h[156], "0");
 
 	/* Link tag 100 (NULL) */
 
