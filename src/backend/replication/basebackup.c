@@ -15,7 +15,6 @@
 #include <sys/types.h>
 #include <sys/stat.h>
 #include <unistd.h>
-#include <dirent.h>
 #include <time.h>
 
 #include "access/xlog_internal.h" /* for pg_start/stop_backup */
@@ -56,7 +55,7 @@ SendBaseBackup(void)
 	struct dirent *de;
 
 	/* Make sure we can open the directory with tablespaces in it */
-	dir = opendir("pg_tblspc");
+	dir = AllocateDir("pg_tblspc");
 	if (!dir)
 		ereport(ERROR,
 				(errmsg("unable to open directory pg_tblspc: %m")));
@@ -67,7 +66,7 @@ SendBaseBackup(void)
 	SendBackupDirectory(NULL);
 
 	/* Check for tablespaces */
-	while ((de = readdir(dir)) != NULL)
+	while ((de = ReadDir(dir, "pg_tblspc")) != NULL)
 	{
 		char fullpath[MAXPGPATH];
 		char linkpath[MAXPGPATH];
@@ -86,7 +85,7 @@ SendBaseBackup(void)
 		SendBackupDirectory(linkpath);
 	}
 
-	closedir(dir);
+	FreeDir(dir);
 
 	/* XXX: Is there no DirectFunctionCall0? */
 	DirectFunctionCall1(&pg_stop_backup, (Datum) 0);
