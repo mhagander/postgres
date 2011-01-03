@@ -184,8 +184,12 @@ sendDir(char *path)
 	FreeDir(dir);
 }
 
+/*****
+ * Functions for handling tar file format
+ *
+ * Copied from pg_dump, but modified to work with libpq for sending
+ */
 
-/***** Functions for handling tar file format, copied from pg_dump ******/
 
 /*
  * Utility routine to print possibly larger than 32 bit integers in a
@@ -272,6 +276,7 @@ sendFile(char *filename)
 			break;
 		}
 	}
+
 	/* If the file was truncated while we were sending it, pad it with zeros */
 	if (len < fileLen)
 	{
