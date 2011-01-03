@@ -320,13 +320,13 @@ _tarWriteHeader(char *filename, char *linktarget, struct stat *statbuf)
 	}
 
 	/* Mode 8 */
-	sprintf(&h[100], "100600 ");
+	sprintf(&h[100], "%07o ", statbuf->st_mode);
 
 	/* User ID 8 */
-	sprintf(&h[108], "004000 ");
+	sprintf(&h[108], "%07o ", statbuf->st_uid);
 
 	/* Group 8 */
-	sprintf(&h[116], "002000 ");
+	sprintf(&h[117], "%07o ", statbuf->st_gid);
 
 	/* File size 12 - 11 digits, 1 space, no NUL */
 	print_val(&h[124], (linktarget==NULL)?statbuf->st_size:0, 8, 11);
