@@ -10,7 +10,7 @@
  *	  Index cost functions are registered in the pg_am catalog
  *	  in the "amcostestimate" attribute.
  *
- * Portions Copyright (c) 1996-2010, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2011, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  *
@@ -3866,8 +3866,7 @@ convert_timevalue_to_scalar(Datum value, Oid typid)
 			return DatumGetTimestamp(DirectFunctionCall1(abstime_timestamp,
 														 value));
 		case DATEOID:
-			return DatumGetTimestamp(DirectFunctionCall1(date_timestamp,
-														 value));
+			return date2timestamp_no_overflow(DatumGetDateADT(value));
 		case INTERVALOID:
 			{
 				Interval   *interval = DatumGetIntervalP(value);

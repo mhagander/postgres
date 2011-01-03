@@ -6,7 +6,7 @@
  * These routines represent a fairly thin layer on top of SysV shared
  * memory functionality.
  *
- * Portions Copyright (c) 1996-2010, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2011, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * IDENTIFICATION
@@ -198,9 +198,17 @@ InternalIpcMemoryCreate(IpcMemoryKey memKey, Size size)
 	/* Register on-exit routine to detach new segment before deleting */
 	on_shmem_exit(IpcMemoryDetach, PointerGetDatum(memAddress));
 
-	/* Record key and ID in lockfile for data directory. */
-	RecordSharedMemoryInLockFile((unsigned long) memKey,
-								 (unsigned long) shmid);
+	/*
+	 * Append record key and ID in lockfile for data directory. Format
+	 * to try to keep it the same length.
+	 */
+	{
+		char line[32];
+
+		sprintf(line, "%9lu %9lu\n", (unsigned long) memKey,
+									 (unsigned long) shmid);
+		AddToLockFile(LOCK_FILE_LINES, line);
+	}
 
 	return memAddress;
 }

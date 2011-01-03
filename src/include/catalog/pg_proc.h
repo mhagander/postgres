@@ -4,7 +4,7 @@
  *	  definition of the system "procedure" relation (pg_proc)
  *	  along with the relation's initial contents.
  *
- * Portions Copyright (c) 1996-2010, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2011, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * src/include/catalog/pg_proc.h
@@ -689,6 +689,8 @@ DATA(insert OID = 337 (  btrestrpos		   PGNSP PGUID 12 1 0 0 f f f t f v 1 0 227
 DESCR("btree(internal)");
 DATA(insert OID = 338 (  btbuild		   PGNSP PGUID 12 1 0 0 f f f t f v 3 0 2281 "2281 2281 2281" _null_ _null_ _null_ _null_ btbuild _null_ _null_ _null_ ));
 DESCR("btree(internal)");
+DATA(insert OID = 328 (  btbuildempty	   PGNSP PGUID 12 1 0 0 f f f t f v 1 0 2278 "2281" _null_ _null_ _null_ _null_ btbuildempty _null_ _null_ _null_ ));
+DESCR("btree(internal)");
 DATA(insert OID = 332 (  btbulkdelete	   PGNSP PGUID 12 1 0 0 f f f t f v 4 0 2281 "2281 2281 2281 2281" _null_ _null_ _null_ _null_ btbulkdelete _null_ _null_ _null_ ));
 DESCR("btree(internal)");
 DATA(insert OID = 972 (  btvacuumcleanup   PGNSP PGUID 12 1 0 0 f f f t f v 2 0 2281 "2281 2281" _null_ _null_ _null_ _null_ btvacuumcleanup _null_ _null_ _null_ ));
@@ -807,6 +809,8 @@ DESCR("hash(internal)");
 DATA(insert OID = 447 (  hashrestrpos	   PGNSP PGUID 12 1 0 0 f f f t f v 1 0 2278 "2281" _null_ _null_ _null_ _null_ hashrestrpos _null_ _null_ _null_ ));
 DESCR("hash(internal)");
 DATA(insert OID = 448 (  hashbuild		   PGNSP PGUID 12 1 0 0 f f f t f v 3 0 2281 "2281 2281 2281" _null_ _null_ _null_ _null_ hashbuild _null_ _null_ _null_ ));
+DESCR("hash(internal)");
+DATA(insert OID = 327 (  hashbuildempty	   PGNSP PGUID 12 1 0 0 f f f t f v 1 0 2278 "2281" _null_ _null_ _null_ _null_ hashbuildempty _null_ _null_ _null_ ));
 DESCR("hash(internal)");
 DATA(insert OID = 442 (  hashbulkdelete    PGNSP PGUID 12 1 0 0 f f f t f v 4 0 2281 "2281 2281 2281 2281" _null_ _null_ _null_ _null_ hashbulkdelete _null_ _null_ _null_ ));
 DESCR("hash(internal)");
@@ -1103,6 +1107,8 @@ DESCR("gist(internal)");
 DATA(insert OID = 781 (  gistrestrpos	   PGNSP PGUID 12 1 0 0 f f f t f v 1 0 2278 "2281" _null_ _null_ _null_ _null_ gistrestrpos _null_ _null_ _null_ ));
 DESCR("gist(internal)");
 DATA(insert OID = 782 (  gistbuild		   PGNSP PGUID 12 1 0 0 f f f t f v 3 0 2281 "2281 2281 2281" _null_ _null_ _null_ _null_ gistbuild _null_ _null_ _null_ ));
+DESCR("gist(internal)");
+DATA(insert OID = 326 (  gistbuildempty	   PGNSP PGUID 12 1 0 0 f f f t f v 1 0 2278 "2281" _null_ _null_ _null_ _null_ gistbuildempty _null_ _null_ _null_ ));
 DESCR("gist(internal)");
 DATA(insert OID = 776 (  gistbulkdelete    PGNSP PGUID 12 1 0 0 f f f t f v 4 0 2281 "2281 2281 2281 2281" _null_ _null_ _null_ _null_ gistbulkdelete _null_ _null_ _null_ ));
 DESCR("gist(internal)");
@@ -2114,6 +2120,8 @@ DATA(insert OID = 1576 (  setval			PGNSP PGUID 12 1 0 0 f f f t f v 2 0 20 "2205
 DESCR("set sequence value");
 DATA(insert OID = 1765 (  setval			PGNSP PGUID 12 1 0 0 f f f t f v 3 0 20 "2205 20 16" _null_ _null_ _null_ _null_ setval3_oid _null_ _null_ _null_ ));
 DESCR("set sequence value and iscalled status");
+DATA(insert OID = 3078 (  pg_sequence_parameters	PGNSP PGUID 12 1 0 0 f f f t f s 1 0 2249 "26" "{23,20,20,20,20,16}" "{i,o,o,o,o,o}" "{sequence_oid,start_value,minimum_value,maximum_value,increment,cycle_option}" _null_ pg_sequence_parameters _null_ _null_ _null_));
+DESCR("sequence parameters, for use by information schema");
 
 DATA(insert OID = 1579 (  varbit_in			PGNSP PGUID 12 1 0 0 f f f t f i 3 0 1562 "2275 26 23" _null_ _null_ _null_ _null_ varbit_in _null_ _null_ _null_ ));
 DESCR("I/O");
@@ -2396,9 +2404,9 @@ DESCR("less than");
 DATA(insert OID = 1672 (  varbitcmp			PGNSP PGUID 12 1 0 0 f f f t f i 2 0 23 "1562 1562" _null_ _null_ _null_ _null_ bitcmp _null_ _null_ _null_ ));
 DESCR("compare");
 
-DATA(insert OID = 1673 (  bitand			PGNSP PGUID 12 1 0 0 f f f t f i 2 0 1560 "1560 1560" _null_ _null_ _null_ _null_	bitand _null_ _null_ _null_ ));
+DATA(insert OID = 1673 (  bitand			PGNSP PGUID 12 1 0 0 f f f t f i 2 0 1560 "1560 1560" _null_ _null_ _null_ _null_	bit_and _null_ _null_ _null_ ));
 DESCR("bitwise and");
-DATA(insert OID = 1674 (  bitor				PGNSP PGUID 12 1 0 0 f f f t f i 2 0 1560 "1560 1560" _null_ _null_ _null_ _null_	bitor _null_ _null_ _null_ ));
+DATA(insert OID = 1674 (  bitor				PGNSP PGUID 12 1 0 0 f f f t f i 2 0 1560 "1560 1560" _null_ _null_ _null_ _null_	bit_or _null_ _null_ _null_ ));
 DESCR("bitwise or");
 DATA(insert OID = 1675 (  bitxor			PGNSP PGUID 12 1 0 0 f f f t f i 2 0 1560 "1560 1560" _null_ _null_ _null_ _null_	bitxor _null_ _null_ _null_ ));
 DESCR("bitwise exclusive or");
@@ -4364,6 +4372,8 @@ DESCR("gin(internal)");
 DATA(insert OID = 2737 (  ginrestrpos	   PGNSP PGUID 12 1 0 0 f f f t f v 1 0 2278 "2281" _null_ _null_ _null_ _null_ ginrestrpos _null_ _null_ _null_ ));
 DESCR("gin(internal)");
 DATA(insert OID = 2738 (  ginbuild		   PGNSP PGUID 12 1 0 0 f f f t f v 3 0 2281 "2281 2281 2281" _null_ _null_ _null_ _null_ ginbuild _null_ _null_ _null_ ));
+DESCR("gin(internal)");
+DATA(insert OID = 325 (  ginbuildempty	   PGNSP PGUID 12 1 0 0 f f f t f v 1 0 2278 "2281" _null_ _null_ _null_ _null_ ginbuildempty _null_ _null_ _null_ ));
 DESCR("gin(internal)");
 DATA(insert OID = 2739 (  ginbulkdelete    PGNSP PGUID 12 1 0 0 f f f t f v 4 0 2281 "2281 2281 2281 2281" _null_ _null_ _null_ _null_ ginbulkdelete _null_ _null_ _null_ ));
 DESCR("gin(internal)");

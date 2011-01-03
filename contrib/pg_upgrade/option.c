@@ -3,7 +3,7 @@
  *
  *	options functions
  *
- *	Copyright (c) 2010, PostgreSQL Global Development Group
+ *	Copyright (c) 2010-2011, PostgreSQL Global Development Group
  *	contrib/pg_upgrade/option.c
  */
 
@@ -310,7 +310,11 @@ validateDirectoryOption(char **dirpath,
 static void
 get_pkglibdirs(void)
 {
-	old_cluster.libpath = get_pkglibdir(old_cluster.bindir);
+	/*
+	 * we do not need to know the libpath in the old cluster, and might not
+	 * have a working pg_config to ask for it anyway.
+	 */
+	old_cluster.libpath = NULL;
 	new_cluster.libpath = get_pkglibdir(new_cluster.bindir);
 }
 

@@ -2,7 +2,7 @@
  * gin.h
  *	  header file for postgres inverted index access method implementation.
  *
- *	Copyright (c) 2006-2010, PostgreSQL Global Development Group
+ *	Copyright (c) 2006-2011, PostgreSQL Global Development Group
  *
  *	src/include/access/gin.h
  *--------------------------------------------------------------------------
@@ -389,6 +389,7 @@ extern void ginUpdateStats(Relation index, const GinStatsData *stats);
 
 /* gininsert.c */
 extern Datum ginbuild(PG_FUNCTION_ARGS);
+extern Datum ginbuildempty(PG_FUNCTION_ARGS);
 extern Datum gininsert(PG_FUNCTION_ARGS);
 extern void ginEntryInsert(Relation index, GinState *ginstate,
 			   OffsetNumber attnum, Datum value,

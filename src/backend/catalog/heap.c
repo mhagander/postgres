@@ -3,7 +3,7 @@
  * heap.c
  *	  code to create and destroy POSTGRES heap relations
  *
- * Portions Copyright (c) 1996-2010, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2011, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  *
@@ -43,6 +43,7 @@
 #include "catalog/objectaccess.h"
 #include "catalog/pg_attrdef.h"
 #include "catalog/pg_constraint.h"
+#include "catalog/pg_foreign_table.h"
 #include "catalog/pg_inherits.h"
 #include "catalog/pg_namespace.h"
 #include "catalog/pg_statistic.h"
@@ -269,6 +270,7 @@ heap_create(const char *relname,
 	{
 		case RELKIND_VIEW:
 		case RELKIND_COMPOSITE_TYPE:
+		case RELKIND_FOREIGN_TABLE:
 			create_storage = false;
 
 			/*
@@ -987,7 +989,8 @@ heap_create_with_catalog(const char *relname,
 		/* Use binary-upgrade overrides if applicable */
 		if (OidIsValid(binary_upgrade_next_heap_relfilenode) &&
 			(relkind == RELKIND_RELATION || relkind == RELKIND_SEQUENCE ||
-			 relkind == RELKIND_VIEW || relkind == RELKIND_COMPOSITE_TYPE))
+			 relkind == RELKIND_VIEW || relkind == RELKIND_COMPOSITE_TYPE ||
+			 relkind == RELKIND_FOREIGN_TABLE))
 		{
 			relid = binary_upgrade_next_heap_relfilenode;
 			binary_upgrade_next_heap_relfilenode = InvalidOid;
@@ -1012,6 +1015,7 @@ heap_create_with_catalog(const char *relname,
 		{
 			case RELKIND_RELATION:
 			case RELKIND_VIEW:
+			case RELKIND_FOREIGN_TABLE:
 				relacl = get_user_default_acl(ACL_OBJECT_RELATION, ownerid,
 											  relnamespace);
 				break;
@@ -1049,10 +1053,12 @@ heap_create_with_catalog(const char *relname,
 	 * Decide whether to create an array type over the relation's rowtype. We
 	 * do not create any array types for system catalogs (ie, those made
 	 * during initdb).	We create array types for regular relations, views,
-	 * and composite types ... but not, eg, for toast tables or sequences.
+	 * composite types and foreign tables ... but not, eg, for toast tables or
+	 * sequences.
 	 */
 	if (IsUnderPostmaster && (relkind == RELKIND_RELATION ||
 							  relkind == RELKIND_VIEW ||
+							  relkind == RELKIND_FOREIGN_TABLE ||
 							  relkind == RELKIND_COMPOSITE_TYPE))
 		new_array_oid = AssignTypeArrayOid();
 
@@ -1209,6 +1215,25 @@ heap_create_with_catalog(const char *relname,
 	 */
 	if (oncommit != ONCOMMIT_NOOP)
 		register_on_commit_action(relid, oncommit);
+
+	/*
+	 * If this is an unlogged relation, it needs an init fork so that it
+	 * can be correctly reinitialized on restart.  Since we're going to
+	 * do an immediate sync, we ony need to xlog this if archiving or
+	 * streaming is enabled.  And the immediate sync is required, because
+	 * otherwise there's no guarantee that this will hit the disk before
+	 * the next checkpoint moves the redo pointer.
+	 */
+	if (relpersistence == RELPERSISTENCE_UNLOGGED)
+	{
+		Assert(relkind == RELKIND_RELATION || relkind == RELKIND_TOASTVALUE);
+
+		smgrcreate(new_rel_desc->rd_smgr, INIT_FORKNUM, false);
+		if (XLogIsNeeded())
+			log_smgrcreate(&new_rel_desc->rd_smgr->smgr_rnode.node,
+						   INIT_FORKNUM);
+		smgrimmedsync(new_rel_desc->rd_smgr, INIT_FORKNUM);
+	}
 
 	/*
 	 * ok, the relation has been cataloged, so close our relations and return
@@ -1571,10 +1596,31 @@ heap_drop_with_catalog(Oid relid)
 						RelationGetRelationName(rel))));
 
 	/*
+	 * Delete pg_foreign_table tuple first.
+	 */
+	if (rel->rd_rel->relkind == RELKIND_FOREIGN_TABLE)
+	{
+		Relation    rel;
+		HeapTuple   tuple;
+
+		rel = heap_open(ForeignTableRelationId, RowExclusiveLock);
+
+		tuple = SearchSysCache1(FOREIGNTABLEREL, ObjectIdGetDatum(relid));
+		if (!HeapTupleIsValid(tuple))
+			elog(ERROR, "cache lookup failed for foreign table %u", relid);
+
+		simple_heap_delete(rel, &tuple->t_self);
+
+		ReleaseSysCache(tuple);
+		heap_close(rel, RowExclusiveLock);
+	}
+
+	/*
 	 * Schedule unlinking of the relation's physical files at commit.
 	 */
 	if (rel->rd_rel->relkind != RELKIND_VIEW &&
-		rel->rd_rel->relkind != RELKIND_COMPOSITE_TYPE)
+		rel->rd_rel->relkind != RELKIND_COMPOSITE_TYPE &&
+		rel->rd_rel->relkind != RELKIND_FOREIGN_TABLE)
 	{
 		RelationDropStorage(rel);
 	}

@@ -1,7 +1,7 @@
 /*
  * PostgreSQL System Views
  *
- * Copyright (c) 1996-2010, PostgreSQL Global Development Group
+ * Copyright (c) 1996-2011, PostgreSQL Global Development Group
  *
  * src/backend/catalog/system_views.sql
  */
@@ -15,6 +15,7 @@ CREATE VIEW pg_roles AS
         rolcreatedb,
         rolcatupdate,
         rolcanlogin,
+        rolreplication,
         rolconnlimit,
         '********'::text as rolpassword,
         rolvaliduntil,
@@ -30,6 +31,7 @@ CREATE VIEW pg_shadow AS
         rolcreatedb AS usecreatedb,
         rolsuper AS usesuper,
         rolcatupdate AS usecatupd,
+        rolreplication AS userepl,
         rolpassword AS passwd,
         rolvaliduntil::abstime AS valuntil,
         setconfig AS useconfig
@@ -54,6 +56,7 @@ CREATE VIEW pg_user AS
         usecreatedb,
         usesuper,
         usecatupd,
+        userepl,
         '********'::text as passwd,
         valuntil,
         useconfig
@@ -164,8 +167,9 @@ CREATE VIEW pg_seclabels AS
 SELECT
 	l.objoid, l.classoid, l.objsubid,
 	CASE WHEN rel.relkind = 'r' THEN 'table'::text
-	     WHEN rel.relkind = 'v' THEN 'view'::text
-	     WHEN rel.relkind = 'S' THEN 'sequence'::text END AS objtype,
+		 WHEN rel.relkind = 'v' THEN 'view'::text
+		 WHEN rel.relkind = 'S' THEN 'sequence'::text
+		 WHEN rel.relkind = 'f' THEN 'foreign table'::text END AS objtype,
 	rel.relnamespace AS objnamespace,
 	CASE WHEN pg_table_is_visible(rel.oid)
 	     THEN quote_ident(rel.relname)

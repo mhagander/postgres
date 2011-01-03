@@ -4,7 +4,7 @@
  *	  POSTGRES relation descriptor (a/k/a relcache entry) definitions.
  *
  *
- * Portions Copyright (c) 1996-2010, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2011, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * src/include/utils/rel.h
@@ -114,6 +114,7 @@ typedef struct RelationAmInfo
 	FmgrInfo	ammarkpos;
 	FmgrInfo	amrestrpos;
 	FmgrInfo	ambuild;
+	FmgrInfo	ambuildempty;
 	FmgrInfo	ambulkdelete;
 	FmgrInfo	amvacuumcleanup;
 	FmgrInfo	amcostestimate;

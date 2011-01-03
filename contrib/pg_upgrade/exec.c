@@ -3,7 +3,7 @@
  *
  *	execution functions
  *
- *	Copyright (c) 2010, PostgreSQL Global Development Group
+ *	Copyright (c) 2010-2011, PostgreSQL Global Development Group
  *	contrib/pg_upgrade/exec.c
  */
 
@@ -161,9 +161,15 @@ static void
 check_bin_dir(ClusterInfo *cluster)
 {
 	check_exec(cluster->bindir, "postgres");
-	check_exec(cluster->bindir, "psql");
 	check_exec(cluster->bindir, "pg_ctl");
-	check_exec(cluster->bindir, "pg_dumpall");
+	check_exec(cluster->bindir, "pg_resetxlog");
+	if (cluster == &new_cluster)
+	{
+		/* these are only needed in the new cluster */
+		check_exec(cluster->bindir, "pg_config");
+		check_exec(cluster->bindir, "psql");
+		check_exec(cluster->bindir, "pg_dumpall");
+	}
 }
 
 

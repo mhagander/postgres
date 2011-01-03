@@ -8,7 +8,7 @@
  * or call fmgr-callable functions.
  *
  *
- * Portions Copyright (c) 1996-2010, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2011, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * src/include/fmgr.h
@@ -563,7 +563,7 @@ typedef enum FmgrHookEventType
 typedef bool (*needs_fmgr_hook_type)(Oid fn_oid);
 
 typedef void (*fmgr_hook_type)(FmgrHookEventType event,
-							   FmgrInfo *flinfo, Datum *private);
+							   FmgrInfo *flinfo, Datum *arg);
 
 extern PGDLLIMPORT needs_fmgr_hook_type	needs_fmgr_hook;
 extern PGDLLIMPORT fmgr_hook_type		fmgr_hook;

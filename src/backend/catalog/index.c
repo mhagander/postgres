@@ -3,7 +3,7 @@
  * index.c
  *	  code to create and destroy POSTGRES index relations
  *
- * Portions Copyright (c) 1996-2010, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2011, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  *
@@ -1436,6 +1436,17 @@ index_build(Relation heapRelation,
 										 PointerGetDatum(indexRelation),
 										 PointerGetDatum(indexInfo)));
 	Assert(PointerIsValid(stats));
+
+	/*
+	 * If this is an unlogged index, we need to write out an init fork for it.
+	 */
+	if (heapRelation->rd_rel->relpersistence == RELPERSISTENCE_UNLOGGED)
+	{
+		RegProcedure	ambuildempty = indexRelation->rd_am->ambuildempty;
+		RelationOpenSmgr(indexRelation);
+		smgrcreate(indexRelation->rd_smgr, INIT_FORKNUM, false);
+		OidFunctionCall1(ambuildempty, PointerGetDatum(indexRelation));
+	}
 
 	/*
 	 * If it's for an exclusion constraint, make a second pass over the heap

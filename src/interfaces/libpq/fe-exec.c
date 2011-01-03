@@ -3,7 +3,7 @@
  * fe-exec.c
  *	  functions related to sending a query down to the backend
  *
- * Portions Copyright (c) 1996-2010, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2011, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  *
@@ -35,10 +35,10 @@ char	   *const pgresStatus[] = {
 	"PGRES_TUPLES_OK",
 	"PGRES_COPY_OUT",
 	"PGRES_COPY_IN",
-	"PGRES_COPY_BOTH",
 	"PGRES_BAD_RESPONSE",
 	"PGRES_NONFATAL_ERROR",
-	"PGRES_FATAL_ERROR"
+	"PGRES_FATAL_ERROR",
+	"PGRES_COPY_BOTH"
 };
 
 /*

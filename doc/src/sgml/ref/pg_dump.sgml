@@ -408,9 +408,9 @@ PostgreSQL documentation
       <term><option>--table=<replaceable class="parameter">table</replaceable></option></term>
       <listitem>
        <para>
-        Dump only tables (or views or sequences) matching <replaceable
-        class="parameter">table</replaceable>.  Multiple tables can be
-        selected by writing multiple <option>-t</> switches.  Also, the
+        Dump only tables (or views or sequences or foreign tables) matching
+        <replaceable class="parameter">table</replaceable>.  Multiple tables
+        can be selected by writing multiple <option>-t</> switches.  Also, the
         <replaceable class="parameter">table</replaceable> parameter is
         interpreted as a pattern according to the same rules used by
         <application>psql</>'s <literal>\d</> commands (see <xref
@@ -665,6 +665,17 @@ PostgreSQL documentation
         properly.  Also, a dump using <command>SET SESSION AUTHORIZATION</>
         will certainly require superuser privileges to restore correctly,
         whereas <command>ALTER OWNER</> requires lesser privileges.
+       </para>
+      </listitem>
+     </varlistentry>
+
+     <varlistentry>
+      <term><option>--no-unlogged-table-data</option></term>
+      <listitem>
+       <para>
+        Do not dump the contents of unlogged tables.  This option has no
+        effect on whether or not the table definitions (schema) are dumped;
+        it only suppresses dumping the table data.
        </para>
       </listitem>
      </varlistentry>

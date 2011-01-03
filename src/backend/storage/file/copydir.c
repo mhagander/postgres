@@ -3,7 +3,7 @@
  * copydir.c
  *	  copies a directory
  *
- * Portions Copyright (c) 1996-2010, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2011, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  *	While "xcopy /e /i /q" works fine for copying directories, on Windows XP
@@ -38,7 +38,6 @@
 #endif
 
 
-static void copy_file(char *fromfile, char *tofile);
 static void fsync_fname(char *fname, bool isdir);
 
 
@@ -142,7 +141,7 @@ copydir(char *fromdir, char *todir, bool recurse)
 /*
  * copy one file
  */
-static void
+void
 copy_file(char *fromfile, char *tofile)
 {
 	char	   *buffer;

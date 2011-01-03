@@ -4,7 +4,7 @@
  *	  interface routines for the postgres GiST index access method.
  *
  *
- * Portions Copyright (c) 1996-2010, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2011, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * IDENTIFICATION
@@ -216,6 +216,19 @@ gistbuildCallback(Relation index,
 	buildstate->indtuples += 1;
 	MemoryContextSwitchTo(oldCtx);
 	MemoryContextReset(buildstate->tmpCtx);
+}
+
+/*
+ *	gistbuildempty() -- build an empty gist index in the initialization fork
+ */
+Datum
+gistbuildempty(PG_FUNCTION_ARGS)
+{
+	ereport(ERROR,
+			(errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
+			 errmsg("unlogged GIST indexes are not supported")));
+
+	PG_RETURN_VOID();
 }
 
 /*

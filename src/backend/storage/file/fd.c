@@ -3,7 +3,7 @@
  * fd.c
  *	  Virtual file descriptor code.
  *
- * Portions Copyright (c) 1996-2010, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2011, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * IDENTIFICATION
@@ -2055,7 +2055,7 @@ looks_like_temp_rel_name(const char *name)
 	/* We might have _forkname or .segment or both. */
 	if (name[pos] == '_')
 	{
-		int		forkchar = forkname_chars(&name[pos+1]);
+		int		forkchar = forkname_chars(&name[pos+1], NULL);
 		if (forkchar <= 0)
 			return false;
 		pos += forkchar + 1;

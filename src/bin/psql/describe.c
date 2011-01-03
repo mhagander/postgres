@@ -6,7 +6,7 @@
  * with servers of versions 7.4 and up.  It's okay to omit irrelevant
  * information for an old server, but not to fail outright.
  *
- * Copyright (c) 2000-2010, PostgreSQL Global Development Group
+ * Copyright (c) 2000-2011, PostgreSQL Global Development Group
  *
  * src/bin/psql/describe.c
  */
@@ -687,11 +687,12 @@ permissionsList(const char *pattern)
 	printfPQExpBuffer(&buf,
 					  "SELECT n.nspname as \"%s\",\n"
 					  "  c.relname as \"%s\",\n"
-					  "  CASE c.relkind WHEN 'r' THEN '%s' WHEN 'v' THEN '%s' WHEN 'S' THEN '%s' END as \"%s\",\n"
+					  "  CASE c.relkind WHEN 'r' THEN '%s' WHEN 'v' THEN '%s' WHEN 'S' THEN '%s' WHEN 'f' THEN '%s' END as \"%s\",\n"
 					  "  ",
 					  gettext_noop("Schema"),
 					  gettext_noop("Name"),
 	   gettext_noop("table"), gettext_noop("view"), gettext_noop("sequence"),
+	   gettext_noop("foreign table"),
 					  gettext_noop("Type"));
 
 	printACLColumn(&buf, "c.relacl");
@@ -707,7 +708,7 @@ permissionsList(const char *pattern)
 
 	appendPQExpBuffer(&buf, "\nFROM pg_catalog.pg_class c\n"
 	   "     LEFT JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace\n"
-					  "WHERE c.relkind IN ('r', 'v', 'S')\n");
+					  "WHERE c.relkind IN ('r', 'v', 'S', 'f')\n");
 
 	/*
 	 * Unless a schema pattern is specified, we suppress system and temp
@@ -921,15 +922,16 @@ objectDescription(const char *pattern, bool showSystem)
 					  "  n.nspname as nspname,\n"
 					  "  CAST(c.relname AS pg_catalog.text) as name,\n"
 					  "  CAST(\n"
-					  "    CASE c.relkind WHEN 'r' THEN '%s' WHEN 'v' THEN '%s' WHEN 'i' THEN '%s' WHEN 'S' THEN '%s' END"
+					  "    CASE c.relkind WHEN 'r' THEN '%s' WHEN 'v' THEN '%s' WHEN 'i' THEN '%s' WHEN 'S' THEN '%s' WHEN 'f' THEN '%s' END"
 					  "  AS pg_catalog.text) as object\n"
 					  "  FROM pg_catalog.pg_class c\n"
 	 "       LEFT JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace\n"
-					  "  WHERE c.relkind IN ('r', 'v', 'i', 'S')\n",
+					  "  WHERE c.relkind IN ('r', 'v', 'i', 'S', 'f')\n",
 					  gettext_noop("table"),
 					  gettext_noop("view"),
 					  gettext_noop("index"),
-					  gettext_noop("sequence"));
+					  gettext_noop("sequence"),
+					  gettext_noop("foreign table"));
 
 	if (!showSystem && !pattern)
 		appendPQExpBuffer(&buf, "      AND n.nspname <> 'pg_catalog'\n"
@@ -1118,6 +1120,7 @@ describeOneTableDetails(const char *schemaname,
 		Oid			tablespace;
 		char	   *reloptions;
 		char	   *reloftype;
+		char		relpersistence;
 	}			tableinfo;
 	bool		show_modifiers = false;
 	bool		retval;
@@ -1133,6 +1136,23 @@ describeOneTableDetails(const char *schemaname,
 
 	/* Get general table info */
 	if (pset.sversion >= 90000)
+	{
+		printfPQExpBuffer(&buf,
+			  "SELECT c.relchecks, c.relkind, c.relhasindex, c.relhasrules, "
+						  "c.relhastriggers, c.relhasoids, "
+						  "%s, c.reltablespace, "
+						  "CASE WHEN c.reloftype = 0 THEN '' ELSE c.reloftype::pg_catalog.regtype::pg_catalog.text END, "
+						  "c.relpersistence\n"
+						  "FROM pg_catalog.pg_class c\n "
+		   "LEFT JOIN pg_catalog.pg_class tc ON (c.reltoastrelid = tc.oid)\n"
+						  "WHERE c.oid = '%s'\n",
+						  (verbose ?
+						   "pg_catalog.array_to_string(c.reloptions || "
+						   "array(select 'toast.' || x from pg_catalog.unnest(tc.reloptions) x), ', ')\n"
+						   : "''"),
+						  oid);
+	}
+	else if (pset.sversion >= 90000)
 	{
 		printfPQExpBuffer(&buf,
 			  "SELECT c.relchecks, c.relkind, c.relhasindex, c.relhasrules, "
@@ -1218,6 +1238,8 @@ describeOneTableDetails(const char *schemaname,
 		atooid(PQgetvalue(res, 0, 7)) : 0;
 	tableinfo.reloftype = (pset.sversion >= 90000 && strcmp(PQgetvalue(res, 0, 8), "") != 0) ?
 		strdup(PQgetvalue(res, 0, 8)) : 0;
+	tableinfo.relpersistence = (pset.sversion >= 90100 && strcmp(PQgetvalue(res, 0, 9), "") != 0) ?
+		PQgetvalue(res, 0, 9)[0] : 0;
 	PQclear(res);
 	res = NULL;
 
@@ -1269,8 +1291,12 @@ describeOneTableDetails(const char *schemaname,
 	switch (tableinfo.relkind)
 	{
 		case 'r':
-			printfPQExpBuffer(&title, _("Table \"%s.%s\""),
-							  schemaname, relationname);
+			if (tableinfo.relpersistence == 'u')
+				printfPQExpBuffer(&title, _("Unlogged Table \"%s.%s\""),
+								  schemaname, relationname);
+			else
+				printfPQExpBuffer(&title, _("Table \"%s.%s\""),
+								  schemaname, relationname);
 			break;
 		case 'v':
 			printfPQExpBuffer(&title, _("View \"%s.%s\""),
@@ -1281,8 +1307,12 @@ describeOneTableDetails(const char *schemaname,
 							  schemaname, relationname);
 			break;
 		case 'i':
-			printfPQExpBuffer(&title, _("Index \"%s.%s\""),
-							  schemaname, relationname);
+			if (tableinfo.relpersistence == 'u')
+				printfPQExpBuffer(&title, _("Unlogged Index \"%s.%s\""),
+								  schemaname, relationname);
+			else
+				printfPQExpBuffer(&title, _("Index \"%s.%s\""),
+								  schemaname, relationname);
 			break;
 		case 's':
 			/* not used as of 8.2, but keep it for backwards compatibility */
@@ -1297,6 +1327,10 @@ describeOneTableDetails(const char *schemaname,
 			printfPQExpBuffer(&title, _("Composite type \"%s.%s\""),
 							  schemaname, relationname);
 			break;
+		case 'f':
+			printfPQExpBuffer(&title, _("Foreign table \"%s.%s\""),
+							  schemaname, relationname);
+			break;
 		default:
 			/* untranslated unknown relkind */
 			printfPQExpBuffer(&title, "?%c? \"%s.%s\"",
@@ -1309,7 +1343,8 @@ describeOneTableDetails(const char *schemaname,
 	headers[1] = gettext_noop("Type");
 	cols = 2;
 
-	if (tableinfo.relkind == 'r' || tableinfo.relkind == 'v')
+	if (tableinfo.relkind == 'r' || tableinfo.relkind == 'v' ||
+		tableinfo.relkind == 'f')
 	{
 		show_modifiers = true;
 		headers[cols++] = gettext_noop("Modifiers");
@@ -1537,7 +1572,7 @@ describeOneTableDetails(const char *schemaname,
 			PQclear(result);
 		}
 	}
-	else if (tableinfo.relkind == 'r')
+	else if (tableinfo.relkind == 'r' || tableinfo.relkind == 'f')
 	{
 		/* Footer information about a table */
 		PGresult   *result = NULL;
@@ -1956,10 +1991,35 @@ describeOneTableDetails(const char *schemaname,
 	/*
 	 * Finish printing the footer information about a table.
 	 */
-	if (tableinfo.relkind == 'r')
+	if (tableinfo.relkind == 'r' || tableinfo.relkind == 'f')
 	{
 		PGresult   *result;
 		int			tuples;
+
+		/* print foreign server name */
+		if (tableinfo.relkind == 'f')
+		{
+			/* Footer information about foreign table */
+			printfPQExpBuffer(&buf,
+							  "SELECT s.srvname\n"
+							  "FROM pg_catalog.pg_foreign_table f,\n"
+							  "     pg_catalog.pg_foreign_server s\n"
+							  "WHERE f.ftrelid = %s AND s.oid = f.ftserver",
+							  oid);
+			result = PSQLexec(buf.data, false);
+			if (!result)
+				goto error_return;
+			else if (PQntuples(result) != 1)
+			{
+				PQclear(result);
+				goto error_return;
+			}
+
+			printfPQExpBuffer(&buf, "Server: %s",
+				PQgetvalue(result, 0, 0));
+			printTableAddFooter(&cont, buf.data);
+			PQclear(result);
+		}
 
 		/* print inherited tables */
 		printfPQExpBuffer(&buf, "SELECT c.oid::pg_catalog.regclass FROM pg_catalog.pg_class c, pg_catalog.pg_inherits i WHERE c.oid=i.inhparent AND i.inhrelid = '%s' ORDER BY inhseqno", oid);
@@ -2195,6 +2255,10 @@ describeRoles(const char *pattern, bool verbose)
 			appendPQExpBufferStr(&buf, "\n, pg_catalog.shobj_description(r.oid, 'pg_authid') AS description");
 			ncols++;
 		}
+		if (pset.sversion >= 90100)
+		{
+			appendPQExpBufferStr(&buf,"\n, r.rolreplication");
+		}
 
 		appendPQExpBufferStr(&buf, "\nFROM pg_catalog.pg_roles r\n");
 
@@ -2253,6 +2317,10 @@ describeRoles(const char *pattern, bool verbose)
 
 		if (strcmp(PQgetvalue(res, i, 5), "t") != 0)
 			add_role_attribute(&buf, _("Cannot login"));
+
+		if (pset.sversion >= 90100)
+			if (strcmp(PQgetvalue(res, i, 8), "t") == 0)
+				add_role_attribute(&buf, _("Replication"));
 
 		conns = atoi(PQgetvalue(res, i, 6));
 		if (conns >= 0)
@@ -2370,8 +2438,9 @@ listDbRoleSettings(const char *pattern, const char *pattern2)
  * i - indexes
  * v - views
  * s - sequences
+ * E - foreign table (Note: different from 'f', the relkind value)
  * (any order of the above is fine)
- * If tabtypes is empty, we default to \dtvs.
+ * If tabtypes is empty, we default to \dtvsE.
  */
 bool
 listTables(const char *tabtypes, const char *pattern, bool verbose, bool showSystem)
@@ -2380,14 +2449,15 @@ listTables(const char *tabtypes, const char *pattern, bool verbose, bool showSys
 	bool		showIndexes = strchr(tabtypes, 'i') != NULL;
 	bool		showViews = strchr(tabtypes, 'v') != NULL;
 	bool		showSeq = strchr(tabtypes, 's') != NULL;
+	bool		showForeign = strchr(tabtypes, 'E') != NULL;
 
 	PQExpBufferData buf;
 	PGresult   *res;
 	printQueryOpt myopt = pset.popt;
 	static const bool translate_columns[] = {false, false, true, false, false, false, false};
 
-	if (!(showTables || showIndexes || showViews || showSeq))
-		showTables = showViews = showSeq = true;
+	if (!(showTables || showIndexes || showViews || showSeq || showForeign))
+		showTables = showViews = showSeq = showForeign = true;
 
 	initPQExpBuffer(&buf);
 
@@ -2398,7 +2468,7 @@ listTables(const char *tabtypes, const char *pattern, bool verbose, bool showSys
 	printfPQExpBuffer(&buf,
 					  "SELECT n.nspname as \"%s\",\n"
 					  "  c.relname as \"%s\",\n"
-					  "  CASE c.relkind WHEN 'r' THEN '%s' WHEN 'v' THEN '%s' WHEN 'i' THEN '%s' WHEN 'S' THEN '%s' WHEN 's' THEN '%s' END as \"%s\",\n"
+					  "  CASE c.relkind WHEN 'r' THEN '%s' WHEN 'v' THEN '%s' WHEN 'i' THEN '%s' WHEN 'S' THEN '%s' WHEN 's' THEN '%s' WHEN 'f' THEN '%s' END as \"%s\",\n"
 					  "  pg_catalog.pg_get_userbyid(c.relowner) as \"%s\"",
 					  gettext_noop("Schema"),
 					  gettext_noop("Name"),
@@ -2407,6 +2477,7 @@ listTables(const char *tabtypes, const char *pattern, bool verbose, bool showSys
 					  gettext_noop("index"),
 					  gettext_noop("sequence"),
 					  gettext_noop("special"),
+					  gettext_noop("foreign table"),
 					  gettext_noop("Type"),
 					  gettext_noop("Owner"));
 
@@ -2444,6 +2515,9 @@ listTables(const char *tabtypes, const char *pattern, bool verbose, bool showSys
 	if (showSystem || pattern)
 		appendPQExpBuffer(&buf, "'s',");		/* was RELKIND_SPECIAL in <=
 												 * 8.1 */
+	if (showForeign)
+		appendPQExpBuffer(&buf, "'f',");
+
 	appendPQExpBuffer(&buf, "''");		/* dummy */
 	appendPQExpBuffer(&buf, ")\n");
 
@@ -3485,6 +3559,67 @@ listUserMappings(const char *pattern, bool verbose)
 
 	myopt.nullPrint = NULL;
 	myopt.title = _("List of user mappings");
+	myopt.translate_header = true;
+
+	printQuery(res, &myopt, pset.queryFout, pset.logfile);
+
+	PQclear(res);
+	return true;
+}
+
+/*
+ * \det
+ *
+ * Describes foreign tables.
+ */
+bool
+listForeignTables(const char *pattern, bool verbose)
+{
+	PQExpBufferData buf;
+	PGresult   *res;
+	printQueryOpt myopt = pset.popt;
+
+	if (pset.sversion < 90100)
+	{
+		fprintf(stderr, _("The server (version %d.%d) does not support foreign table.\n"),
+				pset.sversion / 10000, (pset.sversion / 100) % 100);
+		return true;
+	}
+
+	initPQExpBuffer(&buf);
+	printfPQExpBuffer(&buf,
+					  "SELECT n.nspname AS \"%s\",\n"
+					  "  c.relname AS \"%s\",\n"
+					  "  s.srvname AS \"%s\"",
+					  gettext_noop("Schema"),
+					  gettext_noop("Table"),
+					  gettext_noop("Server"));
+
+	if (verbose)
+		appendPQExpBuffer(&buf,
+						  ",\n  ft.ftoptions AS \"%s\"",
+						  gettext_noop("Options"));
+
+	appendPQExpBuffer(&buf, "\nFROM pg_catalog.pg_foreign_table ft,");
+	appendPQExpBuffer(&buf, "\n pg_catalog.pg_class c,");
+	appendPQExpBuffer(&buf, "\n pg_catalog.pg_namespace n,");
+	appendPQExpBuffer(&buf, "\n pg_catalog.pg_foreign_server s\n");
+	appendPQExpBuffer(&buf, "\nWHERE c.oid = ft.ftrelid");
+	appendPQExpBuffer(&buf, "\nAND s.oid = ft.ftserver\n");
+	appendPQExpBuffer(&buf, "\nAND n.oid = c.relnamespace\n");
+
+	processSQLNamePattern(pset.db, &buf, pattern, true, false,
+						  NULL, "n.nspname", "c.relname", NULL);
+
+	appendPQExpBuffer(&buf, "ORDER BY 1, 2;");
+
+	res = PSQLexec(buf.data, false);
+	termPQExpBuffer(&buf);
+	if (!res)
+		return false;
+
+	myopt.nullPrint = NULL;
+	myopt.title = _("List of foreign tables");
 	myopt.translate_header = true;
 
 	printQuery(res, &myopt, pset.queryFout, pset.logfile);

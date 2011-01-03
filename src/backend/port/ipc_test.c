@@ -16,7 +16,7 @@
  *	   the parallel regression tests for a more complete test.
  *
  *
- * Portions Copyright (c) 1996-2010, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2011, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  *
@@ -104,7 +104,7 @@ on_exit_reset(void)
 }
 
 void
-RecordSharedMemoryInLockFile(unsigned long id1, unsigned long id2)
+AddToLockFile(int target_line, const char *str)
 {
 }
 
