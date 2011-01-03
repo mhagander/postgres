@@ -279,7 +279,8 @@ postgres: <replaceable>user</> <replaceable>database</> <replaceable>host</> <re
       total disk blocks read, total buffer hits (i.e., block
       read requests avoided by finding the block already in buffer cache),
       number of rows returned, fetched, inserted, updated and deleted, and
-      total number of queries cancelled due to conflict with recovery.
+      total number of queries cancelled due to conflict with recovery (on
+      standby servers).
      </entry>
      </row>
 
@@ -288,7 +289,8 @@ postgres: <replaceable>user</> <replaceable>database</> <replaceable>host</> <re
       <entry>One row per database, showing database OID, database name and
       the number of queries that have been cancelled in this database due to
       dropped tablespaces, lock timeouts, old snapshots, pinned buffers and
-      deadlocks.
+      deadlocks. Will only contain information on standby servers, since
+      conflicts do not occur on master servers.
      </entry>
      </row>
 
