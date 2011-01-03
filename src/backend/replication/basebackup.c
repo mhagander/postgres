@@ -20,6 +20,7 @@
 
 #include "access/xlog_internal.h" /* for pg_start/stop_backup */
 #include "utils/builtins.h"
+#include "utils/elog.h"
 #include "lib/stringinfo.h"
 #include "libpq/libpq.h"
 #include "libpq/pqformat.h"
@@ -29,14 +30,72 @@
 static void sendDir(char *path);
 static void sendFile(char *path);
 static void _tarWriteHeader(char *filename, uint64 fileLen);
+static void SendBackupDirectory(char *location);
 
+/*
+ * SendBaseBackup() - send a complete base backup.
+ *
+ * The function will take care of running pg_start_backup() and
+ * pg_stop_backup() for the user.
+ *
+ * It will contain one or more batches. Each batch has a header,
+ * followed by a tar format dump.
+ *
+ * Batch header is simple:
+ * <tablespacepath>;...\0
+ *
+ * The ... is left for future additions - it should *not* be assumed
+ * to be empty.
+ *
+ * Both name and path are left empty for the PGDATA batch.
+ */
 void
 SendBaseBackup(void)
 {
-	StringInfoData buf;
+	DIR *dir;
+	struct dirent *de;
+
+	/* Make sure we can open the directory with tablespaces in it */
+	dir = opendir("pg_tblspc");
+	if (!dir)
+		ereport(ERROR,
+				(errmsg("unable to open directory pg_tblspc: %m")));
 
 	DirectFunctionCall2(&pg_start_backup, CStringGetTextDatum("basebackup"),
 						BoolGetDatum(true));
+
+	SendBackupDirectory(NULL);
+
+	/* Check for tablespaces */
+	while ((de = readdir(dir)) != NULL)
+	{
+		char fullpath[MAXPGPATH];
+		char linkpath[MAXPGPATH];
+
+		if (de->d_name[0] == '.')
+			continue;
+
+		sprintf(fullpath, "pg_tblspc/%s", de->d_name);
+
+		if (readlink(fullpath, linkpath, sizeof(linkpath)) == -1)
+		{
+			ereport(WARNING, (errmsg("unable to read symbolic link %s", fullpath)));
+			continue;
+		}
+
+		SendBackupDirectory(linkpath);
+	}
+
+	closedir(dir);
+
+	/* XXX: Is there no DirectFunctionCall0? */
+	DirectFunctionCall1(&pg_stop_backup, (Datum) 0);
+}
+
+static
+void SendBackupDirectory(char *location)
+{
+	StringInfoData buf;
 
 	/* Send CopyOutResponse message */
 	pq_beginmessage(&buf, 'H');
@@ -44,14 +103,24 @@ SendBaseBackup(void)
 	pq_sendint(&buf, 0, 2);			/* natts */
 	pq_endmessage(&buf);
 
-	/* tar up the data directory */
-	sendDir(".");
+	/* Construct and send the directory information */
+	initStringInfo(&buf);
+	if (location == NULL)
+		appendStringInfoString(&buf, ";");
+	else
+		appendStringInfo(&buf, "%s;", location);
+	appendStringInfoChar(&buf, '\0');
+	pq_putmessage('d', buf.data, buf.len);
+
+	if (location == NULL)
+		/* tar up the data directory */
+		sendDir(".");
+	else
+		/* tar up the tablespace */
+		sendDir(location);
 
 	/* Send CopyDone message */
 	pq_putemptymessage('c');
-
-	/* XXX: Is there no DirectFunctionCall0? */
-	DirectFunctionCall1(&pg_stop_backup, (Datum) 0);
 }
 
 static void
@@ -237,6 +306,7 @@ _tarWriteHeader(char *filename, uint64 fileLen)
 	sprintf(&h[135], " ");
 
 	/* Mod Time 12 */
+	/* XXX: do we really want it to be time(NULL)? */
 	sprintf(&h[136], "%011o ", (int) time(NULL));
 
 	/* Checksum 8 */
