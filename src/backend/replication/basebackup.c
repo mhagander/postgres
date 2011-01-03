@@ -49,7 +49,7 @@ static void SendBackupDirectory(char *location);
  * Both name and path are left empty for the PGDATA batch.
  */
 void
-SendBaseBackup(void)
+SendBaseBackup(const char *backup_label)
 {
 	DIR *dir;
 	struct dirent *de;
@@ -60,7 +60,7 @@ SendBaseBackup(void)
 		ereport(ERROR,
 				(errmsg("unable to open directory pg_tblspc: %m")));
 
-	DirectFunctionCall2(&pg_start_backup, CStringGetTextDatum("basebackup"),
+	DirectFunctionCall2(&pg_start_backup, CStringGetTextDatum(backup_label),
 						BoolGetDatum(true));
 
 	SendBackupDirectory(NULL);

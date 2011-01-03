@@ -308,9 +308,10 @@ WalSndHandshake(void)
 						/* break out of the loop */
 						replication_started = true;
 					}
-					else if (strcmp(query_string, "TAKE_BACKUP") == 0)
+					else if (strncmp(query_string, "BASE_BACKUP ", 12) == 0)
 					{
-						SendBaseBackup();
+						/* Command is BASE_BACKUP <label> */
+						SendBaseBackup(query_string + strlen("BASE_BACKUP "));
 						/* Send CommandComplete and ReadyForQuery messages */
 						EndCommand("SELECT", DestRemote);
 						ReadyForQuery(DestRemote);

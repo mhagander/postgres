@@ -12,6 +12,6 @@
 #ifndef _BASEBACKUP_H
 #define _BASEBACKUP_H
 
-extern void SendBaseBackup(char *backup_label);
+extern void SendBaseBackup(const char *backup_label);
 
 #endif   /* _BASEBACKUP_H */
