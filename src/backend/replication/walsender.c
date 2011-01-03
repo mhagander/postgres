@@ -43,6 +43,7 @@
 #include "libpq/pqformat.h"
 #include "libpq/pqsignal.h"
 #include "miscadmin.h"
+#include "replication/basebackup.h"
 #include "replication/walprotocol.h"
 #include "replication/walsender.h"
 #include "storage/fd.h"
@@ -302,6 +303,14 @@ WalSndHandshake(void)
 
 						/* break out of the loop */
 						replication_started = true;
+					}
+					else if (strcmp(query_string, "TAKE_BACKUP") == 0)
+					{
+						SendBaseBackup();
+						/* Send CommandComplete and ReadyForQuery messages */
+						EndCommand("SELECT", DestRemote);
+						ReadyForQuery(DestRemote);
+						/* ReadyForQuery did pq_flush for us */
 					}
 					else
 					{
