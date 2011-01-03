@@ -52,6 +52,7 @@
 #include "tcop/tcopprot.h"
 #include "utils/guc.h"
 #include "utils/memutils.h"
+#include "utils/resowner.h"
 #include "utils/ps_status.h"
 
 
@@ -134,6 +135,9 @@ WalSenderMain(void)
 										   ALLOCSET_DEFAULT_INITSIZE,
 										   ALLOCSET_DEFAULT_MAXSIZE);
 	MemoryContextSwitchTo(walsnd_context);
+
+	/* Set up resource owner */
+	CurrentResourceOwner = ResourceOwnerCreate(NULL, "walsender top-level resource owner");
 
 	/* Unblock signals (they were blocked when the postmaster forked us) */
 	PG_SETMASK(&UnBlockSig);
