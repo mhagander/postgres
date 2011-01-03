@@ -353,21 +353,19 @@ _tarWriteHeader(char *filename, char *linktarget, struct stat *statbuf)
 	/* Magic 6 + Version 2 */
 	sprintf(&h[257], "ustar00");
 
-#if 0
 	/* User 32 */
-	sprintf(&h[265], "%.31s", "");		/* How do I get username reliably? Do
-										 * I need to? */
+	/* XXX: Do we need to care about setting correct username? */
+	sprintf(&h[265], "%.31s", "postgres");
 
 	/* Group 32 */
-	sprintf(&h[297], "%.31s", "");		/* How do I get group reliably? Do I
-										 * need to? */
+	/* XXX: Do we need to care about setting correct group name? */
+	sprintf(&h[297], "%.31s", "postgres");
 
 	/* Maj Dev 8 */
 	sprintf(&h[329], "%6o ", 0);
 
 	/* Min Dev 8 */
 	sprintf(&h[337], "%6o ", 0);
-#endif
 
 	while ((sum = _tarChecksum(h)) != lastSum)
 	{
