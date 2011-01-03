@@ -507,7 +507,7 @@ CREATE VIEW pg_stat_database AS
             pg_stat_get_db_tuples_inserted(D.oid) AS tup_inserted,
             pg_stat_get_db_tuples_updated(D.oid) AS tup_updated,
             pg_stat_get_db_tuples_deleted(D.oid) AS tup_deleted,
-	    pg_stat_get_db_conflict_all(D.oid) AS conflicts
+            pg_stat_get_db_conflict_all(D.oid) AS conflicts
     FROM pg_database D;
 
 CREATE VIEW pg_stat_database_conflicts AS
