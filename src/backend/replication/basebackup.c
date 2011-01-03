@@ -291,8 +291,11 @@ sendFile(char *filename)
 
 	/* Pad to 512 byte boundary */
 	pad = ((len + 511) & ~511) - len;
-	MemSet(buf, 0, pad);
-	pq_putmessage('d', buf, pad);
+	if (pad > 0)
+	{
+		MemSet(buf, 0, pad);
+		pq_putmessage('d', buf, pad);
+	}
 
 	FreeFile(fp);
 }
