@@ -25,12 +25,24 @@
 #include "libpq/pqformat.h"
 #include "replication/basebackup.h"
 #include "storage/fd.h"
+#include "storage/ipc.h"
 
 static void sendDir(char *path);
 static void sendFile(char *path);
 static void _tarWriteHeader(char *filename, char *linktarget,
 							struct stat *statbuf);
 static void SendBackupDirectory(char *location, char *spcoid);
+static void base_backup_cleanup(int code, Datum arg);
+
+/*
+ * Called when ERROR or FATAL happens in SendBaseBackup() after
+ * we have started the backup - make sure we end it!
+ */
+static void
+base_backup_cleanup(int code, Datum arg)
+{
+	do_pg_stop_backup();
+}
 
 /*
  * SendBaseBackup() - send a complete base backup.
@@ -63,30 +75,34 @@ SendBaseBackup(const char *backup_label)
 
 	do_pg_start_backup(backup_label, true);
 
-	SendBackupDirectory(NULL, NULL);
-
-	/* Check for tablespaces */
-	while ((de = ReadDir(dir, "pg_tblspc")) != NULL)
+	PG_ENSURE_ERROR_CLEANUP(base_backup_cleanup, (Datum) 0);
 	{
-		char fullpath[MAXPGPATH];
-		char linkpath[MAXPGPATH];
+		SendBackupDirectory(NULL, NULL);
 
-		if (de->d_name[0] == '.')
-			continue;
-
-		sprintf(fullpath, "pg_tblspc/%s", de->d_name);
-
-		MemSet(linkpath, 0, sizeof(linkpath));
-		if (readlink(fullpath, linkpath, sizeof(linkpath) - 1) == -1)
+		/* Check for tablespaces */
+		while ((de = ReadDir(dir, "pg_tblspc")) != NULL)
 		{
-			ereport(WARNING, (errmsg("unable to read symbolic link %s", fullpath)));
-			continue;
+			char fullpath[MAXPGPATH];
+			char linkpath[MAXPGPATH];
+
+			if (de->d_name[0] == '.')
+				continue;
+
+			sprintf(fullpath, "pg_tblspc/%s", de->d_name);
+
+			MemSet(linkpath, 0, sizeof(linkpath));
+			if (readlink(fullpath, linkpath, sizeof(linkpath) - 1) == -1)
+			{
+				ereport(WARNING, (errmsg("unable to read symbolic link %s", fullpath)));
+				continue;
+			}
+
+			SendBackupDirectory(linkpath, de->d_name);
 		}
 
-		SendBackupDirectory(linkpath, de->d_name);
+		FreeDir(dir);
 	}
-
-	FreeDir(dir);
+	PG_END_ENSURE_ERROR_CLEANUP(base_backup_cleanup, (Datum) 0);
 
 	do_pg_stop_backup();
 }
