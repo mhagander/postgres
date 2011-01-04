@@ -114,7 +114,7 @@ void SendBackupDirectory(char *location, char *spcoid)
 
 	/* Send CopyOutResponse message */
 	pq_beginmessage(&buf, 'H');
-	pq_sendbyte(&buf, 0);		/* overall format */
+	pq_sendbyte(&buf, 0);			/* overall format */
 	pq_sendint(&buf, 0, 2);			/* natts */
 	pq_endmessage(&buf);
 
@@ -168,6 +168,8 @@ sendDir(char *path)
 				elog(WARNING, "could not stat file or directory \"%s\": %m",
 					 pathbuf);
 			}
+
+			/* If the file went away while scanning, it's no error. */
 			continue;
 		}
 
@@ -300,7 +302,7 @@ sendFile(char *filename)
 		}
 	}
 
-	/* Pad to 512 byte boundary */
+	/* Pad to 512 byte boundary, per tar format requirements */
 	pad = ((len + 511) & ~511) - len;
 	if (pad > 0)
 	{
