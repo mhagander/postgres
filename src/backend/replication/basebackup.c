@@ -52,15 +52,8 @@ base_backup_cleanup(int code, Datum arg)
  * pg_stop_backup() for the user.
  *
  * It will contain one or more batches. Each batch has a header,
- * followed by a tar format dump.
- *
- * Batch header is simple:
- * <tablespaceoid>;<tablespacepath>;<approxsize>\0
- *
- * The ... is left for future additions - it should *not* be assumed
- * to be empty.
- *
- * Both name and path are left empty for the PGDATA batch.
+ * in normal result format, followed by a tar format dump in
+ * CopyOut format.
  */
 void
 SendBaseBackup(const char *options)
@@ -125,10 +118,10 @@ SendBaseBackup(const char *options)
 }
 
 static void
-send_int4_string(StringInfoData *buf, int intval)
+send_int8_string(StringInfoData *buf, uint64 intval)
 {
-	char is[16];
-	sprintf(is, "%u", intval);
+	char is[32];
+	sprintf(is, INT64_FORMAT, intval);
 	pq_sendint(buf, strlen(is), 4);
 	pq_sendbytes(buf, is, strlen(is));
 }
@@ -172,8 +165,8 @@ void SendBackupDirectory(char *location, char *spcoid, bool progress)
 	pq_sendstring(&buf, "size");
 	pq_sendint(&buf, 0, 4);
 	pq_sendint(&buf, 0, 2);
-	pq_sendint(&buf, INT4OID, 4);
-	pq_sendint(&buf, 4, 2);
+	pq_sendint(&buf, INT8OID, 4);
+	pq_sendint(&buf, 8, 2);
 	pq_sendint(&buf, 0, 4);
 	pq_sendint(&buf, 0, 2);
 	pq_endmessage(&buf);
@@ -193,7 +186,7 @@ void SendBackupDirectory(char *location, char *spcoid, bool progress)
 		pq_sendint(&buf, strlen(location), 4); /* length of text */
 		pq_sendbytes(&buf, location, strlen(location));
 	}
-	send_int4_string(&buf, size/1024);
+	send_int8_string(&buf, size/1024);
 	pq_endmessage(&buf);
 
 	/* Send a CommandComplete message */
