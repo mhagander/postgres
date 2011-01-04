@@ -27,11 +27,11 @@
 #include "storage/fd.h"
 #include "storage/ipc.h"
 
-static void sendDir(char *path);
+static uint64 sendDir(char *path, bool sizeonly);
 static void sendFile(char *path);
 static void _tarWriteHeader(char *filename, char *linktarget,
 							struct stat *statbuf);
-static void SendBackupDirectory(char *location, char *spcoid);
+static void SendBackupDirectory(char *location, char *spcoid, bool progress);
 static void base_backup_cleanup(int code, Datum arg);
 
 /*
@@ -54,7 +54,7 @@ base_backup_cleanup(int code, Datum arg)
  * followed by a tar format dump.
  *
  * Batch header is simple:
- * <tablespaceoid>;<tablespacepath>\0
+ * <tablespaceoid>;<tablespacepath>;<approxsize>\0
  *
  * The ... is left for future additions - it should *not* be assumed
  * to be empty.
@@ -62,10 +62,26 @@ base_backup_cleanup(int code, Datum arg)
  * Both name and path are left empty for the PGDATA batch.
  */
 void
-SendBaseBackup(const char *backup_label)
+SendBaseBackup(const char *options)
 {
-	DIR *dir;
-	struct dirent *de;
+	DIR 		   *dir;
+	struct dirent  *de;
+	char   		   *backup_label = strchr(options, ';');
+	bool			progress = false;
+
+	if (backup_label == NULL)
+		ereport(FATAL,
+				(errcode(ERRCODE_PROTOCOL_VIOLATION),
+				 errmsg("invalid base backup options: %s", options)));
+	backup_label++; /* Walk past the semicolon */
+
+	/* Currently the only option string supported is PROGRESS */
+	if (strncmp(options, "PROGRESS", 8) == 0)
+		progress = true;
+	else if (options[0] != ';')
+		ereport(FATAL,
+				(errcode(ERRCODE_PROTOCOL_VIOLATION),
+				 errmsg("invalid base backup options: %s", options)));
 
 	/* Make sure we can open the directory with tablespaces in it */
 	dir = AllocateDir("pg_tblspc");
@@ -77,7 +93,7 @@ SendBaseBackup(const char *backup_label)
 
 	PG_ENSURE_ERROR_CLEANUP(base_backup_cleanup, (Datum) 0);
 	{
-		SendBackupDirectory(NULL, NULL);
+		SendBackupDirectory(NULL, NULL, progress);
 
 		/* Check for tablespaces */
 		while ((de = ReadDir(dir, "pg_tblspc")) != NULL)
@@ -97,7 +113,7 @@ SendBaseBackup(const char *backup_label)
 				continue;
 			}
 
-			SendBackupDirectory(linkpath, de->d_name);
+			SendBackupDirectory(linkpath, de->d_name, progress);
 		}
 
 		FreeDir(dir);
@@ -108,9 +124,10 @@ SendBaseBackup(const char *backup_label)
 }
 
 static
-void SendBackupDirectory(char *location, char *spcoid)
+void SendBackupDirectory(char *location, char *spcoid, bool progress)
 {
 	StringInfoData buf;
+	uint64			size = 0;
 
 	/* Send CopyOutResponse message */
 	pq_beginmessage(&buf, 'H');
@@ -118,33 +135,38 @@ void SendBackupDirectory(char *location, char *spcoid)
 	pq_sendint(&buf, 0, 2);			/* natts */
 	pq_endmessage(&buf);
 
+	if (progress)
+		/*
+		 * If we're asking for progress, start by counting the size of
+		 * the tablespace. If not, we'll send 0.
+		 */
+		size = sendDir(location == NULL ? "." : location, true);
+
 	/* Construct and send the directory information */
 	initStringInfo(&buf);
 	if (location == NULL)
-		appendStringInfoString(&buf, ";");
+		appendStringInfo(&buf, ";;%lu", size / 1024);
 	else
-		appendStringInfo(&buf, "%s;%s", spcoid, location);
+		appendStringInfo(&buf, "%s;%s;%lu", spcoid, location, size / 1024);
 	appendStringInfoChar(&buf, '\0');
 	pq_putmessage('d', buf.data, buf.len);
 
-	if (location == NULL)
-		/* tar up the data directory */
-		sendDir(".");
-	else
-		/* tar up the tablespace */
-		sendDir(location);
+	/* tar up the data directory if NULL, otherwise the tablespace */
+	sendDir(location == NULL ? "." : location, false);
 
 	/* Send CopyDone message */
 	pq_putemptymessage('c');
 }
 
-static void
-sendDir(char *path)
+
+static uint64
+sendDir(char *path, bool sizeonly)
 {
 	DIR		   *dir;
 	struct dirent *de;
 	char		pathbuf[MAXPGPATH];
 	struct stat statbuf;
+	uint64		size = 0;
 
 	dir = AllocateDir(path);
 	while ((de = ReadDir(dir, path)) != NULL)
@@ -184,7 +206,8 @@ sendDir(char *path)
 				elog(WARNING, "Unable to read symbolic link \"%s\": %m",
 					 pathbuf);
 			}
-			_tarWriteHeader(pathbuf, linkpath, &statbuf);
+			if (!sizeonly)
+				_tarWriteHeader(pathbuf, linkpath, &statbuf);
 		}
 		else if (S_ISDIR(statbuf.st_mode))
 		{
@@ -192,19 +215,23 @@ sendDir(char *path)
 			 * Store a directory entry in the tar file so we can get
 			 * the permissions right.
 			 */
-			_tarWriteHeader(pathbuf, NULL, &statbuf);
+			if (!sizeonly)
+				_tarWriteHeader(pathbuf, NULL, &statbuf);
 
 			/* call ourselves recursively for a directory */
-			sendDir(pathbuf);
+			size += sendDir(pathbuf, sizeonly);
 		}
 		else if (S_ISREG(statbuf.st_mode))
 		{
-			sendFile(pathbuf);
+			size += statbuf.st_size;
+			if (!sizeonly)
+				sendFile(pathbuf);
 		}
 		else
 			elog(WARNING, "skipping special file \"%s\"", pathbuf);
 	}
 	FreeDir(dir);
+	return size;
 }
 
 /*****

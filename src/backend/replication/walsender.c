@@ -310,7 +310,7 @@ WalSndHandshake(void)
 					}
 					else if (strncmp(query_string, "BASE_BACKUP ", 12) == 0)
 					{
-						/* Command is BASE_BACKUP <label> */
+						/* Command is BASE_BACKUP <options>;<label> */
 						SendBaseBackup(query_string + strlen("BASE_BACKUP "));
 						/* Send CommandComplete and ReadyForQuery messages */
 						EndCommand("SELECT", DestRemote);

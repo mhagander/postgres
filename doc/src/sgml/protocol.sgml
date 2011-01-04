@@ -1460,13 +1460,32 @@ The commands accepted in walsender mode are:
   </varlistentry>
 
   <varlistentry>
-    <term>BASE_BACKUP <replaceable>label</></term>
+    <term>BASE_BACKUP <replaceable>options</><literal>;</><replaceable>label</></term>
     <listitem>
      <para>
       Instructs the server to start streaming a base backup.
       The system will automatically be put in backup mode with the label
       specified in <replaceable>label</> before the backup is started, and
-      taken out of it when the backup is complete.
+      taken out of it when the backup is complete. The following options
+      are accepted:
+      <variablelist>
+       <varlistentry>
+        <term><literal>PROGRESS</></term>
+        <listitem>
+         <para>
+          Request information required to generate a progress report. This will
+          send back an approximate size in the header of each tablespace, which
+          can be used to calculate how far along the stream is done. This is
+          calculated by enumerating all the file sizes once before the transfer
+          is even started, and may as such have a negative impact on the
+          performance - in particular it may take longer before the first data
+          is streamed. Since the database files can change during the backup,
+          the size is only approximate and may both grow and shrink between
+          the time of approximation and the sending of the actual files.
+         </para>
+        </listitem>
+       </varlistentry>
+      </variablelist>
      </para>
      <para>
       When the backup is started, the server will send one or more
@@ -1479,12 +1498,13 @@ The commands accepted in walsender mode are:
      <para>
       The header for each part is a simple string, that has the format
       <programlisting>
-       <replaceable>oid</>;<replaceable>path</replaceable>\0
+       <replaceable>oid</>;<replaceable>path</>;<replaceable>size</>\0
       </programlisting>
       The <replaceable>oid</> is the oid of the tablespace being sent, and
       <replaceable>path</> is the full path of the tablespace directory. For
-      the base backup, both are left empty. Any number of fields may follow
-      the second semicolon in future versions, and should be ignored.
+      the base backup, both are left empty. The <replaceable>size</> contains
+      an approximate size of the following data block if progress report has
+      been requested; otherwise, it's zero.
      </para>
      <para>
       The tar archive for the data directory and each tablespace will contain
