@@ -312,4 +312,7 @@ extern void HandleStartupProcInterrupts(void);
 extern void StartupProcessMain(void);
 extern void WakeupRecovery(void);
 
+extern XLogRecPtr do_pg_start_backup(const char *backupidstr, bool fast);
+extern XLogRecPtr do_pg_stop_backup(void);
+
 #endif   /* XLOG_H */

@@ -61,8 +61,7 @@ SendBaseBackup(const char *backup_label)
 		ereport(ERROR,
 				(errmsg("unable to open directory pg_tblspc: %m")));
 
-	DirectFunctionCall2(&pg_start_backup, CStringGetTextDatum(backup_label),
-						BoolGetDatum(true));
+	do_pg_start_backup(backup_label, true);
 
 	SendBackupDirectory(NULL, NULL);
 
@@ -89,8 +88,7 @@ SendBaseBackup(const char *backup_label)
 
 	FreeDir(dir);
 
-	/* XXX: Is there no DirectFunctionCall0? */
-	DirectFunctionCall1(&pg_stop_backup, (Datum) 0);
+	do_pg_stop_backup();
 }
 
 static
