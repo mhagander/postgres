@@ -188,6 +188,12 @@ sendDir(char *path)
 		}
 		else if (S_ISDIR(statbuf.st_mode))
 		{
+			/*
+			 * Store a directory entry in the tar file so we can get
+			 * the permissions right.
+			 */
+			_tarWriteHeader(pathbuf, NULL, &statbuf);
+
 			/* call ourselves recursively for a directory */
 			sendDir(pathbuf);
 		}
@@ -325,11 +331,12 @@ _tarWriteHeader(char *filename, char *linktarget, struct stat *statbuf)
 
 	/* Name 100 */
 	sprintf(&h[0], "%.99s", filename);
-	if (linktarget != NULL)
+	if (linktarget != NULL || S_ISDIR(statbuf->st_mode))
 	{
 		/*
 		 * We only support symbolic links to directories, and this is indicated
-		 * in the tar format by adding a slash at the end of the name.
+		 * in the tar format by adding a slash at the end of the name, the same
+		 * as for regular directories.
 		 */
 		h[strlen(filename)] = '/';
 		h[strlen(filename)+1] = '\0';
@@ -345,7 +352,11 @@ _tarWriteHeader(char *filename, char *linktarget, struct stat *statbuf)
 	sprintf(&h[117], "%07o ", statbuf->st_gid);
 
 	/* File size 12 - 11 digits, 1 space, no NUL */
-	print_val(&h[124], (linktarget==NULL)?statbuf->st_size:0, 8, 11);
+	if (linktarget != NULL || S_ISDIR(statbuf->st_mode))
+		/* Symbolic link or directory has size zero */
+		print_val(&h[124], 0, 8, 11);
+	else
+		print_val(&h[124], statbuf->st_size, 8, 11);
 	sprintf(&h[135], " ");
 
 	/* Mod Time 12 */
@@ -356,10 +367,13 @@ _tarWriteHeader(char *filename, char *linktarget, struct stat *statbuf)
 
 	if (linktarget != NULL)
 	{
-		/* Symbolic link */
+		/* Type - Symbolic link */
 		sprintf(&h[156], "2");
 		strcpy(&h[157], linktarget);
 	}
+	else if (S_ISDIR(statbuf->st_mode))
+		/* Type - directory */
+		sprintf(&h[156], "5");
 	else
 		/* Type - regular file */
 		sprintf(&h[156], "0");
