@@ -30,7 +30,7 @@ static void sendDir(char *path);
 static void sendFile(char *path);
 static void _tarWriteHeader(char *filename, char *linktarget,
 							struct stat *statbuf);
-static void SendBackupDirectory(char *location);
+static void SendBackupDirectory(char *location, char *spcoid);
 
 /*
  * SendBaseBackup() - send a complete base backup.
@@ -42,7 +42,7 @@ static void SendBackupDirectory(char *location);
  * followed by a tar format dump.
  *
  * Batch header is simple:
- * <tablespacepath>;...\0
+ * <tablespaceoid>;<tablespacepath>\0
  *
  * The ... is left for future additions - it should *not* be assumed
  * to be empty.
@@ -64,7 +64,7 @@ SendBaseBackup(const char *backup_label)
 	DirectFunctionCall2(&pg_start_backup, CStringGetTextDatum(backup_label),
 						BoolGetDatum(true));
 
-	SendBackupDirectory(NULL);
+	SendBackupDirectory(NULL, NULL);
 
 	/* Check for tablespaces */
 	while ((de = ReadDir(dir, "pg_tblspc")) != NULL)
@@ -84,7 +84,7 @@ SendBaseBackup(const char *backup_label)
 			continue;
 		}
 
-		SendBackupDirectory(linkpath);
+		SendBackupDirectory(linkpath, de->d_name);
 	}
 
 	FreeDir(dir);
@@ -94,7 +94,7 @@ SendBaseBackup(const char *backup_label)
 }
 
 static
-void SendBackupDirectory(char *location)
+void SendBackupDirectory(char *location, char *spcoid)
 {
 	StringInfoData buf;
 
@@ -109,7 +109,7 @@ void SendBackupDirectory(char *location)
 	if (location == NULL)
 		appendStringInfoString(&buf, ";");
 	else
-		appendStringInfo(&buf, "%s;", location);
+		appendStringInfo(&buf, "%s;%s", spcoid, location);
 	appendStringInfoChar(&buf, '\0');
 	pq_putmessage('d', buf.data, buf.len);
 
