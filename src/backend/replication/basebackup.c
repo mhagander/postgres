@@ -41,7 +41,7 @@ static void base_backup_cleanup(int code, Datum arg);
 static void
 base_backup_cleanup(int code, Datum arg)
 {
-	do_pg_stop_backup();
+	do_pg_abort_backup();
 }
 
 /*

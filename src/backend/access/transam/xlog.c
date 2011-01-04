@@ -8726,6 +8726,34 @@ do_pg_stop_backup(void)
 	return stoppoint;
 }
 
+
+/*
+ * do_pg_abort_backup: abort a running backup
+ *
+ * This does just the most basic steps of pg_stop_backup(), by taking the
+ * system out of backup mode, thus making it a lot more safe to call from
+ * an error handler.
+ */
+void
+do_pg_abort_backup(void)
+{
+	/*
+	 * OK to clear forcePageWrites
+	 */
+	LWLockAcquire(WALInsertLock, LW_EXCLUSIVE);
+	XLogCtl->Insert.forcePageWrites = false;
+	LWLockRelease(WALInsertLock);
+
+	/*
+	 * Remove backup label file
+	 */
+	if (unlink(BACKUP_LABEL_FILE) != 0)
+		ereport(ERROR,
+				(errcode_for_file_access(),
+				 errmsg("could not remove file \"%s\": %m",
+						BACKUP_LABEL_FILE)));
+}
+
 /*
  * pg_switch_xlog: switch to next xlog file
  */
