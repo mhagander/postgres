@@ -29,7 +29,7 @@
 #include "storage/ipc.h"
 
 static uint64 sendDir(char *path, bool sizeonly);
-static void sendFile(char *path);
+static void sendFile(char *path, struct stat *statbuf);
 static void _tarWriteHeader(char *filename, char *linktarget,
 							struct stat *statbuf);
 static void SendBackupDirectory(char *location, char *spcoid, bool progress);
@@ -272,7 +272,7 @@ sendDir(char *path, bool sizeonly)
 		{
 			size += statbuf.st_size;
 			if (!sizeonly)
-				sendFile(pathbuf);
+				sendFile(pathbuf, &statbuf);
 		}
 		else
 			elog(WARNING, "skipping special file \"%s\"", pathbuf);
@@ -328,17 +328,13 @@ _tarChecksum(char *header)
 
 /* Given the member, write the TAR header & send the file */
 static void
-sendFile(char *filename)
+sendFile(char *filename, struct stat *statbuf)
 {
 	FILE	   *fp;
 	char		buf[32768];
 	size_t		cnt;
 	pgoff_t		len = 0;
 	size_t		pad;
-	struct stat statbuf;
-
-	if (lstat(filename, &statbuf) != 0)
-		elog(ERROR, "could not stat file \"%s\": %m", filename);
 
 	fp = AllocateFile(filename, "rb");
 	if (fp == NULL)
@@ -348,18 +344,18 @@ sendFile(char *filename)
 	 * Some compilers will throw a warning knowing this test can never be true
 	 * because pgoff_t can't exceed the compared maximum on their platform.
 	 */
-	if (statbuf.st_size > MAX_TAR_MEMBER_FILELEN)
+	if (statbuf->st_size > MAX_TAR_MEMBER_FILELEN)
 		elog(ERROR, "archive member too large for tar format");
 
-	_tarWriteHeader(filename, NULL, &statbuf);
+	_tarWriteHeader(filename, NULL, statbuf);
 
-	while ((cnt = fread(buf, 1, Min(sizeof(buf), statbuf.st_size - len), fp)) > 0)
+	while ((cnt = fread(buf, 1, Min(sizeof(buf), statbuf->st_size - len), fp)) > 0)
 	{
 		/* Send the chunk as a CopyData message */
 		pq_putmessage('d', buf, cnt);
 		len += cnt;
 
-		if (len >= statbuf.st_size)
+		if (len >= statbuf->st_size)
 		{
 			/*
 			 * Reached end of file. The file could be longer, if it was
@@ -371,12 +367,12 @@ sendFile(char *filename)
 	}
 
 	/* If the file was truncated while we were sending it, pad it with zeros */
-	if (len < statbuf.st_size)
+	if (len < statbuf->st_size)
 	{
 		MemSet(buf, 0, sizeof(buf));
-		while(len < statbuf.st_size)
+		while(len < statbuf->st_size)
 		{
-			cnt = Min(sizeof(buf), statbuf.st_size - len);
+			cnt = Min(sizeof(buf), statbuf->st_size - len);
 			pq_putmessage('d', buf, cnt);
 			len += cnt;
 		}
