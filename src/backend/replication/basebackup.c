@@ -18,6 +18,7 @@
 #include <time.h>
 
 #include "access/xlog_internal.h" /* for pg_start/stop_backup */
+#include "catalog/pg_type.h"
 #include "utils/builtins.h"
 #include "utils/elog.h"
 #include "lib/stringinfo.h"
@@ -123,17 +124,20 @@ SendBaseBackup(const char *options)
 	do_pg_stop_backup();
 }
 
+static void
+send_int4_string(StringInfoData *buf, int intval)
+{
+	char is[16];
+	sprintf(is, "%u", intval);
+	pq_sendint(buf, strlen(is), 4);
+	pq_sendbytes(buf, is, strlen(is));
+}
+
 static
 void SendBackupDirectory(char *location, char *spcoid, bool progress)
 {
 	StringInfoData buf;
 	uint64			size = 0;
-
-	/* Send CopyOutResponse message */
-	pq_beginmessage(&buf, 'H');
-	pq_sendbyte(&buf, 0);			/* overall format */
-	pq_sendint(&buf, 0, 2);			/* natts */
-	pq_endmessage(&buf);
 
 	if (progress)
 		/*
@@ -143,13 +147,63 @@ void SendBackupDirectory(char *location, char *spcoid, bool progress)
 		size = sendDir(location == NULL ? "." : location, true);
 
 	/* Construct and send the directory information */
-	initStringInfo(&buf);
+	pq_beginmessage(&buf, 'T'); /* RowDescription */
+	pq_sendint(&buf, 3, 2); /* 3 fields */
+
+	/* First field - spcoid */
+	pq_sendstring(&buf, "spcoid");
+	pq_sendint(&buf, 0, 4); /* table oid */
+	pq_sendint(&buf, 0, 2); /* attnum */
+	pq_sendint(&buf, OIDOID, 4); /* type oid */
+	pq_sendint(&buf, 4, 2); /* typlen */
+	pq_sendint(&buf, 0, 4); /* typmod */
+	pq_sendint(&buf, 0, 2); /* format code */
+
+	/* Second field - spcpath */
+	pq_sendstring(&buf, "spclocation");
+	pq_sendint(&buf, 0, 4);
+	pq_sendint(&buf, 0, 2);
+	pq_sendint(&buf, TEXTOID, 4);
+	pq_sendint(&buf, -1, 2);
+	pq_sendint(&buf, 0, 4);
+	pq_sendint(&buf, 0, 2);
+
+	/* Third field - size */
+	pq_sendstring(&buf, "size");
+	pq_sendint(&buf, 0, 4);
+	pq_sendint(&buf, 0, 2);
+	pq_sendint(&buf, INT4OID, 4);
+	pq_sendint(&buf, 4, 2);
+	pq_sendint(&buf, 0, 4);
+	pq_sendint(&buf, 0, 2);
+	pq_endmessage(&buf);
+
+	/* Send one datarow message */
+	pq_beginmessage(&buf, 'D');
+	pq_sendint(&buf, 3, 2); /* number of columns */
 	if (location == NULL)
-		appendStringInfo(&buf, ";;%lu", size / 1024);
+	{
+		pq_sendint(&buf, -1, 4); /* Length = -1 ==> NULL */
+		pq_sendint(&buf, -1, 4);
+	}
 	else
-		appendStringInfo(&buf, "%s;%s;%lu", spcoid, location, size / 1024);
-	appendStringInfoChar(&buf, '\0');
-	pq_putmessage('d', buf.data, buf.len);
+	{
+		pq_sendint(&buf, 4, 4); /* Length of oid */
+		pq_sendint(&buf, atoi(spcoid), 4);
+		pq_sendint(&buf, strlen(location), 4); /* length of text */
+		pq_sendbytes(&buf, location, strlen(location));
+	}
+	send_int4_string(&buf, size/1024);
+	pq_endmessage(&buf);
+
+	/* Send a CommandComplete message */
+	pq_puttextmessage('C', "SELECT 1");
+
+	/* Send CopyOutResponse message */
+	pq_beginmessage(&buf, 'H');
+	pq_sendbyte(&buf, 0);			/* overall format */
+	pq_sendint(&buf, 0, 2);			/* natts */
+	pq_endmessage(&buf);
 
 	/* tar up the data directory if NULL, otherwise the tablespace */
 	sendDir(location == NULL ? "." : location, false);

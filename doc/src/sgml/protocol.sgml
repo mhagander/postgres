@@ -1488,23 +1488,46 @@ The commands accepted in walsender mode are:
       </variablelist>
      </para>
      <para>
-      When the backup is started, the server will send one or more
-      CopyResponse results. The first one will contain the base DATA directory,
-      and it will be followed by one result for each tablespace other than
-      <literal>pg_default</> and <literal>pg_global</>. Each result will
-      consist of a batch header followed by the contents of the tablespace
-      in tar format (using ustar00 extensions).
+      When the backup is started, the server will send one or more pairs of
+      ordinary results sets and CopyResponse results. The first one will
+      contain the base DATA directory, and it will be followed by one pair
+      for each tablespace other than <literal>pg_default</> and
+      <literal>pg_global</>. For each pair there will be a regular resultset
+      with header information followed by the contents of the tablespace
+      in tar format (using ustar00 extensions) as a CopyResponse.
      </para>
      <para>
-      The header for each part is a simple string, that has the format
-      <programlisting>
-       <replaceable>oid</>;<replaceable>path</>;<replaceable>size</>\0
-      </programlisting>
-      The <replaceable>oid</> is the oid of the tablespace being sent, and
-      <replaceable>path</> is the full path of the tablespace directory. For
-      the base backup, both are left empty. The <replaceable>size</> contains
-      an approximate size of the following data block if progress report has
-      been requested; otherwise, it's zero.
+      The header is an ordinary resultset with a single row. The fields in
+      this row are:
+      <variablelist>
+       <varlistentry>
+        <term>spcoid</term>
+        <listitem>
+         <para>
+          The oid of the tablespace that this datablock refers to, or
+          <literal>NULL</> if it's the base directory.
+         </para>
+        </listitem>
+       </varlistentry>
+       <varlistentry>
+        <term>spclocation</term>
+        <listitem>
+         <para>
+          The full path of the tablespace directory that this datablock
+          refers to, or <literal>NULL</> if it's the base directory.
+         </para>
+        </listitem>
+       </varlistentry>
+       <varlistentry>
+        <term>size</term>
+        <listitem>
+         <para>
+          The approximage size of the datablock, if progress report has
+          been requested; otherwise it's zero.
+         </para>
+        </listitem>
+       </varlistentry>
+      </variablelist>
      </para>
      <para>
       The tar archive for the data directory and each tablespace will contain
