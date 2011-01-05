@@ -1,7 +1,7 @@
 /*-------------------------------------------------------------------------
  *
  * basebackup.c
- *	  code for taking a base backup and streaming it a standby
+ *	  code for taking a base backup and streaming it to a standby
  *
  * Portions Copyright (c) 2010-2011, PostgreSQL Global Development Group
  *
@@ -19,14 +19,14 @@
 
 #include "access/xlog_internal.h" /* for pg_start/stop_backup */
 #include "catalog/pg_type.h"
-#include "utils/builtins.h"
-#include "utils/elog.h"
 #include "lib/stringinfo.h"
 #include "libpq/libpq.h"
 #include "libpq/pqformat.h"
 #include "replication/basebackup.h"
 #include "storage/fd.h"
 #include "storage/ipc.h"
+#include "utils/builtins.h"
+#include "utils/elog.h"
 
 static uint64 sendDir(char *path, bool sizeonly);
 static void sendFile(char *path, struct stat *statbuf);
@@ -98,12 +98,13 @@ SendBaseBackup(const char *options)
 			if (de->d_name[0] == '.')
 				continue;
 
-			sprintf(fullpath, "pg_tblspc/%s", de->d_name);
+			snprintf(fullpath, sizeof(fullpath), "pg_tblspc/%s", de->d_name);
 
 			MemSet(linkpath, 0, sizeof(linkpath));
 			if (readlink(fullpath, linkpath, sizeof(linkpath) - 1) == -1)
 			{
-				ereport(WARNING, (errmsg("unable to read symbolic link %s", fullpath)));
+				ereport(WARNING,
+						(errmsg("unable to read symbolic link %s", fullpath)));
 				continue;
 			}
 
@@ -126,18 +127,20 @@ send_int8_string(StringInfoData *buf, uint64 intval)
 	pq_sendbytes(buf, is, strlen(is));
 }
 
-static
-void SendBackupDirectory(char *location, char *spcoid, bool progress)
+static void
+SendBackupDirectory(char *location, char *spcoid, bool progress)
 {
 	StringInfoData buf;
 	uint64			size = 0;
 
 	if (progress)
+	{
 		/*
 		 * If we're asking for progress, start by counting the size of
 		 * the tablespace. If not, we'll send 0.
 		 */
 		size = sendDir(location == NULL ? "." : location, true);
+	}
 
 	/* Construct and send the directory information */
 	pq_beginmessage(&buf, 'T'); /* RowDescription */
@@ -190,7 +193,7 @@ void SendBackupDirectory(char *location, char *spcoid, bool progress)
 	pq_endmessage(&buf);
 
 	/* Send a CommandComplete message */
-	pq_puttextmessage('C', "SELECT 1");
+	pq_puttextmessage('C', "SELECT");
 
 	/* Send CopyOutResponse message */
 	pq_beginmessage(&buf, 'H');
@@ -233,10 +236,8 @@ sendDir(char *path, bool sizeonly)
 		if (lstat(pathbuf, &statbuf) != 0)
 		{
 			if (errno != ENOENT)
-			{
 				elog(WARNING, "could not stat file or directory \"%s\": %m",
 					 pathbuf);
-			}
 
 			/* If the file went away while scanning, it's no error. */
 			continue;
@@ -250,7 +251,7 @@ sendDir(char *path, bool sizeonly)
 			MemSet(linkpath, 0, sizeof(linkpath));
 			if (readlink(pathbuf, linkpath, sizeof(linkpath)-1) == -1)
 			{
-				elog(WARNING, "Unable to read symbolic link \"%s\": %m",
+				elog(WARNING, "unable to read symbolic link \"%s\": %m",
 					 pathbuf);
 			}
 			if (!sizeonly)
