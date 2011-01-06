@@ -391,6 +391,21 @@ pgreadlink(const char *path, char *buf, size_t size)
 	return r;
 }
 
+/*
+ * Assumes the file exists, so will return false if it doesn't
+ * (since a nonexistant file is not a junction)
+ */
+bool
+pgwin32_is_junction(char *path)
+{
+	DWORD attr = GetFileAttributes(path);
+	if (attr == INVALID_FILE_ATTRIBUTES)
+	{
+		_dosmaperr(GetLastError());
+		return false;
+	}
+	return ((attr & FILE_ATTRIBUTE_REPARSE_POINT) == FILE_ATTRIBUTE_REPARSE_POINT);
+}
 
 #endif   /* defined(WIN32) && !defined(__CYGWIN__) */
 
