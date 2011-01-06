@@ -243,7 +243,11 @@ sendDir(char *path, bool sizeonly)
 			continue;
 		}
 
+#ifndef WIN32
 		if (S_ISLNK(statbuf.st_mode) && strcmp(path, "./pg_tblspc") == 0)
+#else
+		if (pgwin32_is_junction(pathbuf) && strcmp(path, "./pg_tblspc") == 0)
+#endif
 		{
 			/* Allow symbolic links in pg_tblspc */
 			char	linkpath[MAXPGPATH];
