@@ -300,8 +300,6 @@ pgsymlink(const char *oldpath, const char *newpath)
 
 /*
  *	pgreadlink - uses Win32 junction points
- *
- *	For reference:	http://www.codeproject.com/KB/winsdk/junctionpoints.aspx
  */
 int
 pgreadlink(const char *path, char *buf, size_t size)
