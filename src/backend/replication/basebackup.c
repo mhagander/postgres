@@ -56,26 +56,10 @@ base_backup_cleanup(int code, Datum arg)
  * CopyOut format.
  */
 void
-SendBaseBackup(const char *options)
+SendBaseBackup(const char *backup_label, bool progress)
 {
 	DIR 		   *dir;
 	struct dirent  *de;
-	char   		   *backup_label = strchr(options, ';');
-	bool			progress = false;
-
-	if (backup_label == NULL)
-		ereport(FATAL,
-				(errcode(ERRCODE_PROTOCOL_VIOLATION),
-				 errmsg("invalid base backup options: %s", options)));
-	backup_label++; /* Walk past the semicolon */
-
-	/* Currently the only option string supported is PROGRESS */
-	if (strncmp(options, "PROGRESS", 8) == 0)
-		progress = true;
-	else if (options[0] != ';')
-		ereport(FATAL,
-				(errcode(ERRCODE_PROTOCOL_VIOLATION),
-				 errmsg("invalid base backup options: %s", options)));
 
 	/* Make sure we can open the directory with tablespaces in it */
 	dir = AllocateDir("pg_tblspc");
