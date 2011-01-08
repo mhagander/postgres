@@ -17,7 +17,7 @@
 #include <unistd.h>
 #include <time.h>
 
-#include "access/xlog_internal.h" /* for pg_start/stop_backup */
+#include "access/xlog_internal.h"		/* for pg_start/stop_backup */
 #include "catalog/pg_type.h"
 #include "lib/stringinfo.h"
 #include "libpq/libpq.h"
@@ -30,9 +30,9 @@
 #include "utils/elog.h"
 
 static int64 sendDir(char *path, char *basepath, bool sizeonly);
-static void sendFile(char *path, char *basepath, struct stat *statbuf);
+static void sendFile(char *path, char *basepath, struct stat * statbuf);
 static void _tarWriteHeader(char *filename, char *linktarget,
-							struct stat *statbuf);
+				struct stat * statbuf);
 static void SendBackupHeader(List *tablespaces);
 static void SendBackupDirectory(char *location, char *spcoid);
 static void base_backup_cleanup(int code, Datum arg);
@@ -53,7 +53,7 @@ typedef struct
 	char	   *oid;
 	char	   *path;
 	int64		size;
-} tablespaceinfo;
+}	tablespaceinfo;
 
 /*
  * SendBaseBackup() - send a complete base backup.
@@ -68,18 +68,18 @@ typedef struct
 void
 SendBaseBackup(const char *options)
 {
-	DIR 		   *dir;
-	struct dirent  *de;
-	char   		   *backup_label = strchr(options, ';');
-	bool			progress = false;
-	List		   *tablespaces = NIL;
+	DIR		   *dir;
+	struct dirent *de;
+	char	   *backup_label = strchr(options, ';');
+	bool		progress = false;
+	List	   *tablespaces = NIL;
 	tablespaceinfo *ti;
 
 	if (backup_label == NULL)
 		ereport(FATAL,
 				(errcode(ERRCODE_PROTOCOL_VIOLATION),
 				 errmsg("invalid base backup options: %s", options)));
-	backup_label++; /* Walk past the semicolon */
+	backup_label++;				/* Walk past the semicolon */
 
 	/* Currently the only option string supported is PROGRESS */
 	if (strncmp(options, "PROGRESS", 8) == 0)
@@ -103,8 +103,8 @@ SendBaseBackup(const char *options)
 	/* Collect information about all tablespaces */
 	while ((de = ReadDir(dir, "pg_tblspc")) != NULL)
 	{
-		char fullpath[MAXPGPATH];
-		char linkpath[MAXPGPATH];
+		char		fullpath[MAXPGPATH];
+		char		linkpath[MAXPGPATH];
 
 		if (de->d_name[0] == '.')
 			continue;
@@ -152,7 +152,8 @@ SendBaseBackup(const char *options)
 static void
 send_int8_string(StringInfoData *buf, uint64 intval)
 {
-	char is[32];
+	char		is[32];
+
 	sprintf(is, INT64_FORMAT, intval);
 	pq_sendint(buf, strlen(is), 4);
 	pq_sendbytes(buf, is, strlen(is));
@@ -162,20 +163,20 @@ static void
 SendBackupHeader(List *tablespaces)
 {
 	StringInfoData buf;
-	ListCell *lc;
+	ListCell   *lc;
 
 	/* Construct and send the directory information */
 	pq_beginmessage(&buf, 'T'); /* RowDescription */
-	pq_sendint(&buf, 3, 2); /* 3 fields */
+	pq_sendint(&buf, 3, 2);		/* 3 fields */
 
 	/* First field - spcoid */
 	pq_sendstring(&buf, "spcoid");
-	pq_sendint(&buf, 0, 4); /* table oid */
-	pq_sendint(&buf, 0, 2); /* attnum */
-	pq_sendint(&buf, OIDOID, 4); /* type oid */
-	pq_sendint(&buf, 4, 2); /* typlen */
-	pq_sendint(&buf, 0, 4); /* typmod */
-	pq_sendint(&buf, 0, 2); /* format code */
+	pq_sendint(&buf, 0, 4);		/* table oid */
+	pq_sendint(&buf, 0, 2);		/* attnum */
+	pq_sendint(&buf, OIDOID, 4);	/* type oid */
+	pq_sendint(&buf, 4, 2);		/* typlen */
+	pq_sendint(&buf, 0, 4);		/* typmod */
+	pq_sendint(&buf, 0, 2);		/* format code */
 
 	/* Second field - spcpath */
 	pq_sendstring(&buf, "spclocation");
@@ -205,20 +206,20 @@ SendBackupHeader(List *tablespaces)
 		pq_sendint(&buf, 3, 2); /* number of columns */
 		if (ti->path == NULL)
 		{
-			pq_sendint(&buf, -1, 4); /* Length = -1 ==> NULL */
+			pq_sendint(&buf, -1, 4);	/* Length = -1 ==> NULL */
 			pq_sendint(&buf, -1, 4);
 		}
 		else
 		{
-			pq_sendint(&buf, strlen(ti->oid), 4);  /* length */
+			pq_sendint(&buf, strlen(ti->oid), 4);		/* length */
 			pq_sendbytes(&buf, ti->oid, strlen(ti->oid));
-			pq_sendint(&buf, strlen(ti->path), 4); /* length */
+			pq_sendint(&buf, strlen(ti->path), 4);		/* length */
 			pq_sendbytes(&buf, ti->path, strlen(ti->path));
 		}
 		if (ti->size >= 0)
-			send_int8_string(&buf, ti->size/1024);
+			send_int8_string(&buf, ti->size / 1024);
 		else
-			pq_sendint(&buf, -1, 4); /* NULL */
+			pq_sendint(&buf, -1, 4);	/* NULL */
 
 		pq_endmessage(&buf);
 	}
@@ -234,8 +235,8 @@ SendBackupDirectory(char *location, char *spcoid)
 
 	/* Send CopyOutResponse message */
 	pq_beginmessage(&buf, 'H');
-	pq_sendbyte(&buf, 0);			/* overall format */
-	pq_sendint(&buf, 0, 2);			/* natts */
+	pq_sendbyte(&buf, 0);		/* overall format */
+	pq_sendint(&buf, 0, 2);		/* natts */
 	pq_endmessage(&buf);
 
 	/* tar up the data directory if NULL, otherwise the tablespace */
@@ -272,13 +273,12 @@ sendDir(char *path, char *basepath, bool sizeonly)
 		if (strcmp(pathbuf, "./pg_xlog") == 0)
 		{
 			/*
-			 * Write an empty directory for pg_xlog in the tar though,
-			 * so we get permissions right. But don't recurse to get the
-			 * contents.
+			 * Write an empty directory for pg_xlog in the tar though, so we
+			 * get permissions right. But don't recurse to get the contents.
 			 */
 			if (!sizeonly)
 				_tarWriteHeader(pathbuf + strlen(basepath) + 1, NULL, &statbuf);
-			size += 512; /* Size of the header just added */
+			size += 512;		/* Size of the header just added */
 			continue;
 		}
 
@@ -299,27 +299,27 @@ sendDir(char *path, char *basepath, bool sizeonly)
 #endif
 		{
 			/* Allow symbolic links in pg_tblspc */
-			char	linkpath[MAXPGPATH];
+			char		linkpath[MAXPGPATH];
 
 			MemSet(linkpath, 0, sizeof(linkpath));
-			if (readlink(pathbuf, linkpath, sizeof(linkpath)-1) == -1)
+			if (readlink(pathbuf, linkpath, sizeof(linkpath) - 1) == -1)
 			{
 				elog(WARNING, "unable to read symbolic link \"%s\": %m",
 					 pathbuf);
 			}
 			if (!sizeonly)
 				_tarWriteHeader(pathbuf + strlen(basepath) + 1, linkpath, &statbuf);
-			size += 512; /* Size of the header just added */
+			size += 512;		/* Size of the header just added */
 		}
 		else if (S_ISDIR(statbuf.st_mode))
 		{
 			/*
-			 * Store a directory entry in the tar file so we can get
-			 * the permissions right.
+			 * Store a directory entry in the tar file so we can get the
+			 * permissions right.
 			 */
 			if (!sizeonly)
 				_tarWriteHeader(pathbuf + strlen(basepath) + 1, NULL, &statbuf);
-			size += 512; /* Size of the header just added */
+			size += 512;		/* Size of the header just added */
 
 			/* call ourselves recursively for a directory */
 			size += sendDir(pathbuf, basepath, sizeonly);
@@ -329,7 +329,7 @@ sendDir(char *path, char *basepath, bool sizeonly)
 			size += statbuf.st_size;
 			if (!sizeonly)
 				sendFile(pathbuf, basepath, &statbuf);
-			size += 512; /* Size of the header of the file */
+			size += 512;		/* Size of the header of the file */
 		}
 		else
 			elog(WARNING, "skipping special file \"%s\"", pathbuf);
@@ -385,7 +385,7 @@ _tarChecksum(char *header)
 
 /* Given the member, write the TAR header & send the file */
 static void
-sendFile(char *filename, char *basepath, struct stat *statbuf)
+sendFile(char *filename, char *basepath, struct stat * statbuf)
 {
 	FILE	   *fp;
 	char		buf[32768];
@@ -416,8 +416,8 @@ sendFile(char *filename, char *basepath, struct stat *statbuf)
 		{
 			/*
 			 * Reached end of file. The file could be longer, if it was
-			 * extended while we were sending it, but for a base backup we
-			 * can ignore such extended data. It will be restored from WAL.
+			 * extended while we were sending it, but for a base backup we can
+			 * ignore such extended data. It will be restored from WAL.
 			 */
 			break;
 		}
@@ -427,7 +427,7 @@ sendFile(char *filename, char *basepath, struct stat *statbuf)
 	if (len < statbuf->st_size)
 	{
 		MemSet(buf, 0, sizeof(buf));
-		while(len < statbuf->st_size)
+		while (len < statbuf->st_size)
 		{
 			cnt = Min(sizeof(buf), statbuf->st_size - len);
 			pq_putmessage('d', buf, cnt);
@@ -448,7 +448,7 @@ sendFile(char *filename, char *basepath, struct stat *statbuf)
 
 
 static void
-_tarWriteHeader(char *filename, char *linktarget, struct stat *statbuf)
+_tarWriteHeader(char *filename, char *linktarget, struct stat * statbuf)
 {
 	char		h[512];
 	int			lastSum = 0;
@@ -461,12 +461,12 @@ _tarWriteHeader(char *filename, char *linktarget, struct stat *statbuf)
 	if (linktarget != NULL || S_ISDIR(statbuf->st_mode))
 	{
 		/*
-		 * We only support symbolic links to directories, and this is indicated
-		 * in the tar format by adding a slash at the end of the name, the same
-		 * as for regular directories.
+		 * We only support symbolic links to directories, and this is
+		 * indicated in the tar format by adding a slash at the end of the
+		 * name, the same as for regular directories.
 		 */
 		h[strlen(filename)] = '/';
-		h[strlen(filename)+1] = '\0';
+		h[strlen(filename) + 1] = '\0';
 	}
 
 	/* Mode 8 */

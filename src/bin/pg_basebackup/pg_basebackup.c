@@ -1,13 +1,14 @@
+
 /*-------------------------------------------------------------------------
  *
- * basebackup.c - receive a base backup using streaming replication protocol
+ * pg_basebackup.c - receive a base backup using streaming replication protocol
  *
  * Author: Magnus Hagander <magnus@hagander.net>
  *
  * Portions Copyright (c) 1996-2011, PostgreSQL Global Development Group
  *
  * IDENTIFICATION
- *        src/bin/pg_basebackup.c
+ *		  src/bin/pg_basebackup.c
  *-------------------------------------------------------------------------
  */
 
@@ -23,17 +24,16 @@
 
 /* Global options */
 static const char *progname;
-
-char   *basedir = NULL;
-char   *tardir = NULL;
-bool	showprogress = false;
-int		verbose = 0;
-char   *connstr = NULL;
+char	   *basedir = NULL;
+char	   *tardir = NULL;
+bool		showprogress = false;
+int			verbose = 0;
+char	   *connstr = NULL;
 
 /* Progress counters */
 static uint64 totalsize;
 static uint64 totaldone;
-static int tablespacecount;
+static int	tablespacecount;
 
 /* Function headers */
 static char *xstrdup(const char *s);
@@ -41,18 +41,15 @@ static void usage(void);
 static void verify_dir_is_empty_or_create(char *dirname);
 static PGconn *GetConnection(void);
 
-
 static void ReceiveTarFile(PGconn *conn, PGresult *res, int rownum);
 static void ReceiveAndUnpackTarFile(PGconn *conn, PGresult *res, int rownum);
 static void BaseBackup();
 
 
-
-
 static char *
 xstrdup(const char *s)
 {
-	char       *result;
+	char	   *result;
 
 	result = strdup(s);
 	if (!result)
@@ -68,7 +65,7 @@ static void
 usage(void)
 {
 	printf(_("%s takes base backups of running PostgreSQL servers\n\n"),
-			 progname);
+		   progname);
 	printf(_("Usage:\n"));
 	printf(_("  %s [OPTION]...\n"), progname);
 	printf(_("\nOptions:\n"));
@@ -89,26 +86,40 @@ verify_dir_is_empty_or_create(char *dirname)
 	switch (pg_check_dir(dirname))
 	{
 		case 0:
-			/* Does not exist, so create */
+
+			/*
+			 * Does not exist, so create
+			 */
 			if (mkdir(dirname, S_IRWXU) == -1)
 			{
-				fprintf(stderr, _("%s: could not create directory \"%s\": %s\n"),
-								  progname, dirname, strerror(errno));
+				fprintf(stderr,
+						_("%s: could not create directory \"%s\": %s\n"),
+						progname, dirname, strerror(errno));
 				exit(1);
 			}
 			return;
 		case 1:
-			/* Exists, empty */
+
+			/*
+			 * Exists, empty
+			 */
 			return;
 		case 2:
-			/* Exists, not empty */
-			fprintf(stderr, _("%s: directory \"%s\" exists but is not empty\n"),
-							  progname, dirname);
+
+			/*
+			 * Exists, not empty
+			 */
+			fprintf(stderr,
+					_("%s: directory \"%s\" exists but is not empty\n"),
+					progname, dirname);
 			exit(1);
 		case -1:
-			/* Access problem */
+
+			/*
+			 * Access problem
+			 */
 			fprintf(stderr, _("%s: could not access directory \"%s\": %s\n"),
-							  progname, dirname, strerror(errno));
+					progname, dirname, strerror(errno));
 			exit(1);
 	}
 }
@@ -116,26 +127,34 @@ verify_dir_is_empty_or_create(char *dirname)
 static void
 ReceiveTarFile(PGconn *conn, PGresult *res, int rownum)
 {
-	char fn[MAXPGPATH];
-	char *copybuf = NULL;
-	FILE *tarfile = NULL;
+	char		fn[MAXPGPATH];
+	char	   *copybuf = NULL;
+	FILE	   *tarfile = NULL;
 
 	if (PQgetisnull(res, rownum, 0))
-		/* Base tablespaces */
+
+		/*
+		 * Base tablespaces
+		 */
 		sprintf(fn, "%s/base.tar", tardir);
 	else
-		/* Specific tablespace */
+
+		/*
+		 * Specific tablespace
+		 */
 		sprintf(fn, "%s/%s.tar", tardir, PQgetvalue(res, rownum, 0));
 
 	tarfile = fopen(fn, "wb");
 	if (!tarfile)
 	{
 		fprintf(stderr, _("%s: could not create file \"%s\": %s\n"),
-						  progname, fn, strerror(errno));
+				progname, fn, strerror(errno));
 		exit(1);
 	}
 
-	/* Get the COPY data stream */
+	/*
+	 * Get the COPY data stream
+	 */
 	res = PQgetResult(conn);
 	if (!res || PQresultStatus(res) != PGRES_COPY_OUT)
 	{
@@ -146,7 +165,7 @@ ReceiveTarFile(PGconn *conn, PGresult *res, int rownum)
 
 	while (1)
 	{
-		int r;
+		int			r;
 
 		if (copybuf != NULL)
 		{
@@ -157,7 +176,9 @@ ReceiveTarFile(PGconn *conn, PGresult *res, int rownum)
 		r = PQgetCopyData(conn, &copybuf, 0);
 		if (r == -1)
 		{
-			/* End of chunk */
+			/*
+			 * End of chunk
+			 */
 			fclose(tarfile);
 
 			break;
@@ -174,18 +195,18 @@ ReceiveTarFile(PGconn *conn, PGresult *res, int rownum)
 		{
 			totaldone += r;
 			if (verbose)
-				fprintf(stderr, "%llu/%llu kB (%i%%), %i/%i tablespaces (%-60s)\r",
+				fprintf(stderr,
+						"%llu/%llu kB (%i%%), %i/%i tablespaces (%-60s)\r",
 						totaldone / 1024, totalsize,
-						(int)((totaldone / 1024) * 100 / totalsize),
-						rownum+1, tablespacecount,
-						fn);
+						(int) ((totaldone / 1024) * 100 / totalsize),
+						rownum + 1, tablespacecount, fn);
 			else
 				fprintf(stderr, "%llu/%llu kB (%i%%), %i/%i tablespaces\r",
 						totaldone / 1024, totalsize,
-						(int)((totaldone / 1024) * 100 / totalsize),
-						rownum+1, tablespacecount);
+						(int) ((totaldone / 1024) * 100 / totalsize),
+						rownum + 1, tablespacecount);
 		}
-	} /* while (1) */
+	}							/* while (1) */
 
 	if (copybuf != NULL)
 		PQfreemem(copybuf);
@@ -195,26 +216,31 @@ ReceiveTarFile(PGconn *conn, PGresult *res, int rownum)
 static void
 ReceiveAndUnpackTarFile(PGconn *conn, PGresult *res, int rownum)
 {
-	char current_path[MAXPGPATH];
-	char fn[MAXPGPATH];
-	char *copybuf = NULL;
-	int current_len_left;
-	int current_padding;
-	FILE *file = NULL;
+	char		current_path[MAXPGPATH];
+	char		fn[MAXPGPATH];
+	int			current_len_left;
+	int			current_padding;
+	char	   *copybuf = NULL;
+	FILE	   *file = NULL;
 
 	if (PQgetisnull(res, rownum, 0))
 		strcpy(current_path, basedir);
 	else
 		strcpy(current_path, PQgetvalue(res, rownum, 1));
 
-	/* Make sure we're unpacking into an empty directory */
+	/*
+	 * Make sure we're unpacking into an empty directory
+	 */
 	verify_dir_is_empty_or_create(current_path);
 
-	if (current_path[0] == '/') {
+	if (current_path[0] == '/')
+	{
 		current_path[0] = '_';
 	}
 
-	/* Get the COPY data */
+	/*
+	 * Get the COPY data
+	 */
 	res = PQgetResult(conn);
 	if (!res || PQresultStatus(res) != PGRES_COPY_OUT)
 	{
@@ -225,7 +251,7 @@ ReceiveAndUnpackTarFile(PGconn *conn, PGresult *res, int rownum)
 
 	while (1)
 	{
-		int r;
+		int			r;
 
 		if (copybuf != NULL)
 		{
@@ -237,7 +263,9 @@ ReceiveAndUnpackTarFile(PGconn *conn, PGresult *res, int rownum)
 
 		if (r == -1)
 		{
-			/* End of chunk */
+			/*
+			 * End of chunk
+			 */
 			if (file)
 				fclose(file);
 
@@ -252,7 +280,9 @@ ReceiveAndUnpackTarFile(PGconn *conn, PGresult *res, int rownum)
 
 		if (file == NULL)
 		{
-			/* No current file, so this must be the header for a new file */
+			/*
+			 * No current file, so this must be the header for a new file
+			 */
 			if (r != 512)
 			{
 				fprintf(stderr, "Invalid tar block header size: %i\n", r);
@@ -265,36 +295,51 @@ ReceiveAndUnpackTarFile(PGconn *conn, PGresult *res, int rownum)
 				exit(1);
 			}
 
-			/* All files are padded up to 512 bytes */
-			current_padding = ((current_len_left + 511) & ~511) - current_len_left;
+			/*
+			 * All files are padded up to 512 bytes
+			 */
+			current_padding =
+				((current_len_left + 511) & ~511) - current_len_left;
 
-			/* First part of header is zero terminated filename */
+			/*
+			 * First part of header is zero terminated filename
+			 */
 			sprintf(fn, "%s/%s", current_path, copybuf);
-			if (fn[strlen(fn)-1] == '/')
+			if (fn[strlen(fn) - 1] == '/')
 			{
-				/* Ends in a slash means directory or symlink to directory */
+				/*
+				 * Ends in a slash means directory or symlink to directory
+				 */
 				if (copybuf[156] == '5')
 				{
-					/* Directory */
-					fn[strlen(fn)-1] = '\0'; /* Remove trailing slash */
-					if (mkdir(fn, S_IRWXU) != 0) /* XXX: permissions */
+					/*
+					 * Directory
+					 */
+					fn[strlen(fn) - 1] = '\0';	/* Remove trailing slash */
+					if (mkdir(fn, S_IRWXU) != 0)		/* XXX: permissions */
 					{
-						fprintf(stderr, "Could not create directory \"%s\": %m\n",
-								fn);
+						fprintf(stderr,
+							  "Could not create directory \"%s\": %m\n", fn);
 						exit(1);
 					}
 				}
 				else if (copybuf[156] == '2')
 				{
-					/* Symbolic link */
-					fn[strlen(fn)-1] = '\0'; /* Remove trailing slash */
+					/*
+					 * Symbolic link
+					 */
+					fn[strlen(fn) - 1] = '\0';	/* Remove trailing slash */
 					if (symlink(&copybuf[157], fn) != 0)
 					{
-						fprintf(stderr, "Could not create symbolic link from %s to %s: %m\n",
+						fprintf(stderr,
+						"Could not create symbolic link from %s to %s: %m\n",
 								fn, &copybuf[157]);
 						exit(1);
 					}
-					/* XXX: permissions */
+
+					/*
+					 * XXX: permissions
+					 */
 				}
 				else
 				{
@@ -302,11 +347,13 @@ ReceiveAndUnpackTarFile(PGconn *conn, PGresult *res, int rownum)
 							copybuf[156]);
 					exit(1);
 				}
-				continue; /* directory or link handled */
+				continue;		/* directory or link handled */
 			}
 
-			/* regular file */
-			file = fopen(fn, "wb"); /* XXX: permissions & owner */
+			/*
+			 * regular file
+			 */
+			file = fopen(fn, "wb");		/* XXX: permissions & owner */
 			if (!file)
 			{
 				fprintf(stderr, "Failed to create file '%s': %m\n", fn);
@@ -315,15 +362,19 @@ ReceiveAndUnpackTarFile(PGconn *conn, PGresult *res, int rownum)
 
 			if (current_len_left == 0)
 			{
-				/* Done with this file, next one will be a new tar header */
+				/*
+				 * Done with this file, next one will be a new tar header
+				 */
 				fclose(file);
 				file = NULL;
 				continue;
 			}
-		} /* new file */
+		}						/* new file */
 		else
 		{
-			/* Continuing blocks in existing file */
+			/*
+			 * Continuing blocks in existing file
+			 */
 			if (current_len_left == 0 && r == current_padding)
 			{
 				/*
@@ -335,21 +386,21 @@ ReceiveAndUnpackTarFile(PGconn *conn, PGresult *res, int rownum)
 				continue;
 			}
 
-			fwrite(copybuf, r, 1, file); /* XXX: result code */
+			fwrite(copybuf, r, 1, file);		/* XXX: result code */
 			if (showprogress)
 			{
 				totaldone += r;
 				if (verbose)
-					fprintf(stderr, "%llu/%llu kB (%i%%) %i/%i tablespaces (%-60s)\r",
+					fprintf(stderr,
+							"%llu/%llu kB (%i%%) %i/%i tablespaces (%-60s)\r",
 							totaldone / 1024, totalsize,
-							(int)((totaldone / 1024) * 100 / totalsize),
-							rownum+1, tablespacecount,
-							fn);
+							(int) ((totaldone / 1024) * 100 / totalsize),
+							rownum + 1, tablespacecount, fn);
 				else
 					fprintf(stderr, "%llu/%llu kB (%i%%) %i/%i tablespaces\r",
 							totaldone / 1024, totalsize,
-							(int)((totaldone / 1024) * 100 / totalsize),
-							rownum+1, tablespacecount);
+							(int) ((totaldone / 1024) * 100 / totalsize),
+							rownum + 1, tablespacecount);
 			}
 
 			current_len_left -= r;
@@ -364,8 +415,8 @@ ReceiveAndUnpackTarFile(PGconn *conn, PGresult *res, int rownum)
 				file = NULL;
 				continue;
 			}
-		} /* continuing data in existing file */
-	} /* loop over all data blocks */
+		}						/* continuing data in existing file */
+	}							/* loop over all data blocks */
 
 	if (file != NULL)
 	{
@@ -381,8 +432,8 @@ ReceiveAndUnpackTarFile(PGconn *conn, PGresult *res, int rownum)
 static PGconn *
 GetConnection(void)
 {
-	char buf[MAXPGPATH];
-	PGconn *conn;
+	char		buf[MAXPGPATH];
+	PGconn	   *conn;
 
 	sprintf(buf, "%s dbname=replication replication=true", connstr);
 
@@ -403,10 +454,10 @@ GetConnection(void)
 static void
 BaseBackup()
 {
-	PGconn *conn;
-	PGresult *res;
-	char current_path[MAXPGPATH];
-	int i;
+	PGconn	   *conn;
+	PGresult   *res;
+	char		current_path[MAXPGPATH];
+	int			i;
 
 	/*
 	 * Connect in replication mode to the server
@@ -414,7 +465,7 @@ BaseBackup()
 	conn = GetConnection();
 
 	sprintf(current_path, "BASE_BACKUP %s;pg_streamrecv base backup",
-			showprogress?"PROGRESS":"");
+			showprogress ? "PROGRESS" : "");
 	if (PQsendQuery(conn, current_path) == 0)
 	{
 		fprintf(stderr, "Failed to start base backup: %s\n",
@@ -449,9 +500,9 @@ BaseBackup()
 			totalsize += atol(PQgetvalue(res, i, 2));
 
 		/*
-		 * Verify tablespace directories are empty
-		 * Don't bother with the first once since it can be relocated,
-		 * and it will be checked before we do anything anyway.
+		 * Verify tablespace directories are empty Don't bother with the first
+		 * once since it can be relocated, and it will be checked before we do
+		 * anything anyway.
 		 */
 		if (basedir != NULL && i > 0)
 			verify_dir_is_empty_or_create(PQgetvalue(res, i, 1));
@@ -466,11 +517,11 @@ BaseBackup()
 			ReceiveTarFile(conn, res, i);
 		else
 			ReceiveAndUnpackTarFile(conn, res, i);
-	} /* Loop over all tablespaces */
+	}							/* Loop over all tablespaces */
 	PQclear(res);
 
 	if (showprogress)
-		printf("\n"); /* Need to move to next line */
+		printf("\n");			/* Need to move to next line */
 
 	/*
 	 * End of copy data. Final result is already checked inside the loop.
@@ -494,8 +545,9 @@ main(int argc, char **argv)
 		{"progress", no_argument, NULL, 'p'},
 		{NULL, 0, NULL, 0}
 	};
-	int		c;
-	int		option_index;
+	int			c;
+
+	int			option_index;
 
 	progname = get_progname(argv[0]);
 	set_pglocale_pgservice(argv[0], PG_TEXTDOMAIN("pg_basebackup"));
@@ -508,14 +560,16 @@ main(int argc, char **argv)
 			usage();
 			exit(0);
 		}
-		else if (strcmp(argv[1], "-V") == 0 || strcmp(argv[1], "--version") == 0)
+		else if (strcmp(argv[1], "-V") == 0
+				 || strcmp(argv[1], "--version") == 0)
 		{
 			puts("pg_basebackup (PostgreSQL) " PG_VERSION);
 			exit(0);
 		}
 	}
 
-	while ((c = getopt_long(argc, argv, "c:d:t:vp", long_options, &option_index)) != -1)
+	while ((c = getopt_long(argc, argv, "c:d:t:vp",
+							long_options, &option_index)) != -1)
 	{
 		switch (c)
 		{
@@ -535,24 +589,32 @@ main(int argc, char **argv)
 				showprogress = true;
 				break;
 			default:
-				/* getopt_long already emitted a complaint */
+
+				/*
+				 * getopt_long already emitted a complaint
+				 */
 				fprintf(stderr, _("Try \"%s --help\" for more information.\n"),
 						progname);
 				exit(1);
 		}
 	}
 
-	/* Any non-option arguments? */
+	/*
+	 * Any non-option arguments?
+	 */
 	if (optind < argc)
 	{
-		fprintf(stderr, _("%s: too many command-line arguments (first is \"%s\")\n"),
+		fprintf(stderr,
+				_("%s: too many command-line arguments (first is \"%s\")\n"),
 				progname, argv[optind + 1]);
 		fprintf(stderr, _("Try \"%s --help\" for more information.\n"),
 				progname);
 		exit(1);
 	}
 
-	/* Required arguments */
+	/*
+	 * Required arguments
+	 */
 	if (basedir == NULL && tardir == NULL)
 	{
 		fprintf(stderr, _("%s: no target directory specified\n"), progname);
@@ -569,17 +631,22 @@ main(int argc, char **argv)
 		exit(1);
 	}
 
-	/* Mutually exclusive arguments */
+	/*
+	 * Mutually exclusive arguments
+	 */
 	if (basedir != NULL && tardir != NULL)
 	{
-		fprintf(stderr, _("%s: both directory mode and tar mode cannot be specified\n"),
+		fprintf(stderr,
+				_("%s: both directory mode and tar mode cannot be specified\n"),
 				progname);
 		fprintf(stderr, _("Try \"%s --help\" for more information.\n"),
 				progname);
 		exit(1);
 	}
 
-	/* Verify directories */
+	/*
+	 * Verify directories
+	 */
 	if (basedir)
 		verify_dir_is_empty_or_create(basedir);
 	else
