@@ -232,7 +232,6 @@ SendBackupDirectory(char *location, char *spcoid)
 {
 	StringInfoData buf;
 
-	elog(LOG, "Sending directory %s", location);
 	/* Send CopyOutResponse message */
 	pq_beginmessage(&buf, 'H');
 	pq_sendbyte(&buf, 0);			/* overall format */
