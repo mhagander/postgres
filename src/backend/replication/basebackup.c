@@ -29,8 +29,8 @@
 #include "utils/builtins.h"
 #include "utils/elog.h"
 
-static int64 sendDir(char *path, bool sizeonly);
-static void sendFile(char *path, struct stat *statbuf);
+static int64 sendDir(char *path, char *basepath, bool sizeonly);
+static void sendFile(char *path, char *basepath, struct stat *statbuf);
 static void _tarWriteHeader(char *filename, char *linktarget,
 							struct stat *statbuf);
 static void SendBackupHeader(List *tablespaces);
@@ -97,7 +97,7 @@ SendBaseBackup(const char *options)
 
 	/* Add a node for the base directory */
 	ti = palloc0(sizeof(tablespaceinfo));
-	ti->size = progress ? sendDir(".", true) : -1;
+	ti->size = progress ? sendDir(".", ".", true) : -1;
 	tablespaces = lappend(tablespaces, ti);
 
 	/* Collect information about all tablespaces */
@@ -122,7 +122,7 @@ SendBaseBackup(const char *options)
 		ti = palloc(sizeof(tablespaceinfo));
 		ti->oid = pstrdup(de->d_name);
 		ti->path = pstrdup(linkpath);
-		ti->size = progress ? sendDir(linkpath, true) : -1;
+		ti->size = progress ? sendDir(linkpath, linkpath, true) : -1;
 		tablespaces = lappend(tablespaces, ti);
 	}
 	FreeDir(dir);
@@ -239,7 +239,9 @@ SendBackupDirectory(char *location, char *spcoid)
 	pq_endmessage(&buf);
 
 	/* tar up the data directory if NULL, otherwise the tablespace */
-	sendDir(location == NULL ? "." : location, false);
+	sendDir(location == NULL ? "." : location,
+			location == NULL ? "." : location,
+			false);
 
 	/* Send CopyDone message */
 	pq_putemptymessage('c');
@@ -247,7 +249,7 @@ SendBackupDirectory(char *location, char *spcoid)
 
 
 static int64
-sendDir(char *path, bool sizeonly)
+sendDir(char *path, char *basepath, bool sizeonly)
 {
 	DIR		   *dir;
 	struct dirent *de;
@@ -264,7 +266,7 @@ sendDir(char *path, bool sizeonly)
 
 		snprintf(pathbuf, MAXPGPATH, "%s/%s", path, de->d_name);
 
-		/* Skip pg_xlog and postmaster.pid */
+		/* Skip pg_xlog and postmaster.pid in PGDATA */
 		if (strcmp(pathbuf, "./pg_xlog") == 0)
 			continue;
 		if (strcmp(pathbuf, "./postmaster.pid") == 0)
@@ -296,7 +298,7 @@ sendDir(char *path, bool sizeonly)
 					 pathbuf);
 			}
 			if (!sizeonly)
-				_tarWriteHeader(pathbuf, linkpath, &statbuf);
+				_tarWriteHeader(pathbuf + strlen(basepath) + 1, linkpath, &statbuf);
 		}
 		else if (S_ISDIR(statbuf.st_mode))
 		{
@@ -305,16 +307,16 @@ sendDir(char *path, bool sizeonly)
 			 * the permissions right.
 			 */
 			if (!sizeonly)
-				_tarWriteHeader(pathbuf, NULL, &statbuf);
+				_tarWriteHeader(pathbuf + strlen(basepath) + 1, NULL, &statbuf);
 
 			/* call ourselves recursively for a directory */
-			size += sendDir(pathbuf, sizeonly);
+			size += sendDir(pathbuf, basepath, sizeonly);
 		}
 		else if (S_ISREG(statbuf.st_mode))
 		{
 			size += statbuf.st_size;
 			if (!sizeonly)
-				sendFile(pathbuf, &statbuf);
+				sendFile(pathbuf, basepath, &statbuf);
 		}
 		else
 			elog(WARNING, "skipping special file \"%s\"", pathbuf);
@@ -370,7 +372,7 @@ _tarChecksum(char *header)
 
 /* Given the member, write the TAR header & send the file */
 static void
-sendFile(char *filename, struct stat *statbuf)
+sendFile(char *filename, char *basepath, struct stat *statbuf)
 {
 	FILE	   *fp;
 	char		buf[32768];
@@ -389,7 +391,7 @@ sendFile(char *filename, struct stat *statbuf)
 	if (statbuf->st_size > MAX_TAR_MEMBER_FILELEN)
 		elog(ERROR, "archive member too large for tar format");
 
-	_tarWriteHeader(filename, NULL, statbuf);
+	_tarWriteHeader(filename + strlen(basepath) + 1, NULL, statbuf);
 
 	while ((cnt = fread(buf, 1, Min(sizeof(buf), statbuf->st_size - len), fp)) > 0)
 	{
