@@ -22,17 +22,19 @@
 #include "lib/stringinfo.h"
 #include "libpq/libpq.h"
 #include "libpq/pqformat.h"
+#include "nodes/pg_list.h"
 #include "replication/basebackup.h"
 #include "storage/fd.h"
 #include "storage/ipc.h"
 #include "utils/builtins.h"
 #include "utils/elog.h"
 
-static uint64 sendDir(char *path, bool sizeonly);
+static int64 sendDir(char *path, bool sizeonly);
 static void sendFile(char *path, struct stat *statbuf);
 static void _tarWriteHeader(char *filename, char *linktarget,
 							struct stat *statbuf);
-static void SendBackupDirectory(char *location, char *spcoid, bool progress);
+static void SendBackupHeader(List *tablespaces);
+static void SendBackupDirectory(char *location, char *spcoid);
 static void base_backup_cleanup(int code, Datum arg);
 
 /*
@@ -44,6 +46,14 @@ base_backup_cleanup(int code, Datum arg)
 {
 	do_pg_abort_backup();
 }
+
+
+typedef struct
+{
+	char	   *oid;
+	char	   *path;
+	int64		size;
+} tablespaceinfo;
 
 /*
  * SendBaseBackup() - send a complete base backup.
@@ -62,6 +72,8 @@ SendBaseBackup(const char *options)
 	struct dirent  *de;
 	char   		   *backup_label = strchr(options, ';');
 	bool			progress = false;
+	List		   *tablespaces = NIL;
+	tablespaceinfo *ti;
 
 	if (backup_label == NULL)
 		ereport(FATAL,
@@ -83,35 +95,54 @@ SendBaseBackup(const char *options)
 		ereport(ERROR,
 				(errmsg("unable to open directory pg_tblspc: %m")));
 
+	/* Add a node for the base directory */
+	ti = palloc0(sizeof(tablespaceinfo));
+	ti->size = progress ? sendDir(".", true) : -1;
+	tablespaces = lappend(tablespaces, ti);
+
+	/* Collect information about all tablespaces */
+	while ((de = ReadDir(dir, "pg_tblspc")) != NULL)
+	{
+		char fullpath[MAXPGPATH];
+		char linkpath[MAXPGPATH];
+
+		if (de->d_name[0] == '.')
+			continue;
+
+		snprintf(fullpath, sizeof(fullpath), "pg_tblspc/%s", de->d_name);
+
+		MemSet(linkpath, 0, sizeof(linkpath));
+		if (readlink(fullpath, linkpath, sizeof(linkpath) - 1) == -1)
+		{
+			ereport(WARNING,
+					(errmsg("unable to read symbolic link %s", fullpath)));
+			continue;
+		}
+
+		ti = palloc(sizeof(tablespaceinfo));
+		ti->oid = pstrdup(de->d_name);
+		ti->path = pstrdup(linkpath);
+		ti->size = progress ? sendDir(linkpath, true) : -1;
+		tablespaces = lappend(tablespaces, ti);
+	}
+	FreeDir(dir);
+
 	do_pg_start_backup(backup_label, true);
 
 	PG_ENSURE_ERROR_CLEANUP(base_backup_cleanup, (Datum) 0);
 	{
-		SendBackupDirectory(NULL, NULL, progress);
+		ListCell   *lc;
 
-		/* Check for tablespaces */
-		while ((de = ReadDir(dir, "pg_tblspc")) != NULL)
+		/* Send tablespace header */
+		SendBackupHeader(tablespaces);
+
+		/* Send off our tablespaces one by one */
+		foreach(lc, tablespaces)
 		{
-			char fullpath[MAXPGPATH];
-			char linkpath[MAXPGPATH];
+			ti = (tablespaceinfo *) lfirst(lc);
 
-			if (de->d_name[0] == '.')
-				continue;
-
-			snprintf(fullpath, sizeof(fullpath), "pg_tblspc/%s", de->d_name);
-
-			MemSet(linkpath, 0, sizeof(linkpath));
-			if (readlink(fullpath, linkpath, sizeof(linkpath) - 1) == -1)
-			{
-				ereport(WARNING,
-						(errmsg("unable to read symbolic link %s", fullpath)));
-				continue;
-			}
-
-			SendBackupDirectory(linkpath, de->d_name, progress);
+			SendBackupDirectory(ti->path, ti->oid);
 		}
-
-		FreeDir(dir);
 	}
 	PG_END_ENSURE_ERROR_CLEANUP(base_backup_cleanup, (Datum) 0);
 
@@ -128,19 +159,10 @@ send_int8_string(StringInfoData *buf, uint64 intval)
 }
 
 static void
-SendBackupDirectory(char *location, char *spcoid, bool progress)
+SendBackupHeader(List *tablespaces)
 {
 	StringInfoData buf;
-	uint64			size = 0;
-
-	if (progress)
-	{
-		/*
-		 * If we're asking for progress, start by counting the size of
-		 * the tablespace. If not, we'll send 0.
-		 */
-		size = sendDir(location == NULL ? "." : location, true);
-	}
+	ListCell *lc;
 
 	/* Construct and send the directory information */
 	pq_beginmessage(&buf, 'T'); /* RowDescription */
@@ -174,27 +196,43 @@ SendBackupDirectory(char *location, char *spcoid, bool progress)
 	pq_sendint(&buf, 0, 2);
 	pq_endmessage(&buf);
 
-	/* Send one datarow message */
-	pq_beginmessage(&buf, 'D');
-	pq_sendint(&buf, 3, 2); /* number of columns */
-	if (location == NULL)
+	foreach(lc, tablespaces)
 	{
-		pq_sendint(&buf, -1, 4); /* Length = -1 ==> NULL */
-		pq_sendint(&buf, -1, 4);
+		tablespaceinfo *ti = lfirst(lc);
+
+		/* Send one datarow message */
+		pq_beginmessage(&buf, 'D');
+		pq_sendint(&buf, 3, 2); /* number of columns */
+		if (ti->path == NULL)
+		{
+			pq_sendint(&buf, -1, 4); /* Length = -1 ==> NULL */
+			pq_sendint(&buf, -1, 4);
+		}
+		else
+		{
+			pq_sendint(&buf, strlen(ti->oid), 4);  /* length */
+			pq_sendbytes(&buf, ti->oid, strlen(ti->oid));
+			pq_sendint(&buf, strlen(ti->path), 4); /* length */
+			pq_sendbytes(&buf, ti->path, strlen(ti->path));
+		}
+		if (ti->size >= 0)
+			send_int8_string(&buf, ti->size/1024);
+		else
+			pq_sendint(&buf, -1, 4); /* NULL */
+
+		pq_endmessage(&buf);
 	}
-	else
-	{
-		pq_sendint(&buf, 4, 4); /* Length of oid */
-		pq_sendint(&buf, atoi(spcoid), 4);
-		pq_sendint(&buf, strlen(location), 4); /* length of text */
-		pq_sendbytes(&buf, location, strlen(location));
-	}
-	send_int8_string(&buf, size/1024);
-	pq_endmessage(&buf);
 
 	/* Send a CommandComplete message */
 	pq_puttextmessage('C', "SELECT");
+}
 
+static void
+SendBackupDirectory(char *location, char *spcoid)
+{
+	StringInfoData buf;
+
+	elog(LOG, "Sending directory %s", location);
 	/* Send CopyOutResponse message */
 	pq_beginmessage(&buf, 'H');
 	pq_sendbyte(&buf, 0);			/* overall format */
@@ -209,14 +247,14 @@ SendBackupDirectory(char *location, char *spcoid, bool progress)
 }
 
 
-static uint64
+static int64
 sendDir(char *path, bool sizeonly)
 {
 	DIR		   *dir;
 	struct dirent *de;
 	char		pathbuf[MAXPGPATH];
 	struct stat statbuf;
-	uint64		size = 0;
+	int64		size = 0;
 
 	dir = AllocateDir(path);
 	while ((de = ReadDir(dir, path)) != NULL)

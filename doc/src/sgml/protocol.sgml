@@ -1488,24 +1488,23 @@ The commands accepted in walsender mode are:
       </variablelist>
      </para>
      <para>
-      When the backup is started, the server will send one or more pairs of
-      ordinary results sets and CopyResponse results. The first one will
-      contain the base DATA directory, and it will be followed by one pair
-      for each tablespace other than <literal>pg_default</> and
-      <literal>pg_global</>. For each pair there will be a regular resultset
-      with header information followed by the contents of the tablespace
-      in tar format (using ustar00 extensions) as a CopyResponse.
+      When the backup is started, the server will first send a header in
+      ordinary result set format, followed by one or more CopyResponse
+      results, one for PGDATA and one for each additional tablespace other
+      than <literal>pg_default</> and <literal>pg_global</>. The data in
+      the CopyResponse results will be a tar format (using ustar00
+      extensions) dump of the tablespace contents.
      </para>
      <para>
-      The header is an ordinary resultset with a single row. The fields in
-      this row are:
+      The header is an ordinary resultset with one row for each tablespace.
+      The fields in this row are:
       <variablelist>
        <varlistentry>
         <term>spcoid</term>
         <listitem>
          <para>
-          The oid of the tablespace that this datablock refers to, or
-          <literal>NULL</> if it's the base directory.
+          The oid of the tablespace, or <literal>NULL</> if it's the base
+          directory.
          </para>
         </listitem>
        </varlistentry>
@@ -1513,8 +1512,8 @@ The commands accepted in walsender mode are:
         <term>spclocation</term>
         <listitem>
          <para>
-          The full path of the tablespace directory that this datablock
-          refers to, or <literal>NULL</> if it's the base directory.
+          The full path of the tablespace directory, or <literal>NULL</>
+          if it's the base directory.
          </para>
         </listitem>
        </varlistentry>
@@ -1522,8 +1521,8 @@ The commands accepted in walsender mode are:
         <term>size</term>
         <listitem>
          <para>
-          The approximage size of the datablock, if progress report has
-          been requested; otherwise it's zero.
+          The approximate size of the datablock, if progress report has
+          been requested; otherwise it's <literal>NULL</>.
          </para>
         </listitem>
        </varlistentry>
@@ -1548,10 +1547,6 @@ The commands accepted in walsender mode are:
       </itemizedlist>
       Owner, group and file mode are set if the underlying filesystem on
       the server supports it.
-     </para>
-     <para>
-      Once all tablespaces are sent, a CommandComplete message is sent to
-      indicate that the backup is complete.
      </para>
     </listitem>
   </varlistentry>
