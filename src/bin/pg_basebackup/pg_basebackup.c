@@ -185,8 +185,8 @@ ReceiveTarFile(PGconn *conn, PGresult *res, int rownum)
 		}
 		else if (r == -2)
 		{
-			fprintf(stderr, "Error reading COPY data: %s\n",
-					PQerrorMessage(conn));
+			fprintf(stderr, _("%s: could not read COPY data: %s\n"),
+					progname, PQerrorMessage(conn));
 			exit(1);
 		}
 
@@ -273,8 +273,8 @@ ReceiveAndUnpackTarFile(PGconn *conn, PGresult *res, int rownum)
 		}
 		else if (r == -2)
 		{
-			fprintf(stderr, "Error reading copy data: %s\n",
-					PQerrorMessage(conn));
+			fprintf(stderr, _("%s: could not read COPY data: %s\n"),
+					progname, PQerrorMessage(conn));
 			exit(1);
 		}
 
@@ -285,13 +285,15 @@ ReceiveAndUnpackTarFile(PGconn *conn, PGresult *res, int rownum)
 			 */
 			if (r != 512)
 			{
-				fprintf(stderr, "Invalid tar block header size: %i\n", r);
+				fprintf(stderr, _("%s: Invalid tar block header size: %i\n"),
+						progname, r);
 				exit(1);
 			}
 
 			if (sscanf(copybuf + 124, "%11o", &current_len_left) != 1)
 			{
-				fprintf(stderr, "Failed to parse file size!\n");
+				fprintf(stderr, _("%s: could not parse file size!\n"),
+					progname);
 				exit(1);
 			}
 
@@ -319,7 +321,8 @@ ReceiveAndUnpackTarFile(PGconn *conn, PGresult *res, int rownum)
 					if (mkdir(fn, S_IRWXU) != 0)		/* XXX: permissions */
 					{
 						fprintf(stderr,
-							  "Could not create directory \"%s\": %m\n", fn);
+								_("%s: could not create directory \"%s\": %m\n"),
+								progname, fn);
 						exit(1);
 					}
 				}
@@ -332,8 +335,8 @@ ReceiveAndUnpackTarFile(PGconn *conn, PGresult *res, int rownum)
 					if (symlink(&copybuf[157], fn) != 0)
 					{
 						fprintf(stderr,
-						"Could not create symbolic link from %s to %s: %m\n",
-								fn, &copybuf[157]);
+								_("%s: could not create symbolic link from %s to %s: %m\n"),
+								progname, fn, &copybuf[157]);
 						exit(1);
 					}
 
@@ -343,8 +346,8 @@ ReceiveAndUnpackTarFile(PGconn *conn, PGresult *res, int rownum)
 				}
 				else
 				{
-					fprintf(stderr, "Unknown link indicator '%c'\n",
-							copybuf[156]);
+					fprintf(stderr, _("%s: unknown link indicator '%c'\n"),
+							progname, copybuf[156]);
 					exit(1);
 				}
 				continue;		/* directory or link handled */
@@ -356,7 +359,8 @@ ReceiveAndUnpackTarFile(PGconn *conn, PGresult *res, int rownum)
 			file = fopen(fn, "wb");		/* XXX: permissions & owner */
 			if (!file)
 			{
-				fprintf(stderr, "Failed to create file '%s': %m\n", fn);
+				fprintf(stderr, _("%s: could not create file '%s': %m\n"),
+						progname, fn);
 				exit(1);
 			}
 
@@ -420,7 +424,7 @@ ReceiveAndUnpackTarFile(PGconn *conn, PGresult *res, int rownum)
 
 	if (file != NULL)
 	{
-		fprintf(stderr, "Last file was never finsihed!\n");
+		fprintf(stderr, _("%s: last file was never finsihed!\n"), progname);
 		exit(1);
 	}
 
@@ -443,8 +447,8 @@ GetConnection(void)
 	conn = PQconnectdb(buf);
 	if (!conn || PQstatus(conn) != CONNECTION_OK)
 	{
-		fprintf(stderr, "Failed to connect to server: %s\n",
-				PQerrorMessage(conn));
+		fprintf(stderr, _("%s: could not connect to server: %s\n"),
+				progname, PQerrorMessage(conn));
 		exit(1);
 	}
 
@@ -468,8 +472,8 @@ BaseBackup()
 			showprogress ? "PROGRESS" : "");
 	if (PQsendQuery(conn, current_path) == 0)
 	{
-		fprintf(stderr, "Failed to start base backup: %s\n",
-				PQerrorMessage(conn));
+		fprintf(stderr, _("%s: coult not start base backup: %s\n"),
+				progname, PQerrorMessage(conn));
 		exit(1);
 	}
 
@@ -485,7 +489,7 @@ BaseBackup()
 	}
 	if (PQntuples(res) < 1)
 	{
-		fprintf(stderr, "No data returned from server.\n");
+		fprintf(stderr, _("%s: no data returned from server.\n"), progname);
 		exit(1);
 	}
 
