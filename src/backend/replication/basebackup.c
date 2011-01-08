@@ -267,6 +267,8 @@ sendDir(char *path, char *basepath, bool sizeonly)
 		snprintf(pathbuf, MAXPGPATH, "%s/%s", path, de->d_name);
 
 		/* Skip pg_xlog and postmaster.pid in PGDATA */
+		if (strcmp(pathbuf, "./postmaster.pid") == 0)
+			continue;
 		if (strcmp(pathbuf, "./pg_xlog") == 0)
 		{
 			/*
@@ -276,10 +278,9 @@ sendDir(char *path, char *basepath, bool sizeonly)
 			 */
 			if (!sizeonly)
 				_tarWriteHeader(pathbuf + strlen(basepath) + 1, NULL, &statbuf);
+			size += 512; /* Size of the header just added */
 			continue;
 		}
-		if (strcmp(pathbuf, "./postmaster.pid") == 0)
-			continue;
 
 		if (lstat(pathbuf, &statbuf) != 0)
 		{
@@ -308,6 +309,7 @@ sendDir(char *path, char *basepath, bool sizeonly)
 			}
 			if (!sizeonly)
 				_tarWriteHeader(pathbuf + strlen(basepath) + 1, linkpath, &statbuf);
+			size += 512; /* Size of the header just added */
 		}
 		else if (S_ISDIR(statbuf.st_mode))
 		{
@@ -317,6 +319,7 @@ sendDir(char *path, char *basepath, bool sizeonly)
 			 */
 			if (!sizeonly)
 				_tarWriteHeader(pathbuf + strlen(basepath) + 1, NULL, &statbuf);
+			size += 512; /* Size of the header just added */
 
 			/* call ourselves recursively for a directory */
 			size += sendDir(pathbuf, basepath, sizeonly);
@@ -326,6 +329,7 @@ sendDir(char *path, char *basepath, bool sizeonly)
 			size += statbuf.st_size;
 			if (!sizeonly)
 				sendFile(pathbuf, basepath, &statbuf);
+			size += 512; /* Size of the header of the file */
 		}
 		else
 			elog(WARNING, "skipping special file \"%s\"", pathbuf);
