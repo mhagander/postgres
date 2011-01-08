@@ -268,7 +268,16 @@ sendDir(char *path, char *basepath, bool sizeonly)
 
 		/* Skip pg_xlog and postmaster.pid in PGDATA */
 		if (strcmp(pathbuf, "./pg_xlog") == 0)
+		{
+			/*
+			 * Write an empty directory for pg_xlog in the tar though,
+			 * so we get permissions right. But don't recurse to get the
+			 * contents.
+			 */
+			if (!sizeonly)
+				_tarWriteHeader(pathbuf + strlen(basepath) + 1, NULL, &statbuf);
 			continue;
+		}
 		if (strcmp(pathbuf, "./postmaster.pid") == 0)
 			continue;
 
