@@ -1,0 +1,593 @@
+/*-------------------------------------------------------------------------
+ *
+ * basebackup.c - receive a base backup using streaming replication protocol
+ *
+ * Author: Magnus Hagander <magnus@hagander.net>
+ *
+ * Portions Copyright (c) 1996-2011, PostgreSQL Global Development Group
+ *
+ * IDENTIFICATION
+ *        src/bin/pg_basebackup.c
+ *-------------------------------------------------------------------------
+ */
+
+#include "postgres_fe.h"
+#include "libpq-fe.h"
+
+#include <unistd.h>
+#include <dirent.h>
+#include <sys/stat.h>
+
+#include "getopt_long.h"
+
+
+/* Global options */
+static const char *progname;
+
+char   *basedir = NULL;
+char   *tardir = NULL;
+bool	showprogress = false;
+int		verbose = 0;
+char   *connstr = NULL;
+
+/* Progress counters */
+static uint64 totalsize;
+static uint64 totaldone;
+static int tablespacecount;
+
+/* Function headers */
+static char *xstrdup(const char *s);
+static void usage(void);
+static void verify_dir_is_empty_or_create(char *dirname);
+static PGconn *GetConnection(void);
+
+
+static void ReceiveTarFile(PGconn *conn, PGresult *res, int rownum);
+static void ReceiveAndUnpackTarFile(PGconn *conn, PGresult *res, int rownum);
+static void BaseBackup();
+
+
+
+
+static char *
+xstrdup(const char *s)
+{
+	char       *result;
+
+	result = strdup(s);
+	if (!result)
+	{
+		fprintf(stderr, _("%s: out of memory\n"), progname);
+		exit(1);
+	}
+	return result;
+}
+
+
+static void
+usage(void)
+{
+	printf(_("%s takes base backups of running PostgreSQL servers\n\n"),
+			 progname);
+	printf(_("Usage:\n"));
+	printf(_("  %s [OPTION]...\n"), progname);
+	printf(_("\nOptions:\n"));
+	printf(_("  -c, --connstr=connstr     connection string to server\n"));
+	printf(_("  -d, --basedir=directory   receive base backup into directory\n"));
+	printf(_("  -t, --tardir=directory    receive base backup into tar files\n"
+			 "                            stored in specified directory\n"));
+	printf(_("  -p, --progress            show progress information\n"));
+	printf(_("  -v, --verbose             output verbose messages\n"));
+	printf(_("\nOther options:\n"));
+	printf(_("  -?, --help                show this help, then exit\n"));
+	printf(_("  -V, --version             output version information, then exit\n"));
+}
+
+static void
+verify_dir_is_empty_or_create(char *dirname)
+{
+	switch (pg_check_dir(dirname))
+	{
+		case 0:
+			/* Does not exist, so create */
+			if (mkdir(dirname, S_IRWXU) == -1)
+			{
+				fprintf(stderr, _("%s: could not create directory \"%s\": %s\n"),
+								  progname, dirname, strerror(errno));
+				exit(1);
+			}
+			return;
+		case 1:
+			/* Exists, empty */
+			return;
+		case 2:
+			/* Exists, not empty */
+			fprintf(stderr, _("%s: directory \"%s\" exists but is not empty\n"),
+							  progname, dirname);
+			exit(1);
+		case -1:
+			/* Access problem */
+			fprintf(stderr, _("%s: could not access directory \"%s\": %s\n"),
+							  progname, dirname, strerror(errno));
+			exit(1);
+	}
+}
+
+static void
+ReceiveTarFile(PGconn *conn, PGresult *res, int rownum)
+{
+	char fn[MAXPGPATH];
+	char *copybuf = NULL;
+	FILE *tarfile = NULL;
+
+	if (PQgetisnull(res, rownum, 0))
+		/* Base tablespaces */
+		sprintf(fn, "%s/base.tar", tardir);
+	else
+		/* Specific tablespace */
+		sprintf(fn, "%s/%s.tar", tardir, PQgetvalue(res, rownum, 0));
+
+	tarfile = fopen(fn, "wb");
+	if (!tarfile)
+	{
+		fprintf(stderr, _("%s: could not create file \"%s\": %s\n"),
+						  progname, fn, strerror(errno));
+		exit(1);
+	}
+
+	/* Get the COPY data stream */
+	res = PQgetResult(conn);
+	if (!res || PQresultStatus(res) != PGRES_COPY_OUT)
+	{
+		fprintf(stderr, _("%s: could not get COPY data stream: %s\n"),
+				progname, PQerrorMessage(conn));
+		exit(1);
+	}
+
+	while (1)
+	{
+		int r;
+
+		if (copybuf != NULL)
+		{
+			PQfreemem(copybuf);
+			copybuf = NULL;
+		}
+
+		r = PQgetCopyData(conn, &copybuf, 0);
+		if (r == -1)
+		{
+			/* End of chunk */
+			fclose(tarfile);
+
+			break;
+		}
+		else if (r == -2)
+		{
+			fprintf(stderr, "Error reading COPY data: %s\n",
+					PQerrorMessage(conn));
+			exit(1);
+		}
+
+		fwrite(copybuf, r, 1, tarfile);
+		if (showprogress)
+		{
+			totaldone += r;
+			if (verbose)
+				fprintf(stderr, "%llu/%llu kB (%i%%), %i/%i tablespaces (%-60s)\r",
+						totaldone / 1024, totalsize,
+						(int)((totaldone / 1024) * 100 / totalsize),
+						rownum+1, tablespacecount,
+						fn);
+			else
+				fprintf(stderr, "%llu/%llu kB (%i%%), %i/%i tablespaces\r",
+						totaldone / 1024, totalsize,
+						(int)((totaldone / 1024) * 100 / totalsize),
+						rownum+1, tablespacecount);
+		}
+	} /* while (1) */
+
+	if (copybuf != NULL)
+		PQfreemem(copybuf);
+}
+
+
+static void
+ReceiveAndUnpackTarFile(PGconn *conn, PGresult *res, int rownum)
+{
+	char current_path[MAXPGPATH];
+	char fn[MAXPGPATH];
+	char *copybuf = NULL;
+	int current_len_left;
+	int current_padding;
+	FILE *file = NULL;
+
+	if (PQgetisnull(res, rownum, 0))
+		strcpy(current_path, basedir);
+	else
+		strcpy(current_path, PQgetvalue(res, rownum, 1));
+
+	/* Make sure we're unpacking into an empty directory */
+	verify_dir_is_empty_or_create(current_path);
+
+	if (current_path[0] == '/') {
+		current_path[0] = '_';
+	}
+
+	/* Get the COPY data */
+	res = PQgetResult(conn);
+	if (!res || PQresultStatus(res) != PGRES_COPY_OUT)
+	{
+		fprintf(stderr, _("%s: could not get COPY data stream: %s\n"),
+				progname, PQerrorMessage(conn));
+		exit(1);
+	}
+
+	while (1)
+	{
+		int r;
+
+		if (copybuf != NULL)
+		{
+			PQfreemem(copybuf);
+			copybuf = NULL;
+		}
+
+		r = PQgetCopyData(conn, &copybuf, 0);
+
+		if (r == -1)
+		{
+			/* End of chunk */
+			if (file)
+				fclose(file);
+
+			break;
+		}
+		else if (r == -2)
+		{
+			fprintf(stderr, "Error reading copy data: %s\n",
+					PQerrorMessage(conn));
+			exit(1);
+		}
+
+		if (file == NULL)
+		{
+			/* No current file, so this must be the header for a new file */
+			if (r != 512)
+			{
+				fprintf(stderr, "Invalid tar block header size: %i\n", r);
+				exit(1);
+			}
+
+			if (sscanf(copybuf + 124, "%11o", &current_len_left) != 1)
+			{
+				fprintf(stderr, "Failed to parse file size!\n");
+				exit(1);
+			}
+
+			/* All files are padded up to 512 bytes */
+			current_padding = ((current_len_left + 511) & ~511) - current_len_left;
+
+			/* First part of header is zero terminated filename */
+			sprintf(fn, "%s/%s", current_path, copybuf);
+			if (fn[strlen(fn)-1] == '/')
+			{
+				/* Ends in a slash means directory or symlink to directory */
+				if (copybuf[156] == '5')
+				{
+					/* Directory */
+					fn[strlen(fn)-1] = '\0'; /* Remove trailing slash */
+					if (mkdir(fn, S_IRWXU) != 0) /* XXX: permissions */
+					{
+						fprintf(stderr, "Could not create directory \"%s\": %m\n",
+								fn);
+						exit(1);
+					}
+				}
+				else if (copybuf[156] == '2')
+				{
+					/* Symbolic link */
+					fn[strlen(fn)-1] = '\0'; /* Remove trailing slash */
+					if (symlink(&copybuf[157], fn) != 0)
+					{
+						fprintf(stderr, "Could not create symbolic link from %s to %s: %m\n",
+								fn, &copybuf[157]);
+						exit(1);
+					}
+					/* XXX: permissions */
+				}
+				else
+				{
+					fprintf(stderr, "Unknown link indicator '%c'\n",
+							copybuf[156]);
+					exit(1);
+				}
+				continue; /* directory or link handled */
+			}
+
+			/* regular file */
+			file = fopen(fn, "wb"); /* XXX: permissions & owner */
+			if (!file)
+			{
+				fprintf(stderr, "Failed to create file '%s': %m\n", fn);
+				exit(1);
+			}
+
+			if (current_len_left == 0)
+			{
+				/* Done with this file, next one will be a new tar header */
+				fclose(file);
+				file = NULL;
+				continue;
+			}
+		} /* new file */
+		else
+		{
+			/* Continuing blocks in existing file */
+			if (current_len_left == 0 && r == current_padding)
+			{
+				/*
+				 * Received the padding block for this file, ignore it and
+				 * close the file, then move on to the next tar header.
+				 */
+				fclose(file);
+				file = NULL;
+				continue;
+			}
+
+			fwrite(copybuf, r, 1, file); /* XXX: result code */
+			if (showprogress)
+			{
+				totaldone += r;
+				if (verbose)
+					fprintf(stderr, "%llu/%llu kB (%i%%) %i/%i tablespaces (%-60s)\r",
+							totaldone / 1024, totalsize,
+							(int)((totaldone / 1024) * 100 / totalsize),
+							rownum+1, tablespacecount,
+							fn);
+				else
+					fprintf(stderr, "%llu/%llu kB (%i%%) %i/%i tablespaces\r",
+							totaldone / 1024, totalsize,
+							(int)((totaldone / 1024) * 100 / totalsize),
+							rownum+1, tablespacecount);
+			}
+
+			current_len_left -= r;
+			if (current_len_left == 0 && current_padding == 0)
+			{
+				/*
+				 * Received the last block, and there is no padding to be
+				 * expected. Close the file and move on to the next tar
+				 * header.
+				 */
+				fclose(file);
+				file = NULL;
+				continue;
+			}
+		} /* continuing data in existing file */
+	} /* loop over all data blocks */
+
+	if (file != NULL)
+	{
+		fprintf(stderr, "Last file was never finsihed!\n");
+		exit(1);
+	}
+
+	if (copybuf != NULL)
+		PQfreemem(copybuf);
+}
+
+
+static PGconn *
+GetConnection(void)
+{
+	char buf[MAXPGPATH];
+	PGconn *conn;
+
+	sprintf(buf, "%s dbname=replication replication=true", connstr);
+
+	if (verbose > 1)
+		printf("Connecting to '%s'\n", buf);
+
+	conn = PQconnectdb(buf);
+	if (!conn || PQstatus(conn) != CONNECTION_OK)
+	{
+		fprintf(stderr, "Failed to connect to server: %s\n",
+				PQerrorMessage(conn));
+		exit(1);
+	}
+
+	return conn;
+}
+
+static void
+BaseBackup()
+{
+	PGconn *conn;
+	PGresult *res;
+	char current_path[MAXPGPATH];
+	int i;
+
+	/*
+	 * Connect in replication mode to the server
+	 */
+	conn = GetConnection();
+
+	sprintf(current_path, "BASE_BACKUP %s;pg_streamrecv base backup",
+			showprogress?"PROGRESS":"");
+	if (PQsendQuery(conn, current_path) == 0)
+	{
+		fprintf(stderr, "Failed to start base backup: %s\n",
+				PQerrorMessage(conn));
+		exit(1);
+	}
+
+	/*
+	 * Get the header
+	 */
+	res = PQgetResult(conn);
+	if (!res || PQresultStatus(res) != PGRES_TUPLES_OK)
+	{
+		fprintf(stderr, _("%s: could not initiate base backup: %s\n"),
+				progname, PQerrorMessage(conn));
+		exit(1);
+	}
+	if (PQntuples(res) < 1)
+	{
+		fprintf(stderr, "No data returned from server.\n");
+		exit(1);
+	}
+
+	/*
+	 * Sum up the total size, for progress reporting
+	 */
+	totalsize = totaldone = 0;
+	tablespacecount = PQntuples(res);
+	for (i = 0; i < PQntuples(res); i++)
+	{
+		if (showprogress)
+			totalsize += atol(PQgetvalue(res, i, 2));
+
+		/*
+		 * Verify tablespace directories are empty
+		 * Don't bother with the first once since it can be relocated,
+		 * and it will be checked before we do anything anyway.
+		 */
+		if (basedir != NULL && i > 0)
+			verify_dir_is_empty_or_create(PQgetvalue(res, i, 1));
+	}
+
+	/*
+	 * Start receiving chunks
+	 */
+	for (i = 0; i < PQntuples(res); i++)
+	{
+		if (tardir != NULL)
+			ReceiveTarFile(conn, res, i);
+		else
+			ReceiveAndUnpackTarFile(conn, res, i);
+	} /* Loop over all tablespaces */
+	PQclear(res);
+
+	if (showprogress)
+		printf("\n"); /* Need to move to next line */
+
+	/*
+	 * End of copy data. Final result is already checked inside the loop.
+	 */
+	PQfinish(conn);
+
+	printf("Base backup completed.\n");
+}
+
+
+int
+main(int argc, char **argv)
+{
+	static struct option long_options[] = {
+		{"help", no_argument, NULL, '?'},
+		{"version", no_argument, NULL, 'V'},
+		{"connstr", required_argument, NULL, 'c'},
+		{"basedir", required_argument, NULL, 'd'},
+		{"tardir", required_argument, NULL, 't'},
+		{"verbose", no_argument, NULL, 'v'},
+		{"progress", no_argument, NULL, 'p'},
+		{NULL, 0, NULL, 0}
+	};
+	int		c;
+	int		option_index;
+
+	progname = get_progname(argv[0]);
+	set_pglocale_pgservice(argv[0], PG_TEXTDOMAIN("pg_basebackup"));
+
+	if (argc > 1)
+	{
+		if (strcmp(argv[1], "-h") == 0 || strcmp(argv[1], "--help") == 0 ||
+			strcmp(argv[1], "-?") == 0)
+		{
+			usage();
+			exit(0);
+		}
+		else if (strcmp(argv[1], "-V") == 0 || strcmp(argv[1], "--version") == 0)
+		{
+			puts("pg_basebackup (PostgreSQL) " PG_VERSION);
+			exit(0);
+		}
+	}
+
+	while ((c = getopt_long(argc, argv, "c:d:t:vp", long_options, &option_index)) != -1)
+	{
+		switch (c)
+		{
+			case 'c':
+				connstr = xstrdup(optarg);
+				break;
+			case 'd':
+				basedir = xstrdup(optarg);
+				break;
+			case 't':
+				tardir = xstrdup(optarg);
+				break;
+			case 'v':
+				verbose++;
+				break;
+			case 'p':
+				showprogress = true;
+				break;
+			default:
+				/* getopt_long already emitted a complaint */
+				fprintf(stderr, _("Try \"%s --help\" for more information.\n"),
+						progname);
+				exit(1);
+		}
+	}
+
+	/* Any non-option arguments? */
+	if (optind < argc)
+	{
+		fprintf(stderr, _("%s: too many command-line arguments (first is \"%s\")\n"),
+				progname, argv[optind + 1]);
+		fprintf(stderr, _("Try \"%s --help\" for more information.\n"),
+				progname);
+		exit(1);
+	}
+
+	/* Required arguments */
+	if (basedir == NULL && tardir == NULL)
+	{
+		fprintf(stderr, _("%s: no target directory specified\n"), progname);
+		fprintf(stderr, _("Try \"%s --help\" for more information.\n"),
+				progname);
+		exit(1);
+	}
+
+	if (connstr == NULL)
+	{
+		fprintf(stderr, _("%s: no connection string specified\n"), progname);
+		fprintf(stderr, _("Try \"%s --help\" for more information.\n"),
+				progname);
+		exit(1);
+	}
+
+	/* Mutually exclusive arguments */
+	if (basedir != NULL && tardir != NULL)
+	{
+		fprintf(stderr, _("%s: both directory mode and tar mode cannot be specified\n"),
+				progname);
+		fprintf(stderr, _("Try \"%s --help\" for more information.\n"),
+				progname);
+		exit(1);
+	}
+
+	/* Verify directories */
+	if (basedir)
+		verify_dir_is_empty_or_create(basedir);
+	else
+		verify_dir_is_empty_or_create(tardir);
+
+
+
+	BaseBackup();
+
+	return 0;
+}
