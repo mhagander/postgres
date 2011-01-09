@@ -559,6 +559,14 @@ BaseBackup()
 		fprintf(stderr, "\n");			/* Need to move to next line */
 	}
 
+	res = PQgetResult(conn);
+	if (!res || PQresultStatus(res) != PGRES_COMMAND_OK)
+	{
+		fprintf(stderr, _("%s: final receive failed: %s\n"),
+				progname, PQerrorMessage(conn));
+		exit(1);
+	}
+
 	/*
 	 * End of copy data. Final result is already checked inside the loop.
 	 */
