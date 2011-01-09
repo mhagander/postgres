@@ -199,12 +199,12 @@ ReceiveTarFile(PGconn *conn, PGresult *res, int rownum)
 						"%llu/%llu kB (%i%%), %i/%i tablespaces (%-60s)\r",
 						totaldone / 1024, totalsize,
 						(int) ((totaldone / 1024) * 100 / totalsize),
-						rownum + 1, tablespacecount, fn);
+						rownum, tablespacecount, fn);
 			else
 				fprintf(stderr, "%llu/%llu kB (%i%%), %i/%i tablespaces\r",
 						totaldone / 1024, totalsize,
 						(int) ((totaldone / 1024) * 100 / totalsize),
-						rownum + 1, tablespacecount);
+						rownum, tablespacecount);
 		}
 	}							/* while (1) */
 
@@ -399,12 +399,12 @@ ReceiveAndUnpackTarFile(PGconn *conn, PGresult *res, int rownum)
 							"%llu/%llu kB (%i%%) %i/%i tablespaces (%-60s)\r",
 							totaldone / 1024, totalsize,
 							(int) ((totaldone / 1024) * 100 / totalsize),
-							rownum + 1, tablespacecount, fn);
+							rownum, tablespacecount, fn);
 				else
 					fprintf(stderr, "%llu/%llu kB (%i%%) %i/%i tablespaces\r",
 							totaldone / 1024, totalsize,
 							(int) ((totaldone / 1024) * 100 / totalsize),
-							rownum + 1, tablespacecount);
+							rownum, tablespacecount);
 			}
 
 			current_len_left -= r;
