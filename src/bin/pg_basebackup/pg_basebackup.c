@@ -26,6 +26,7 @@
 static const char *progname;
 char	   *basedir = NULL;
 char	   *tardir = NULL;
+char	   *label = "pg_basebackup base backup";
 bool		showprogress = false;
 int			verbose = 0;
 char	   *connstr = NULL;
@@ -73,6 +74,7 @@ usage(void)
 	printf(_("  -d, --basedir=directory   receive base backup into directory\n"));
 	printf(_("  -t, --tardir=directory    receive base backup into tar files\n"
 			 "                            stored in specified directory\n"));
+	printf(_("  -l, --label=label         set backup label\n"));
 	printf(_("  -p, --progress            show progress information\n"));
 	printf(_("  -v, --verbose             output verbose messages\n"));
 	printf(_("\nOther options:\n"));
@@ -468,8 +470,9 @@ BaseBackup()
 	 */
 	conn = GetConnection();
 
-	sprintf(current_path, "BASE_BACKUP %s;pg_streamrecv base backup",
-			showprogress ? "PROGRESS" : "");
+	sprintf(current_path, "BASE_BACKUP %s;%s",
+			showprogress ? "PROGRESS" : "",
+			label);
 	if (PQsendQuery(conn, current_path) == 0)
 	{
 		fprintf(stderr, _("%s: coult not start base backup: %s\n"),
@@ -545,6 +548,7 @@ main(int argc, char **argv)
 		{"connstr", required_argument, NULL, 'c'},
 		{"basedir", required_argument, NULL, 'd'},
 		{"tardir", required_argument, NULL, 't'},
+		{"label", required_argument, NULL, 'l'},
 		{"verbose", no_argument, NULL, 'v'},
 		{"progress", no_argument, NULL, 'p'},
 		{NULL, 0, NULL, 0}
@@ -572,7 +576,7 @@ main(int argc, char **argv)
 		}
 	}
 
-	while ((c = getopt_long(argc, argv, "c:d:t:vp",
+	while ((c = getopt_long(argc, argv, "c:d:t:l:vp",
 							long_options, &option_index)) != -1)
 	{
 		switch (c)
@@ -585,6 +589,9 @@ main(int argc, char **argv)
 				break;
 			case 't':
 				tardir = xstrdup(optarg);
+				break;
+			case 'l':
+				label = xstrdup(optarg);
 				break;
 			case 'v':
 				verbose++;
