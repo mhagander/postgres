@@ -215,7 +215,7 @@ ReceiveTarFile(PGconn *conn, PGresult *res, int rownum)
 			totaldone += r;
 			if (verbose)
 				fprintf(stderr,
-						"%llu/%llu kB (%i%%), %i/%i tablespaces (%-60s)\r",
+						"%llu/%llu kB (%i%%), %i/%i tablespaces (%-30s)\r",
 						totaldone / 1024, totalsize,
 						(int) ((totaldone / 1024) * 100 / totalsize),
 						rownum, tablespacecount, fn);
@@ -415,7 +415,7 @@ ReceiveAndUnpackTarFile(PGconn *conn, PGresult *res, int rownum)
 				totaldone += r;
 				if (verbose)
 					fprintf(stderr,
-							"%llu/%llu kB (%i%%) %i/%i tablespaces (%-60s)\r",
+							"%llu/%llu kB (%i%%) %i/%i tablespaces (%-30s)\r",
 							totaldone / 1024, totalsize,
 							(int) ((totaldone / 1024) * 100 / totalsize),
 							rownum, tablespacecount, fn);
