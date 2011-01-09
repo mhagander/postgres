@@ -267,9 +267,20 @@ sendDir(char *path, char *basepath, bool sizeonly)
 
 		snprintf(pathbuf, MAXPGPATH, "%s/%s", path, de->d_name);
 
-		/* Skip pg_xlog and postmaster.pid in PGDATA */
+		/* Skip postmaster.pid in PGDATA */
 		if (strcmp(pathbuf, "./postmaster.pid") == 0)
 			continue;
+
+		if (lstat(pathbuf, &statbuf) != 0)
+		{
+			if (errno != ENOENT)
+				elog(WARNING, "could not stat file or directory \"%s\": %m",
+					 pathbuf);
+
+			/* If the file went away while scanning, it's no error. */
+			continue;
+		}
+
 		if (strcmp(pathbuf, "./pg_xlog") == 0)
 		{
 			/*
@@ -279,16 +290,6 @@ sendDir(char *path, char *basepath, bool sizeonly)
 			if (!sizeonly)
 				_tarWriteHeader(pathbuf + strlen(basepath) + 1, NULL, &statbuf);
 			size += 512;		/* Size of the header just added */
-			continue;
-		}
-
-		if (lstat(pathbuf, &statbuf) != 0)
-		{
-			if (errno != ENOENT)
-				elog(WARNING, "could not stat file or directory \"%s\": %m",
-					 pathbuf);
-
-			/* If the file went away while scanning, it's no error. */
 			continue;
 		}
 
