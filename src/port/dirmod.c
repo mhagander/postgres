@@ -304,12 +304,12 @@ pgsymlink(const char *oldpath, const char *newpath)
 int
 pgreadlink(const char *path, char *buf, size_t size)
 {
-	DWORD attr;
-	HANDLE h;
-	char buffer[MAX_PATH * sizeof(WCHAR) + sizeof(REPARSE_JUNCTION_DATA_BUFFER)];
-	REPARSE_JUNCTION_DATA_BUFFER *reparseBuf = (REPARSE_JUNCTION_DATA_BUFFER *)buffer;
-	DWORD len;
-	int r;
+	DWORD		attr;
+	HANDLE		h;
+	char		buffer[MAX_PATH * sizeof(WCHAR) + sizeof(REPARSE_JUNCTION_DATA_BUFFER)];
+	REPARSE_JUNCTION_DATA_BUFFER *reparseBuf = (REPARSE_JUNCTION_DATA_BUFFER *) buffer;
+	DWORD		len;
+	int			r;
 
 	attr = GetFileAttributes(path);
 	if (attr == INVALID_FILE_ATTRIBUTES)
@@ -325,7 +325,7 @@ pgreadlink(const char *path, char *buf, size_t size)
 
 	h = CreateFile(path,
 				   GENERIC_READ,
-				   FILE_SHARE_READ|FILE_SHARE_WRITE,
+				   FILE_SHARE_READ | FILE_SHARE_WRITE,
 				   NULL,
 				   OPEN_EXISTING,
 				   FILE_FLAG_OPEN_REPARSE_POINT | FILE_FLAG_BACKUP_SEMANTICS,
@@ -388,12 +388,12 @@ pgreadlink(const char *path, char *buf, size_t size)
 	}
 
 	/*
-	 * If the path starts with "\??\", which it will do in most (all?)
-	 * cases, strip those out.
+	 * If the path starts with "\??\", which it will do in most (all?) cases,
+	 * strip those out.
 	 */
 	if (r > 4 && strncmp(buf, "\\??\\", 4) == 0)
 	{
-		memmove(buf, buf+4, strlen(buf+4)+1);
+		memmove(buf, buf + 4, strlen(buf + 4) + 1);
 		r -= 4;
 	}
 	return r;
@@ -406,7 +406,8 @@ pgreadlink(const char *path, char *buf, size_t size)
 bool
 pgwin32_is_junction(char *path)
 {
-	DWORD attr = GetFileAttributes(path);
+	DWORD		attr = GetFileAttributes(path);
+
 	if (attr == INVALID_FILE_ATTRIBUTES)
 	{
 		_dosmaperr(GetLastError());
@@ -414,7 +415,6 @@ pgwin32_is_junction(char *path)
 	}
 	return ((attr & FILE_ATTRIBUTE_REPARSE_POINT) == FILE_ATTRIBUTE_REPARSE_POINT);
 }
-
 #endif   /* defined(WIN32) && !defined(__CYGWIN__) */
 
 
