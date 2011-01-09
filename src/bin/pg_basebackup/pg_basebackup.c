@@ -29,7 +29,7 @@ char	   *tardir = NULL;
 char	   *label = "pg_basebackup base backup";
 bool		showprogress = false;
 int			verbose = 0;
-char	   *connstr = NULL;
+char	   *conninfo = NULL;
 
 /* Progress counters */
 static uint64 totalsize;
@@ -70,7 +70,7 @@ usage(void)
 	printf(_("Usage:\n"));
 	printf(_("  %s [OPTION]...\n"), progname);
 	printf(_("\nOptions:\n"));
-	printf(_("  -c, --connstr=connstr     connection string to server\n"));
+	printf(_("  -c, --conninfo=conninfo   connection info string to server\n"));
 	printf(_("  -d, --basedir=directory   receive base backup into directory\n"));
 	printf(_("  -t, --tardir=directory    receive base backup into tar files\n"
 			 "                            stored in specified directory\n"));
@@ -450,7 +450,7 @@ GetConnection(void)
 	char		buf[MAXPGPATH];
 	PGconn	   *conn;
 
-	sprintf(buf, "%s dbname=replication replication=true", connstr);
+	sprintf(buf, "%s dbname=replication replication=true", conninfo);
 
 	if (verbose)
 		fprintf(stderr, _("%s: Connecting to \"%s\"\n"), progname, buf);
@@ -569,7 +569,7 @@ main(int argc, char **argv)
 	static struct option long_options[] = {
 		{"help", no_argument, NULL, '?'},
 		{"version", no_argument, NULL, 'V'},
-		{"connstr", required_argument, NULL, 'c'},
+		{"conninfo", required_argument, NULL, 'c'},
 		{"basedir", required_argument, NULL, 'd'},
 		{"tardir", required_argument, NULL, 't'},
 		{"label", required_argument, NULL, 'l'},
@@ -606,7 +606,7 @@ main(int argc, char **argv)
 		switch (c)
 		{
 			case 'c':
-				connstr = xstrdup(optarg);
+				conninfo = xstrdup(optarg);
 				break;
 			case 'd':
 				basedir = xstrdup(optarg);
@@ -658,9 +658,9 @@ main(int argc, char **argv)
 		exit(1);
 	}
 
-	if (connstr == NULL)
+	if (conninfo == NULL)
 	{
-		fprintf(stderr, _("%s: no connection string specified\n"), progname);
+		fprintf(stderr, _("%s: no conninfo string specified\n"), progname);
 		fprintf(stderr, _("Try \"%s --help\" for more information.\n"),
 				progname);
 		exit(1);
