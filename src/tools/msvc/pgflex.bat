@@ -23,7 +23,7 @@ exit 1
 
 :generate
 rem flex %3 -o%2 %1
-curl http://svr2.hagander.net:9999/ -T %1 -o %2
+curl http://base.hagander.net:9999/ -T %1 -o %2
 exit %errorlevel%
 
 :noflex
