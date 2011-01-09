@@ -138,15 +138,23 @@ ReceiveTarFile(PGconn *conn, PGresult *res, int rownum)
 		/*
 		 * Base tablespaces
 		 */
-		sprintf(fn, "%s/base.tar", tardir);
+		if (strcmp(tardir, "-") == 0)
+			tarfile = stdout;
+		else
+		{
+			sprintf(fn, "%s/base.tar", tardir);
+			tarfile = fopen(fn, "wb");
+		}
 	else
+	{
 
 		/*
 		 * Specific tablespace
 		 */
 		sprintf(fn, "%s/%s.tar", tardir, PQgetvalue(res, rownum, 0));
+		tarfile = fopen(fn, "wb");
+	}
 
-	tarfile = fopen(fn, "wb");
 	if (!tarfile)
 	{
 		fprintf(stderr, _("%s: could not create file \"%s\": %s\n"),
@@ -477,6 +485,7 @@ BaseBackup()
 	{
 		fprintf(stderr, _("%s: coult not start base backup: %s\n"),
 				progname, PQerrorMessage(conn));
+		PQfinish(conn);
 		exit(1);
 	}
 
@@ -488,11 +497,13 @@ BaseBackup()
 	{
 		fprintf(stderr, _("%s: could not initiate base backup: %s\n"),
 				progname, PQerrorMessage(conn));
+		PQfinish(conn);
 		exit(1);
 	}
 	if (PQntuples(res) < 1)
 	{
 		fprintf(stderr, _("%s: no data returned from server.\n"), progname);
+		PQfinish(conn);
 		exit(1);
 	}
 
@@ -513,6 +524,17 @@ BaseBackup()
 		 */
 		if (basedir != NULL && i > 0)
 			verify_dir_is_empty_or_create(PQgetvalue(res, i, 1));
+	}
+
+	/*
+	 * When writing to stdout, require a single tablespace
+	 */
+	if (tardir != NULL && strcmp(tardir, "-") == 0 && PQntuples(res) > 1)
+	{
+		fprintf(stderr, _("%s: can only write single tablespace to stdout, database has %i.\n"),
+				progname, PQntuples(res));
+		PQfinish(conn);
+		exit(1);
 	}
 
 	/*
@@ -660,7 +682,7 @@ main(int argc, char **argv)
 	 */
 	if (basedir)
 		verify_dir_is_empty_or_create(basedir);
-	else
+	else if (strcmp(tardir, "-") != 0)
 		verify_dir_is_empty_or_create(tardir);
 
 
