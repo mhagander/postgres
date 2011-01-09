@@ -308,6 +308,7 @@ ReceiveAndUnpackTarFile(PGconn *conn, PGresult *res, int rownum)
 						progname, r);
 				exit(1);
 			}
+			totaldone += 512;
 
 			if (sscanf(copybuf + 124, "%11o", &current_len_left) != 1)
 			{
@@ -406,6 +407,7 @@ ReceiveAndUnpackTarFile(PGconn *conn, PGresult *res, int rownum)
 				 */
 				fclose(file);
 				file = NULL;
+				totaldone += r;
 				continue;
 			}
 

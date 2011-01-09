@@ -327,7 +327,8 @@ sendDir(char *path, char *basepath, bool sizeonly)
 		}
 		else if (S_ISREG(statbuf.st_mode))
 		{
-			size += statbuf.st_size;
+			/* Add size, rounded up to 512byte block */
+			size += ((statbuf.st_size + 511) & ~511);
 			if (!sizeonly)
 				sendFile(pathbuf, basepath, &statbuf);
 			size += 512;		/* Size of the header of the file */
