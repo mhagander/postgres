@@ -451,8 +451,8 @@ GetConnection(void)
 
 	sprintf(buf, "%s dbname=replication replication=true", connstr);
 
-	if (verbose > 1)
-		printf("Connecting to '%s'\n", buf);
+	if (verbose)
+		fprintf(stderr, _("%s: Connecting to \"%s\"\n"), progname, buf);
 
 	conn = PQconnectdb(buf);
 	if (!conn || PQstatus(conn) != CONNECTION_OK)
@@ -550,14 +550,15 @@ BaseBackup()
 	PQclear(res);
 
 	if (showprogress)
-		printf("\n");			/* Need to move to next line */
+		fprintf(stderr, "\n");			/* Need to move to next line */
 
 	/*
 	 * End of copy data. Final result is already checked inside the loop.
 	 */
 	PQfinish(conn);
 
-	printf("Base backup completed.\n");
+	if (verbose)
+		fprintf(stderr, "%s: base backup completed.\n", progname);
 }
 
 
