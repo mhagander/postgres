@@ -309,6 +309,7 @@ pgreadlink(const char *path, char *buf, size_t size)
 	char buffer[MAX_PATH * sizeof(WCHAR) + sizeof(REPARSE_JUNCTION_DATA_BUFFER)];
 	REPARSE_JUNCTION_DATA_BUFFER *reparseBuf = (REPARSE_JUNCTION_DATA_BUFFER *)buffer;
 	DWORD len;
+	int r;
 
 	attr = GetFileAttributes(path);
 	if (attr == INVALID_FILE_ATTRIBUTES)
@@ -329,7 +330,7 @@ pgreadlink(const char *path, char *buf, size_t size)
 				   OPEN_EXISTING,
 				   FILE_FLAG_OPEN_REPARSE_POINT,
 				   0);
-	if (h == INVALID_HANDLE_ERROR)
+	if (h == INVALID_HANDLE_VALUE)
 	{
 		_dosmaperr(GetLastError());
 		return -1;
