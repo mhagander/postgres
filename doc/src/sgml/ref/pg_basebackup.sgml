@@ -12,7 +12,7 @@ PostgreSQL documentation
 
  <refnamediv>
   <refname>pg_basebackup</refname>
-  <refpurpose>take a base backup of a <productname>PostgreSQL</productname> instance</refpurpose>
+  <refpurpose>base backup of a <productname>PostgreSQL</productname> cluster</refpurpose>
  </refnamediv>
 
  <indexterm zone="app-pgbasebackup">
@@ -31,9 +31,36 @@ PostgreSQL documentation
    Description
   </title>
   <para>
-   Placeholder
+   <application>pg_basebackup</application> is used to take base backups of
+   a running <productname>PostgreSQL</productname> database cluster. These
+   are taken without affecting other clients to the database, and can be used
+   both for point-in-time recovery (see <xref linkend="continuous-archiving">)
+   and as the starting point for log shipping or streaming replicatoin
+   (see <xref linkend="warm-standby">).
   </para>
 
+  <para>
+   <application>pg_basebackup</application> makes a binary copy of the database
+   cluster files, while making sure the system is automatically put in and
+   out of backup mode automatically. Backups are always taken of the entire
+   database cluster, it is not possible to back up individual databases or
+   database objects. For individual database backups, a tool such as
+   <xref linkend="APP-PGDUMP"> must be used.
+  </para>
+
+  <para>
+   The backup is made over a regular <productname>PostgreSQL</productname>
+   connection, and uses the replication protocol. The connection must be
+   made with a user having <literal>REPLICATION</literal> permissions (see
+   <xref linkend="role-attributes">).
+  </para>
+
+  <para>
+   Only one backup can be concurrently active in
+   <productname>PostgreSQL</productname>, meaning that only one instance of
+   <application>pg_basebackup</application> can run at the same time
+   against a single database cluster.
+  </para>
  </refsect1>
 
  <refsect1>
@@ -42,15 +69,102 @@ PostgreSQL documentation
    <para>
     <variablelist>
      <varlistentry>
-      <term><option>-d <replaceable class="parameter">directory</replaceable></option></term>
-      <term><option>--basedir=<replaceable class="parameter">directory</replaceable></option></term>
+      <term><option>-c <replaceable class="parameter">conninfo</replaceable></option></term>
+      <term><option>--conninfo=<replaceable class="parameter">conninfo</replaceable></option></term>
       <listitem>
        <para>
-        Placeholder
+        Specify the conninfo string used to connect to the server. For example:
+<programlisting>
+$ <userinput>pg_basebackup -c "host=192.168.0.2 user=backup"</userinput>
+</programlisting>
+        See <xref linkend="libpq-connect"> for more information on all the
+        available connection options.
        </para>
       </listitem>
      </varlistentry>
 
+     <varlistentry>
+      <term><option>-d <replaceable class="parameter">directory</replaceable></option></term>
+      <term><option>--basedir=<replaceable class="parameter">directory</replaceable></option></term>
+      <listitem>
+       <para>
+        Directory to restore the base data directory to. When the cluster has
+        no additional tablespaces, the whole database will be placed in this
+        directory. If the cluster contains additional tablespaces, the main
+        data directory will be placed in this directory, but all other
+        tablespaces will be placed in the same absolute path as they have
+        on the server.
+       </para>
+       <para>
+        Only one of <literal>-d</> and <literal>-t</> can be specified.
+       </para>
+      </listitem>
+     </varlistentry>
+
+     <varlistentry>
+      <term><option>-t <replaceable class="parameter">directory</replaceable></option></term>
+      <term><option>--tardir=<replaceable class="parameter">directory</replaceable></option></term>
+      <listitem>
+       <para>
+        Directory to place tar format files in. When this is specified, the
+        backup will constist of a number of tar files, one for each tablespace
+        in the database, stored in this directory. The tar file for the main
+        data directory will be named <filename>base.tar</>, and all other
+        tablespaces will be named after the tablespace oid.
+       </para>
+       <para>
+        If the value <literal>-</> (dash) is specified as tar directory,
+        the tar contents will be written to standard output, suitable for
+        piping to for example <productname>gzip</>. This is only possible if
+        the cluster has no additional tablespaces.
+       </para>
+       <para>
+        Only one of <literal>-d</> and <literal>-t</> can be specified.
+       </para>
+      </listitem>
+     </varlistentry>
+
+     <varlistentry>
+      <term><option>-l <replaceable class="parameter">label</replaceable></option></term>
+      <term><option>--label=<replaceable class="parameter">label</replaceable></option></term>
+      <listitem>
+       <para>
+        Sets the label for the backup. If none is specified, a default value of
+        <literal>pg_basebackup base backup</literal> will be used.
+       </para>
+      </listitem>
+     </varlistentry>
+
+     <varlistentry>
+      <term><option>-p</option></term>
+      <term><option>--progress</option></term>
+      <listitem>
+       <para>
+        Enables progress reporting. Turning this on will deliver an approximate
+        progress report during the backup. Since the database may change during
+        the backup, this is only an approximation and may not end at exactly
+        <literal>100%</literal>.
+       </para>
+       <para>
+        When this is enabled, the backup will start by enumerating the size of
+        the entire database, and then go back and send the actual contents.
+        This may make the backup take slightly longer, and in particular it
+        will take longer before the first data is sent.
+       </para>
+      </listitem>
+     </varlistentry>
+
+     <varlistentry>
+      <term><option>-v</option></term>
+      <term><option>--verbose</option></term>
+      <listitem>
+       <para>
+        Enables verbose mode. Will output some extra steps during startup and
+        shutdown, as well as show the exact filename that is currently being
+        processed if progress reporting is also enabled.
+       </para>
+      </listitem>
+     </varlistentry>
     </variablelist>
    </para>
 
@@ -99,7 +213,16 @@ PostgreSQL documentation
   <title>Notes</title>
 
   <para>
-   Placeholder
+   The backup will include all files in the data directory and tablespaces,
+   including the configuration files and any additional files placed in the
+   directory by third parties. Only regular files and directories are allowed
+   in the data directory, no symbolic links or special device files.
+  </para>
+
+  <para>
+   The way <productname>PostgreSQL</productname> manageas tablespaces, the path
+   for all additional tablespaces must be identical whenever a backup is
+   restored. The main data directory, however, is relocatable to any location.
   </para>
  </refsect1>
 
