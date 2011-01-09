@@ -387,6 +387,15 @@ pgreadlink(const char *path, char *buf, size_t size)
 		return -1;
 	}
 
+	/*
+	 * If the path starts with "\??\", which it will do in most (all?)
+	 * cases, strip those out.
+	 */
+	if (r > 4 && strncmp(buf, "\\??\\", 4) == 0)
+	{
+		memmove(buf, buf+4, strlen(buf+4)+1);
+		r -= 4;
+	}
 	return r;
 }
 
