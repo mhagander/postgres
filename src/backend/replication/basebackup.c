@@ -115,7 +115,7 @@ SendBaseBackup(const char *options)
 		if (readlink(fullpath, linkpath, sizeof(linkpath) - 1) == -1)
 		{
 			ereport(WARNING,
-					(errmsg("unable to read symbolic link %s", fullpath)));
+					(errmsg("unable to read symbolic link %s: %m", fullpath)));
 			continue;
 		}
 
