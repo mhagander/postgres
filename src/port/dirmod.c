@@ -325,10 +325,10 @@ pgreadlink(const char *path, char *buf, size_t size)
 
 	h = CreateFile(path,
 				   GENERIC_READ,
-				   0,
+				   FILE_SHARE_READ|FILE_SHARE_WRITE,
 				   NULL,
 				   OPEN_EXISTING,
-				   FILE_FLAG_OPEN_REPARSE_POINT,
+				   FILE_FLAG_OPEN_REPARSE_POINT | FILE_FLAG_BACKUP_SEMANTICS,
 				   0);
 	if (h == INVALID_HANDLE_VALUE)
 	{
