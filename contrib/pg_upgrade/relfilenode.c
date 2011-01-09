@@ -17,8 +17,7 @@ static void transfer_single_new_db(pageCnvCtx *pageConverter,
 					   FileNameMap *maps, int size);
 static void transfer_relfile(pageCnvCtx *pageConverter,
 				 const char *fromfile, const char *tofile,
-				 const char *old_nspname, const char *new_nspname,
-				 const char *old_relname, const char *new_relname);
+				 const char *nspname, const char *relname);
 
 /* used by scandir(), must be global */
 char		scandir_file_pattern[MAXPGPATH];
@@ -30,22 +29,29 @@ char		scandir_file_pattern[MAXPGPATH];
  * physically link the databases.
  */
 const char *
-transfer_all_new_dbs(DbInfoArr *olddb_arr,
-					 DbInfoArr *newdb_arr, char *old_pgdata, char *new_pgdata)
+transfer_all_new_dbs(DbInfoArr *old_db_arr,
+					 DbInfoArr *new_db_arr, char *old_pgdata, char *new_pgdata)
 {
 	int			dbnum;
 	const char *msg = NULL;
 
 	prep_status("Restoring user relation files\n");
 
-	for (dbnum = 0; dbnum < newdb_arr->ndbs; dbnum++)
+	if (old_db_arr->ndbs != new_db_arr->ndbs)
+		pg_log(PG_FATAL, "old and new clusters have a different number of databases\n");
+	
+	for (dbnum = 0; dbnum < old_db_arr->ndbs; dbnum++)
 	{
-		DbInfo	   *new_db = &newdb_arr->dbs[dbnum];
-		DbInfo	   *old_db = dbarr_lookup_db(olddb_arr, new_db->db_name);
+		DbInfo	   *old_db = &old_db_arr->dbs[dbnum];
+		DbInfo	   *new_db = &new_db_arr->dbs[dbnum];
 		FileNameMap *mappings;
 		int			n_maps;
 		pageCnvCtx *pageConverter = NULL;
 
+		if (strcmp(old_db->db_name, new_db->db_name) != 0)
+			pg_log(PG_FATAL, "old and new databases have a different names: old \"%s\", new \"%s\"\n",
+				old_db->db_name, new_db->db_name);
+		
 		n_maps = 0;
 		mappings = gen_db_file_maps(old_db, new_db, &n_maps, old_pgdata,
 									new_pgdata);
@@ -149,8 +155,7 @@ transfer_single_new_db(pageCnvCtx *pageConverter,
 		 */
 		unlink(new_file);
 		transfer_relfile(pageConverter, old_file, new_file,
-						 maps[mapnum].old_nspname, maps[mapnum].new_nspname,
-						 maps[mapnum].old_relname, maps[mapnum].new_relname);
+						 maps[mapnum].nspname, maps[mapnum].relname);
 
 		/* fsm/vm files added in PG 8.4 */
 		if (GET_MAJOR_VERSION(old_cluster.major_version) >= 804)
@@ -173,8 +178,7 @@ transfer_single_new_db(pageCnvCtx *pageConverter,
 
 					unlink(new_file);
 					transfer_relfile(pageConverter, old_file, new_file,
-							  maps[mapnum].old_nspname, maps[mapnum].new_nspname,
-							  maps[mapnum].old_relname, maps[mapnum].new_relname);
+							  maps[mapnum].nspname, maps[mapnum].relname);
 				}
 			}
 		}
@@ -201,8 +205,7 @@ transfer_single_new_db(pageCnvCtx *pageConverter,
 
 				unlink(new_file);
 				transfer_relfile(pageConverter, old_file, new_file,
-							  maps[mapnum].old_nspname, maps[mapnum].new_nspname,
-							  maps[mapnum].old_relname, maps[mapnum].new_relname);
+							  maps[mapnum].nspname, maps[mapnum].relname);
 			}
 		}
 	}
@@ -224,8 +227,7 @@ transfer_single_new_db(pageCnvCtx *pageConverter,
  */
 static void
 transfer_relfile(pageCnvCtx *pageConverter, const char *old_file,
-		 const char *new_file, const char *old_nspname, const char *new_nspname,
-		 const char *old_relname, const char *new_relname)
+		 const char *new_file, const char *nspname, const char *relname)
 {
 	const char *msg;
 
@@ -238,8 +240,8 @@ transfer_relfile(pageCnvCtx *pageConverter, const char *old_file,
 		pg_log(PG_INFO, "copying %s to %s\n", old_file, new_file);
 
 		if ((msg = copyAndUpdateFile(pageConverter, old_file, new_file, true)) != NULL)
-			pg_log(PG_FATAL, "error while copying %s.%s(%s) to %s.%s(%s): %s\n",
-				   old_nspname, old_relname, old_file, new_nspname, new_relname, new_file, msg);
+			pg_log(PG_FATAL, "error while copying %s.%s (%s to %s): %s\n",
+				   nspname, relname, old_file, new_file, msg);
 	}
 	else
 	{
@@ -247,9 +249,8 @@ transfer_relfile(pageCnvCtx *pageConverter, const char *old_file,
 
 		if ((msg = linkAndUpdateFile(pageConverter, old_file, new_file)) != NULL)
 			pg_log(PG_FATAL,
-			   "error while creating link from %s.%s(%s) to %s.%s(%s): %s\n",
-				   old_nspname, old_relname, old_file, new_nspname, new_relname,
-				   new_file, msg);
+			   "error while creating link from %s.%s (%s to %s): %s\n",
+				   nspname, relname, old_file, new_file, msg);
 	}
 	return;
 }

@@ -8,23 +8,29 @@
  */
 
 /*
- *	To simplify the upgrade process, we force certain system items to be
- *	consistent between old and new clusters:
+ *	To simplify the upgrade process, we force certain system values to be
+ *	identical between old and new clusters:
  *
- *	We control all assignments of pg_class.relfilenode so we can keep the
- *	same relfilenodes for old and new files.  The only exception is
- *	pg_largeobject, pg_largeobject_metadata, and its indexes, which can
- *	change due to a cluster, reindex, or vacuum full.  (We don't create
- *	those so have no control over their oid/relfilenode values.)
+ *	We control all assignments of pg_class.oid (and relfilenode) so toast
+ *	oids are the same between old and new clusters.  This is important
+ *	because toast oids are stored as toast pointers in user tables.
  *
- *	While pg_class.oid and pg_class.relfilenode are intially the same, they
- *	can diverge due to cluster, reindex, or vacuum full.  The new cluster
- *	will again have matching pg_class.relfilenode and pg_class.oid values,
- *	but based on the new relfilenode value, so the old/new oids might
- *	differ.
+ *	FYI, while pg_class.oid and pg_class.relfilenode are intially the same
+ *	in a cluster, but they can diverge due to CLUSTER, REINDEX, or VACUUM
+ *	FULL.  The new cluster will have matching pg_class.oid and
+ *	pg_class.relfilenode values and be based on the old oid value.  This can
+ *	cause the old and new pg_class.relfilenode values to differ.  In summary,
+ *	old and new pg_class.oid and new pg_class.relfilenode will have the
+ *	same value, and old pg_class.relfilenode might differ.
  *
- *	We control all assignments of pg_type.oid because these are stored
- *	in composite types.
+ *	We control all assignments of pg_type.oid because these oids are stored
+ *	in user composite type values.
+ *
+ *	We control all assignments of pg_enum.oid because these oids are stored
+ *	in user tables as enum values.
+ *
+ *	We control all assignments of pg_auth.oid because these oids are stored
+ *	in pg_largeobject_metadata.
  */
 
 
@@ -217,11 +223,18 @@ prepare_new_databases(void)
 
 	set_frozenxids();
 
-	/*
-	 * We have to create the databases first so we can create the toast table
-	 * placeholder relfiles.
-	 */
 	prep_status("Creating databases in the new cluster");
+
+	/*
+	 *	Install support functions in the database accessed by
+	 *	GLOBALS_DUMP_FILE because it can preserve pg_authid.oid.
+	 */
+	install_support_functions_in_new_db(os_info.user);
+
+	/*
+	 * We have to create the databases first so we can install support
+	 * functions in all the other databases.
+	 */
 	exec_prog(true,
 			  SYSTEMQUOTE "\"%s/psql\" --set ON_ERROR_STOP=on "
 	/* --no-psqlrc prevents AUTOCOMMIT=off */
@@ -231,6 +244,7 @@ prepare_new_databases(void)
 			  GLOBALS_DUMP_FILE, log_opts.filename);
 	check_ok();
 
+	/* we load this to get a current list of databases */
 	get_db_and_rel_infos(&new_cluster);
 
 	stop_postmaster(false, false);
@@ -240,10 +254,22 @@ prepare_new_databases(void)
 static void
 create_new_objects(void)
 {
+	int			dbnum;
+
 	/* -- NEW -- */
 	start_postmaster(&new_cluster, false);
 
-	install_support_functions();
+	prep_status("Adding support functions to new cluster");
+
+	for (dbnum = 0; dbnum < new_cluster.dbarr.ndbs; dbnum++)
+	{
+		DbInfo	   *new_db = &new_cluster.dbarr.dbs[dbnum];
+
+		/* skip db we already installed */
+		if (strcmp(new_db->db_name, os_info.user) != 0)
+			install_support_functions_in_new_db(new_db->db_name);
+	}
+	check_ok();
 
 	prep_status("Restoring database schema to new cluster");
 	exec_prog(true,
@@ -254,11 +280,11 @@ create_new_objects(void)
 			  DB_DUMP_FILE, log_opts.filename);
 	check_ok();
 
-	/* regenerate now that we have db schemas */
+	/* regenerate now that we have objects in the databases */
 	dbarr_free(&new_cluster.dbarr);
 	get_db_and_rel_infos(&new_cluster);
 
-	uninstall_support_functions();
+	uninstall_support_functions_from_new_cluster();
 
 	stop_postmaster(false, false);
 }
