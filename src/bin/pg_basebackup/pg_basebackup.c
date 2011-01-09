@@ -187,9 +187,10 @@ ReceiveTarFile(PGconn *conn, PGresult *res, int rownum)
 		if (r == -1)
 		{
 			/*
-			 * End of chunk
+			 * End of chunk. Close file (but not stdout).
 			 */
-			fclose(tarfile);
+			if (strcmp(tardir, "-") != 0)
+				fclose(tarfile);
 
 			break;
 		}
