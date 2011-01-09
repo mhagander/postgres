@@ -40,6 +40,7 @@ static int	tablespacecount;
 static char *xstrdup(const char *s);
 static void usage(void);
 static void verify_dir_is_empty_or_create(char *dirname);
+static void progress_report(int tablespacenum, char *fn);
 static PGconn *GetConnection(void);
 
 static void ReceiveTarFile(PGconn *conn, PGresult *res, int rownum);
@@ -127,6 +128,22 @@ verify_dir_is_empty_or_create(char *dirname)
 }
 
 static void
+progress_report(int tablespacenum, char *fn)
+{
+	if (verbose)
+		fprintf(stderr,
+				"%llu/%llu kB (%i%%) %i/%i tablespaces (%-30s)\r",
+				totaldone / 1024, totalsize,
+				(int) ((totaldone / 1024) * 100 / totalsize),
+				tablespacenum, tablespacecount, fn);
+	else
+		fprintf(stderr, "%llu/%llu kB (%i%%) %i/%i tablespaces\r",
+				totaldone / 1024, totalsize,
+				(int) ((totaldone / 1024) * 100 / totalsize),
+				tablespacenum, tablespacecount);
+}
+
+static void
 ReceiveTarFile(PGconn *conn, PGresult *res, int rownum)
 {
 	char		fn[MAXPGPATH];
@@ -210,21 +227,9 @@ ReceiveTarFile(PGconn *conn, PGresult *res, int rownum)
 		}
 
 		fwrite(copybuf, r, 1, tarfile);
+		totaldone += r;
 		if (showprogress)
-		{
-			totaldone += r;
-			if (verbose)
-				fprintf(stderr,
-						"%llu/%llu kB (%i%%), %i/%i tablespaces (%-30s)\r",
-						totaldone / 1024, totalsize,
-						(int) ((totaldone / 1024) * 100 / totalsize),
-						rownum, tablespacecount, fn);
-			else
-				fprintf(stderr, "%llu/%llu kB (%i%%), %i/%i tablespaces\r",
-						totaldone / 1024, totalsize,
-						(int) ((totaldone / 1024) * 100 / totalsize),
-						rownum, tablespacecount);
-		}
+			progress_report(rownum, fn);
 	}							/* while (1) */
 
 	if (copybuf != NULL)
@@ -412,21 +417,9 @@ ReceiveAndUnpackTarFile(PGconn *conn, PGresult *res, int rownum)
 			}
 
 			fwrite(copybuf, r, 1, file);		/* XXX: result code */
+			totaldone += r;
 			if (showprogress)
-			{
-				totaldone += r;
-				if (verbose)
-					fprintf(stderr,
-							"%llu/%llu kB (%i%%) %i/%i tablespaces (%-30s)\r",
-							totaldone / 1024, totalsize,
-							(int) ((totaldone / 1024) * 100 / totalsize),
-							rownum, tablespacecount, fn);
-				else
-					fprintf(stderr, "%llu/%llu kB (%i%%) %i/%i tablespaces\r",
-							totaldone / 1024, totalsize,
-							(int) ((totaldone / 1024) * 100 / totalsize),
-							rownum, tablespacecount);
-			}
+				progress_report(rownum, fn);
 
 			current_len_left -= r;
 			if (current_len_left == 0 && current_padding == 0)
@@ -561,7 +554,10 @@ BaseBackup()
 	PQclear(res);
 
 	if (showprogress)
+	{
+		progress_report(PQntuples(res), "");
 		fprintf(stderr, "\n");			/* Need to move to next line */
+	}
 
 	/*
 	 * End of copy data. Final result is already checked inside the loop.
