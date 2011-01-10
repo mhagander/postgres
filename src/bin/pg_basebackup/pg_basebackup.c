@@ -530,6 +530,7 @@ BaseBackup()
 	PGconn	   *conn;
 	PGresult   *res;
 	char		current_path[MAXPGPATH];
+	char		escaped_label[MAXPGPATH];
 	int			i;
 
 	/*
@@ -537,9 +538,11 @@ BaseBackup()
 	 */
 	conn = GetConnection();
 
-	snprintf(current_path, sizeof(current_path), "BASE_BACKUP %s;%s",
-			 showprogress ? "PROGRESS" : "",
-			 label);
+	PQescapeStringConn(conn, escaped_label, label, sizeof(escaped_label), &i);
+	snprintf(current_path, sizeof(current_path), "BASE_BACKUP LABEL '%s' %s",
+			 escaped_label,
+			 showprogress ? "PROGRESS" : "");
+	fprintf(stderr, "%s\n", current_path);
 	if (PQsendQuery(conn, current_path) == 0)
 	{
 		fprintf(stderr, _("%s: coult not start base backup: %s\n"),
