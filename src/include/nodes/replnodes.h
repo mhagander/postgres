@@ -3,12 +3,6 @@
  * replnodes.h
  *	  definitions for replication grammar parse nodes
  *
- * Many of the node types used in parsetrees include a "location" field.
- * This is a byte (not character) offset in the original source text, to be
- * used for positioning an error cursor when there is an error related to
- * the node.  Access to the original source text is needed to make use of
- * the location.
- *
  *
  * Portions Copyright (c) 1996-2011, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
