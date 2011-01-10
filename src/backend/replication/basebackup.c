@@ -6,7 +6,7 @@
  * Portions Copyright (c) 2010-2011, PostgreSQL Global Development Group
  *
  * IDENTIFICATION
- *	  $PostgreSQL$
+ *	  src/backend/replication/basebackup.c
  *
  *-------------------------------------------------------------------------
  */
