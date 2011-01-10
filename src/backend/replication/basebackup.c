@@ -28,6 +28,7 @@
 #include "storage/ipc.h"
 #include "utils/builtins.h"
 #include "utils/elog.h"
+#include "utils/memutils.h"
 
 static int64 sendDir(char *path, char *basepath, bool sizeonly);
 static void sendFile(char *path, char *basepath, struct stat * statbuf);
@@ -71,6 +72,15 @@ SendBaseBackup(const char *options)
 	bool		progress = false;
 	List	   *tablespaces = NIL;
 	tablespaceinfo *ti;
+	MemoryContext	backup_context;
+	MemoryContext	old_context;
+
+	backup_context = AllocSetContextCreate(CurrentMemoryContext,
+										   "Streaming base backup context",
+										   ALLOCSET_DEFAULT_MINSIZE,
+										   ALLOCSET_DEFAULT_INITSIZE,
+										   ALLOCSET_DEFAULT_MAXSIZE);
+	old_context = MemoryContextSwitchTo(backup_context);
 
 	if (backup_label == NULL)
 		ereport(FATAL,
@@ -144,6 +154,9 @@ SendBaseBackup(const char *options)
 	PG_END_ENSURE_ERROR_CLEANUP(base_backup_cleanup, (Datum) 0);
 
 	do_pg_stop_backup();
+
+	MemoryContextSwitchTo(old_context);
+	MemoryContextDelete(backup_context);
 }
 
 static void
