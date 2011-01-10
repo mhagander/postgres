@@ -1521,7 +1521,7 @@ The commands accepted in walsender mode are:
         <term>size</term>
         <listitem>
          <para>
-          The approximate size of the datablock, if progress report has
+          The approximate size of the tablespace, if progress report has
           been requested; otherwise it's <literal>NULL</>.
          </para>
         </listitem>
