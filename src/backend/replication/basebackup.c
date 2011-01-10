@@ -30,8 +30,8 @@
 #include "utils/elog.h"
 #include "utils/memutils.h"
 
-static int64 sendDir(char *path, char *basepath, bool sizeonly);
-static void sendFile(char *path, char *basepath, struct stat * statbuf);
+static int64 sendDir(char *path, int basepathlen, bool sizeonly);
+static void sendFile(char *path, int basepathlen, struct stat * statbuf);
 static void _tarWriteHeader(char *filename, char *linktarget,
 				struct stat * statbuf);
 static void send_int8_string(StringInfoData *buf, uint64 intval);
@@ -104,7 +104,7 @@ SendBaseBackup(const char *options)
 
 	/* Add a node for the base directory */
 	ti = palloc0(sizeof(tablespaceinfo));
-	ti->size = progress ? sendDir(".", ".", true) : -1;
+	ti->size = progress ? sendDir(".", 1, true) : -1;
 	tablespaces = lappend(tablespaces, ti);
 
 	/* Collect information about all tablespaces */
@@ -129,7 +129,7 @@ SendBaseBackup(const char *options)
 		ti = palloc(sizeof(tablespaceinfo));
 		ti->oid = pstrdup(de->d_name);
 		ti->path = pstrdup(linkpath);
-		ti->size = progress ? sendDir(linkpath, linkpath, true) : -1;
+		ti->size = progress ? sendDir(linkpath, strlen(linkpath), true) : -1;
 		tablespaces = lappend(tablespaces, ti);
 	}
 	FreeDir(dir);
@@ -251,7 +251,7 @@ SendBackupDirectory(char *location, char *spcoid)
 
 	/* tar up the data directory if NULL, otherwise the tablespace */
 	sendDir(location == NULL ? "." : location,
-			location == NULL ? "." : location,
+			location == NULL ? 1 : strlen(location),
 			false);
 
 	/* Send CopyDone message */
@@ -260,7 +260,7 @@ SendBackupDirectory(char *location, char *spcoid)
 
 
 static int64
-sendDir(char *path, char *basepath, bool sizeonly)
+sendDir(char *path, int basepathlen, bool sizeonly)
 {
 	DIR		   *dir;
 	struct dirent *de;
@@ -301,7 +301,7 @@ sendDir(char *path, char *basepath, bool sizeonly)
 		if (strcmp(pathbuf, "./pg_xlog") == 0)
 		{
 			if (!sizeonly)
-				_tarWriteHeader(pathbuf + strlen(basepath) + 1, NULL, &statbuf);
+				_tarWriteHeader(pathbuf + basepathlen + 1, NULL, &statbuf);
 			size += 512;		/* Size of the header just added */
 			continue;			/* don't recurse into pg_xlog */
 		}
@@ -322,7 +322,7 @@ sendDir(char *path, char *basepath, bool sizeonly)
 						 errmsg("could not read symbolic link \"%s\": %m",
 								pathbuf)));
 			if (!sizeonly)
-				_tarWriteHeader(pathbuf + strlen(basepath) + 1, linkpath, &statbuf);
+				_tarWriteHeader(pathbuf + basepathlen + 1, linkpath, &statbuf);
 			size += 512;		/* Size of the header just added */
 		}
 		else if (S_ISDIR(statbuf.st_mode))
@@ -332,18 +332,18 @@ sendDir(char *path, char *basepath, bool sizeonly)
 			 * permissions right.
 			 */
 			if (!sizeonly)
-				_tarWriteHeader(pathbuf + strlen(basepath) + 1, NULL, &statbuf);
+				_tarWriteHeader(pathbuf + basepathlen + 1, NULL, &statbuf);
 			size += 512;		/* Size of the header just added */
 
 			/* call ourselves recursively for a directory */
-			size += sendDir(pathbuf, basepath, sizeonly);
+			size += sendDir(pathbuf, basepathlen, sizeonly);
 		}
 		else if (S_ISREG(statbuf.st_mode))
 		{
 			/* Add size, rounded up to 512byte block */
 			size += ((statbuf.st_size + 511) & ~511);
 			if (!sizeonly)
-				sendFile(pathbuf, basepath, &statbuf);
+				sendFile(pathbuf, basepathlen, &statbuf);
 			size += 512;		/* Size of the header of the file */
 		}
 		else
@@ -401,7 +401,7 @@ _tarChecksum(char *header)
 
 /* Given the member, write the TAR header & send the file */
 static void
-sendFile(char *filename, char *basepath, struct stat * statbuf)
+sendFile(char *filename, int basepathlen, struct stat * statbuf)
 {
 	FILE	   *fp;
 	char		buf[32768];
@@ -424,7 +424,7 @@ sendFile(char *filename, char *basepath, struct stat * statbuf)
 				(errmsg("archive member \"%s\" too large for tar format",
 						filename)));
 
-	_tarWriteHeader(filename + strlen(basepath) + 1, NULL, statbuf);
+	_tarWriteHeader(filename + basepathlen + 1, NULL, statbuf);
 
 	while ((cnt = fread(buf, 1, Min(sizeof(buf), statbuf->st_size - len), fp)) > 0)
 	{
