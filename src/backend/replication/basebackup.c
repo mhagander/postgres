@@ -93,6 +93,15 @@ SendBaseBackup(const char *backup_label, bool progress)
 		set_ps_display(activitymsg, false);
 	}
 
+	if (update_process_title)
+	{
+		char		activitymsg[50];
+
+		snprintf(activitymsg, sizeof(activitymsg), "sending backup \"%s\"",
+				 backup_label);
+		set_ps_display(activitymsg, false);
+	}
+
 	/* Make sure we can open the directory with tablespaces in it */
 	dir = AllocateDir("pg_tblspc");
 	if (!dir)
