@@ -116,11 +116,11 @@ base_backup:
 					$$ = (Node *) cmd;
 				}
 
-opt_progress: K_PROGRESS		{ $$ = true; }
-			| /* EMPTY */		{ $$ = false; }
-
 opt_label: K_LABEL SCONST { $$ = $2; }
 			| /* EMPTY */		{ $$ = NULL; }
+
+opt_progress: K_PROGRESS		{ $$ = true; }
+			| /* EMPTY */		{ $$ = false; }
 
 /*
  * START_REPLICATION %X/%X
