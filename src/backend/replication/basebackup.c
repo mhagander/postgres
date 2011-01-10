@@ -33,6 +33,7 @@ static int64 sendDir(char *path, char *basepath, bool sizeonly);
 static void sendFile(char *path, char *basepath, struct stat * statbuf);
 static void _tarWriteHeader(char *filename, char *linktarget,
 				struct stat * statbuf);
+static void send_int8_string(StringInfoData *buf, uint64 intval);
 static void SendBackupHeader(List *tablespaces);
 static void SendBackupDirectory(char *location, char *spcoid);
 static void base_backup_cleanup(int code, Datum arg);
