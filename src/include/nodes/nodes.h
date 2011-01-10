@@ -355,6 +355,14 @@ typedef enum NodeTag
 	T_SecLabelStmt,
 	T_CreateForeignTableStmt,
 
+
+	/*
+	 * TAGS FOR REPLICATION COMMAND NODES (replnodes.h)
+	 */
+	T_IdentifySystemCmd = 850,
+	T_BaseBackupCmd,
+	T_StartReplicationCmd,
+
 	/*
 	 * TAGS FOR PARSE TREE NODES (parsenodes.h)
 	 */

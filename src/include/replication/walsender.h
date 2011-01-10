@@ -13,6 +13,7 @@
 #define _WALSENDER_H
 
 #include "access/xlog.h"
+#include "nodes/nodes.h"
 #include "storage/latch.h"
 #include "storage/spin.h"
 
@@ -55,5 +56,17 @@ extern void WalSndShmemInit(void);
 extern void WalSndWakeup(void);
 
 extern Datum pg_stat_get_wal_senders(PG_FUNCTION_ARGS);
+
+/*
+ * Internal functions for parsing the replication grammar, in repl_gram.y and
+ * repl_scanner.l
+ */
+extern int	replication_yyparse(void);
+extern int	replication_yylex(void);
+extern void replication_yyerror(const char *str);
+extern void replication_scanner_init(const char *query_string);
+extern void replication_scanner_finish(void);
+
+extern Node *replication_parse_result;
 
 #endif   /* _WALSENDER_H */
