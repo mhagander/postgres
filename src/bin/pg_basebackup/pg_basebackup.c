@@ -159,7 +159,7 @@ ReceiveTarFile(PGconn *conn, PGresult *res, int rownum)
 			tarfile = stdout;
 		else
 		{
-			sprintf(fn, "%s/base.tar", tardir);
+			snprintf(fn, sizeof(fn), "%s/base.tar", tardir);
 			tarfile = fopen(fn, "wb");
 		}
 	else
@@ -167,7 +167,7 @@ ReceiveTarFile(PGconn *conn, PGresult *res, int rownum)
 		/*
 		 * Specific tablespace
 		 */
-		sprintf(fn, "%s/%s.tar", tardir, PQgetvalue(res, rownum, 0));
+		snprintf(fn, sizeof(fn), "%s/%s.tar", tardir, PQgetvalue(res, rownum, 0));
 		tarfile = fopen(fn, "wb");
 	}
 
@@ -330,7 +330,7 @@ ReceiveAndUnpackTarFile(PGconn *conn, PGresult *res, int rownum)
 			/*
 			 * First part of header is zero terminated filename
 			 */
-			sprintf(fn, "%s/%s", current_path, copybuf);
+			snprintf(fn, sizeof(fn), "%s/%s", current_path, copybuf);
 			if (fn[strlen(fn) - 1] == '/')
 			{
 				/*
@@ -452,7 +452,7 @@ GetConnection(void)
 	char		buf[MAXPGPATH];
 	PGconn	   *conn;
 
-	sprintf(buf, "%s dbname=replication replication=true", conninfo);
+	snprintf(buf, sizeof(buf), "%s dbname=replication replication=true", conninfo);
 
 	if (verbose)
 		fprintf(stderr, _("%s: Connecting to \"%s\"\n"), progname, buf);
@@ -481,9 +481,9 @@ BaseBackup()
 	 */
 	conn = GetConnection();
 
-	sprintf(current_path, "BASE_BACKUP %s;%s",
-			showprogress ? "PROGRESS" : "",
-			label);
+	snprintf(current_path, sizeof(current_path), "BASE_BACKUP %s;%s",
+			 showprogress ? "PROGRESS" : "",
+			 label);
 	if (PQsendQuery(conn, current_path) == 0)
 	{
 		fprintf(stderr, _("%s: coult not start base backup: %s\n"),
