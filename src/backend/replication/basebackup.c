@@ -37,6 +37,14 @@ static void SendBackupHeader(List *tablespaces);
 static void SendBackupDirectory(char *location, char *spcoid);
 static void base_backup_cleanup(int code, Datum arg);
 
+typedef struct
+{
+	char	   *oid;
+	char	   *path;
+	int64		size;
+}	tablespaceinfo;
+
+
 /*
  * Called when ERROR or FATAL happens in SendBaseBackup() after
  * we have started the backup - make sure we end it!
@@ -46,14 +54,6 @@ base_backup_cleanup(int code, Datum arg)
 {
 	do_pg_abort_backup();
 }
-
-
-typedef struct
-{
-	char	   *oid;
-	char	   *path;
-	int64		size;
-}	tablespaceinfo;
 
 /*
  * SendBaseBackup() - send a complete base backup.
