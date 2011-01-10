@@ -165,6 +165,18 @@ $ <userinput>pg_basebackup -c "host=192.168.0.2 user=backup"</userinput>
        </para>
       </listitem>
      </varlistentry>
+
+     <varlistentry>
+      <term><option>-Z <replaceable class="parameter">level</replaceable></option></term>
+      <term><option>--compress=<replaceable class="parameter">level</replaceable></option></term>
+      <listitem>
+       <para>
+        Enables gzip compression of tar file output. Compression is only
+        available when generating tar files, and is not available when sending
+        output to standard output.
+       </para>
+      </listitem>
+     </varlistentry>
     </variablelist>
    </para>
 

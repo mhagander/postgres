@@ -18,6 +18,10 @@
 #include <dirent.h>
 #include <sys/stat.h>
 
+#ifdef HAVE_LIBZ
+#include <zlib.h>
+#endif
+
 #include "getopt_long.h"
 
 
@@ -28,6 +32,7 @@ char	   *tardir = NULL;
 char	   *label = "pg_basebackup base backup";
 bool		showprogress = false;
 int			verbose = 0;
+int			compresslevel = 0;
 char	   *conninfo = NULL;
 
 /* Progress counters */
@@ -74,6 +79,7 @@ usage(void)
 	printf(_("  -d, --basedir=directory   receive base backup into directory\n"));
 	printf(_("  -t, --tardir=directory    receive base backup into tar files\n"
 			 "                            stored in specified directory\n"));
+	printf(_("  -Z, --compress=0-9        compress tar output\n"));
 	printf(_("  -l, --label=label         set backup label\n"));
 	printf(_("  -p, --progress            show progress information\n"));
 	printf(_("  -v, --verbose             output verbose messages\n"));
@@ -149,6 +155,10 @@ ReceiveTarFile(PGconn *conn, PGresult *res, int rownum)
 	char	   *copybuf = NULL;
 	FILE	   *tarfile = NULL;
 
+#ifdef HAVE_LIBZ
+	gzFile	   *ztarfile = NULL;
+#endif
+
 	if (PQgetisnull(res, rownum, 0))
 
 		/*
@@ -158,19 +168,49 @@ ReceiveTarFile(PGconn *conn, PGresult *res, int rownum)
 			tarfile = stdout;
 		else
 		{
-			snprintf(fn, sizeof(fn), "%s/base.tar", tardir);
-			tarfile = fopen(fn, "wb");
+#ifdef HAVE_LIBZ
+			if (compresslevel > 0)
+			{
+				snprintf(fn, sizeof(fn), "%s/base.tar.gz", tardir);
+				ztarfile = gzopen(fn, "wb");
+				if (gzsetparams(ztarfile, compresslevel, Z_DEFAULT_STRATEGY) != Z_OK)
+				{
+					fprintf(stderr, _("%s: could not set compression level %i\n"),
+							progname, compresslevel);
+					exit(1);
+				}
+			}
+			else
+#endif
+			{
+				snprintf(fn, sizeof(fn), "%s/base.tar", tardir);
+				tarfile = fopen(fn, "wb");
+			}
 		}
 	else
 	{
 		/*
 		 * Specific tablespace
 		 */
-		snprintf(fn, sizeof(fn), "%s/%s.tar", tardir, PQgetvalue(res, rownum, 0));
-		tarfile = fopen(fn, "wb");
+#ifdef HAVE_LIBZ
+		if (compresslevel > 0)
+		{
+			snprintf(fn, sizeof(fn), "%s/%s.tar.gz", tardir, PQgetvalue(res, rownum, 0));
+			ztarfile = gzopen(fn, "wb");
+		}
+		else
+#endif
+		{
+			snprintf(fn, sizeof(fn), "%s/%s.tar", tardir, PQgetvalue(res, rownum, 0));
+			tarfile = fopen(fn, "wb");
+		}
 	}
 
+#ifdef HAVE_LIBZ
+	if (!tarfile && !ztarfile)
+#else
 	if (!tarfile)
+#endif
 	{
 		fprintf(stderr, _("%s: could not create file \"%s\": %s\n"),
 				progname, fn, strerror(errno));
@@ -210,10 +250,22 @@ ReceiveTarFile(PGconn *conn, PGresult *res, int rownum)
 			char		zerobuf[1024];
 
 			MemSet(zerobuf, 0, sizeof(zerobuf));
-			fwrite(zerobuf, sizeof(zerobuf), 1, tarfile);
+#ifdef HAVE_LIBZ
+			if (ztarfile != NULL)
+				gzwrite(ztarfile, zerobuf, sizeof(zerobuf));
+			else
+#endif
+				fwrite(zerobuf, sizeof(zerobuf), 1, tarfile);
 
 			if (strcmp(tardir, "-") != 0)
-				fclose(tarfile);
+			{
+#ifdef HAVE_LIBZ
+				if (ztarfile != NULL)
+					gzclose(ztarfile);
+#endif
+				if (tarfile != NULL)
+					fclose(tarfile);
+			}
 
 			break;
 		}
@@ -224,7 +276,12 @@ ReceiveTarFile(PGconn *conn, PGresult *res, int rownum)
 			exit(1);
 		}
 
-		fwrite(copybuf, r, 1, tarfile);
+#ifdef HAVE_LIBZ
+		if (ztarfile != NULL)
+			gzwrite(ztarfile, copybuf, r);
+		else
+#endif
+			fwrite(copybuf, r, 1, tarfile);
 		totaldone += r;
 		if (showprogress)
 			progress_report(rownum, fn);
@@ -584,6 +641,7 @@ main(int argc, char **argv)
 		{"conninfo", required_argument, NULL, 'c'},
 		{"basedir", required_argument, NULL, 'd'},
 		{"tardir", required_argument, NULL, 't'},
+		{"compress", required_argument, NULL, 'Z'},
 		{"label", required_argument, NULL, 'l'},
 		{"verbose", no_argument, NULL, 'v'},
 		{"progress", no_argument, NULL, 'p'},
@@ -612,7 +670,7 @@ main(int argc, char **argv)
 		}
 	}
 
-	while ((c = getopt_long(argc, argv, "c:d:t:l:vp",
+	while ((c = getopt_long(argc, argv, "c:d:t:l:Z:vp",
 							long_options, &option_index)) != -1)
 	{
 		switch (c)
@@ -628,6 +686,9 @@ main(int argc, char **argv)
 				break;
 			case 'l':
 				label = xstrdup(optarg);
+				break;
+			case 'Z':
+				compresslevel = atoi(optarg);
 				break;
 			case 'v':
 				verbose++;
@@ -690,6 +751,34 @@ main(int argc, char **argv)
 				progname);
 		exit(1);
 	}
+
+	if (basedir != NULL && compresslevel > 0)
+	{
+		fprintf(stderr,
+				_("%s: only tar mode backups can be compressed\n"),
+				progname);
+		fprintf(stderr, _("Try \"%s --help\" for more information.\n"),
+				progname);
+		exit(1);
+	}
+
+#ifndef HAVE_LIBZ
+	if (compresslevel > 0)
+	{
+		fprintf(stderr,
+				_("%s: this build does not support compression\n"),
+				progname);
+		exit(1);
+	}
+#else
+	if (compresslevel > 0 && strcmp(tardir, "-") == 0)
+	{
+		fprintf(stderr,
+				_("%s: compression is not supported on standard output\n"),
+				progname);
+		exit(1);
+	}
+#endif
 
 	/*
 	 * Verify directories
