@@ -113,7 +113,8 @@ SendBaseBackup(const char *options)
 		char		fullpath[MAXPGPATH];
 		char		linkpath[MAXPGPATH];
 
-		if (de->d_name[0] == '.')
+		/* Skip special stuff */
+		if (strcmp(de->d_name, ".") == 0 || strcmp(de->d_name, "..") == 0)
 			continue;
 
 		snprintf(fullpath, sizeof(fullpath), "pg_tblspc/%s", de->d_name);
