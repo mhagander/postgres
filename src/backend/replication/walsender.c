@@ -108,6 +108,8 @@ static void WalSndKill(int code, Datum arg);
 static void XLogRead(char *buf, XLogRecPtr recptr, Size nbytes);
 static bool XLogSend(char *msgbuf, bool *caughtup);
 static void CheckClosedConnection(void);
+static void IdentifySystem(void);
+static void StartReplication(StartReplicationCmd *cmd);
 
 
 /* Main entry point for walsender process */
@@ -246,6 +248,102 @@ WalSndHandshake(void)
 }
 
 /*
+ * IDENTIFY_SYSTEM
+ */
+static void
+IdentifySystem(void)
+{
+	StringInfoData buf;
+	char		sysid[32];
+	char		tli[11];
+
+	/*
+	 * Reply with a result set with one row, two columns.
+	 * First col is system ID, and second is timeline ID
+	 */
+
+	snprintf(sysid, sizeof(sysid), UINT64_FORMAT,
+			 GetSystemIdentifier());
+	snprintf(tli, sizeof(tli), "%u", ThisTimeLineID);
+
+	/* Send a RowDescription message */
+	pq_beginmessage(&buf, 'T');
+	pq_sendint(&buf, 2, 2); /* 2 fields */
+
+	/* first field */
+	pq_sendstring(&buf, "systemid");		/* col name */
+	pq_sendint(&buf, 0, 4); /* table oid */
+	pq_sendint(&buf, 0, 2); /* attnum */
+	pq_sendint(&buf, TEXTOID, 4);	/* type oid */
+	pq_sendint(&buf, -1, 2);		/* typlen */
+	pq_sendint(&buf, 0, 4); /* typmod */
+	pq_sendint(&buf, 0, 2); /* format code */
+
+	/* second field */
+	pq_sendstring(&buf, "timeline");		/* col name */
+	pq_sendint(&buf, 0, 4); /* table oid */
+	pq_sendint(&buf, 0, 2); /* attnum */
+	pq_sendint(&buf, INT4OID, 4);	/* type oid */
+	pq_sendint(&buf, 4, 2); /* typlen */
+	pq_sendint(&buf, 0, 4); /* typmod */
+	pq_sendint(&buf, 0, 2); /* format code */
+	pq_endmessage(&buf);
+
+	/* Send a DataRow message */
+	pq_beginmessage(&buf, 'D');
+	pq_sendint(&buf, 2, 2); /* # of columns */
+	pq_sendint(&buf, strlen(sysid), 4);		/* col1 len */
+	pq_sendbytes(&buf, (char *) &sysid, strlen(sysid));
+	pq_sendint(&buf, strlen(tli), 4);		/* col2 len */
+	pq_sendbytes(&buf, (char *) tli, strlen(tli));
+	pq_endmessage(&buf);
+
+	/* Send CommandComplete and ReadyForQuery messages */
+	EndCommand("SELECT", DestRemote);
+	ReadyForQuery(DestRemote);
+	/* ReadyForQuery did pq_flush for us */
+}
+
+/*
+ * START_REPLICATION
+ */
+static void
+StartReplication(StartReplicationCmd *cmd)
+{
+	StringInfoData buf;
+
+	/*
+	 * Check that we're logging enough information in the
+	 * WAL for log-shipping.
+	 *
+	 * NOTE: This only checks the current value of
+	 * wal_level. Even if the current setting is not
+	 * 'minimal', there can be old WAL in the pg_xlog
+	 * directory that was created with 'minimal'. So this
+	 * is not bulletproof, the purpose is just to give a
+	 * user-friendly error message that hints how to
+	 * configure the system correctly.
+	 */
+	if (wal_level == WAL_LEVEL_MINIMAL)
+		ereport(FATAL,
+				(errcode(ERRCODE_CANNOT_CONNECT_NOW),
+				 errmsg("standby connections not allowed because wal_level=minimal")));
+
+	/* Send a CopyBothResponse message, and start streaming */
+	pq_beginmessage(&buf, 'W');
+	pq_sendbyte(&buf, 0);
+	pq_sendint(&buf, 0, 2);
+	pq_endmessage(&buf);
+	pq_flush();
+
+	/*
+	 * Initialize position to the received one, then the
+	 * xlog records begin to be shipped from that position
+	 */
+	sentPtr = cmd->startpoint;
+}
+
+/*
  * Execute an incoming replication command.
  */
 static bool
@@ -276,105 +374,22 @@ HandleReplicationCommand(const char *cmd_string)
 	switch(cmd_node->type)
 	{
 		case T_IdentifySystemCmd:
-		{
-			StringInfoData buf;
-			char		sysid[32];
-			char		tli[11];
-
-			/*
-			 * Reply with a result set with one row, two columns.
-			 * First col is system ID, and second is timeline ID
-			 */
-
-			snprintf(sysid, sizeof(sysid), UINT64_FORMAT,
-					 GetSystemIdentifier());
-			snprintf(tli, sizeof(tli), "%u", ThisTimeLineID);
-
-			/* Send a RowDescription message */
-			pq_beginmessage(&buf, 'T');
-			pq_sendint(&buf, 2, 2); /* 2 fields */
-
-			/* first field */
-			pq_sendstring(&buf, "systemid");		/* col name */
-			pq_sendint(&buf, 0, 4); /* table oid */
-			pq_sendint(&buf, 0, 2); /* attnum */
-			pq_sendint(&buf, TEXTOID, 4);	/* type oid */
-			pq_sendint(&buf, -1, 2);		/* typlen */
-			pq_sendint(&buf, 0, 4); /* typmod */
-			pq_sendint(&buf, 0, 2); /* format code */
-
-			/* second field */
-			pq_sendstring(&buf, "timeline");		/* col name */
-			pq_sendint(&buf, 0, 4); /* table oid */
-			pq_sendint(&buf, 0, 2); /* attnum */
-			pq_sendint(&buf, INT4OID, 4);	/* type oid */
-			pq_sendint(&buf, 4, 2); /* typlen */
-			pq_sendint(&buf, 0, 4); /* typmod */
-			pq_sendint(&buf, 0, 2); /* format code */
-			pq_endmessage(&buf);
-
-			/* Send a DataRow message */
-			pq_beginmessage(&buf, 'D');
-			pq_sendint(&buf, 2, 2); /* # of columns */
-			pq_sendint(&buf, strlen(sysid), 4);		/* col1 len */
-			pq_sendbytes(&buf, (char *) &sysid, strlen(sysid));
-			pq_sendint(&buf, strlen(tli), 4);		/* col2 len */
-			pq_sendbytes(&buf, (char *) tli, strlen(tli));
-			pq_endmessage(&buf);
-
-			/* Send CommandComplete and ReadyForQuery messages */
-			EndCommand("SELECT", DestRemote);
-			ReadyForQuery(DestRemote);
-			/* ReadyForQuery did pq_flush for us */
-
+			IdentifySystem();
 			break;
-		}
 
 		case T_StartReplicationCmd:
-		{
-			StartReplicationCmd *cmd = (StartReplicationCmd *) cmd_node;
-			StringInfoData buf;
-
-			/*
-			 * Check that we're logging enough information in the
-			 * WAL for log-shipping.
-			 *
-			 * NOTE: This only checks the current value of
-			 * wal_level. Even if the current setting is not
-			 * 'minimal', there can be old WAL in the pg_xlog
-			 * directory that was created with 'minimal'. So this
-			 * is not bulletproof, the purpose is just to give a
-			 * user-friendly error message that hints how to
-			 * configure the system correctly.
-			 */
-			if (wal_level == WAL_LEVEL_MINIMAL)
-				ereport(FATAL,
-						(errcode(ERRCODE_CANNOT_CONNECT_NOW),
-						 errmsg("standby connections not allowed because wal_level=minimal")));
-
-			/* Send a CopyBothResponse message, and start streaming */
-			pq_beginmessage(&buf, 'W');
-			pq_sendbyte(&buf, 0);
-			pq_sendint(&buf, 0, 2);
-			pq_endmessage(&buf);
-			pq_flush();
-
-			/*
-			 * Initialize position to the received one, then the
-			 * xlog records begin to be shipped from that position
-			 */
-			sentPtr = cmd->startpoint;
+			StartReplication((StartReplicationCmd *) cmd_node);
 
 			/* break out of the loop */
 			replication_started = true;
 			break;
-		}
 
 		case T_BaseBackupCmd:
 		{
 			BaseBackupCmd *cmd = (BaseBackupCmd *) cmd_node;
-			/* Command is BASE_BACKUP <options>;<label> */
+
 			SendBaseBackup(cmd->label, cmd->progress);
+
 			/* Send CommandComplete and ReadyForQuery messages */
 			EndCommand("SELECT", DestRemote);
 			ReadyForQuery(DestRemote);
