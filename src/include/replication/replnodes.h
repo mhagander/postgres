@@ -26,7 +26,7 @@ typedef enum ReplNodeTag
 	T_IdentifySystemCmd = 10,
 	T_BaseBackupCmd,
 	T_StartReplicationCmd
-} ReplNodeTag;
+}	ReplNodeTag;
 
 /* ----------------------
  *		IDENTIFY_SYSTEM command
@@ -35,7 +35,7 @@ typedef enum ReplNodeTag
 typedef struct IdentifySystemCmd
 {
 	NodeTag		type;
-} IdentifySystemCmd;
+}	IdentifySystemCmd;
 
 
 /* ----------------------
@@ -47,7 +47,7 @@ typedef struct BaseBackupCmd
 	NodeTag		type;
 	char	   *label;
 	bool		progress;
-} BaseBackupCmd;
+}	BaseBackupCmd;
 
 
 /* ----------------------
@@ -58,6 +58,6 @@ typedef struct StartReplicationCmd
 {
 	NodeTag		type;
 	XLogRecPtr	startpoint;
-} StartReplicationCmd;
+}	StartReplicationCmd;
 
 #endif   /* REPLNODES_H */

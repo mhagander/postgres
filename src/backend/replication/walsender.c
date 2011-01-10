@@ -109,7 +109,7 @@ static void XLogRead(char *buf, XLogRecPtr recptr, Size nbytes);
 static bool XLogSend(char *msgbuf, bool *caughtup);
 static void CheckClosedConnection(void);
 static void IdentifySystem(void);
-static void StartReplication(StartReplicationCmd *cmd);
+static void StartReplication(StartReplicationCmd * cmd);
 
 
 /* Main entry point for walsender process */
@@ -258,8 +258,8 @@ IdentifySystem(void)
 	char		tli[11];
 
 	/*
-	 * Reply with a result set with one row, two columns.
-	 * First col is system ID, and second is timeline ID
+	 * Reply with a result set with one row, two columns. First col is system
+	 * ID, and second is timeline ID
 	 */
 
 	snprintf(sysid, sizeof(sysid), UINT64_FORMAT,
@@ -268,33 +268,33 @@ IdentifySystem(void)
 
 	/* Send a RowDescription message */
 	pq_beginmessage(&buf, 'T');
-	pq_sendint(&buf, 2, 2); /* 2 fields */
+	pq_sendint(&buf, 2, 2);		/* 2 fields */
 
 	/* first field */
-	pq_sendstring(&buf, "systemid");		/* col name */
-	pq_sendint(&buf, 0, 4); /* table oid */
-	pq_sendint(&buf, 0, 2); /* attnum */
-	pq_sendint(&buf, TEXTOID, 4);	/* type oid */
-	pq_sendint(&buf, -1, 2);		/* typlen */
-	pq_sendint(&buf, 0, 4); /* typmod */
-	pq_sendint(&buf, 0, 2); /* format code */
+	pq_sendstring(&buf, "systemid");	/* col name */
+	pq_sendint(&buf, 0, 4);		/* table oid */
+	pq_sendint(&buf, 0, 2);		/* attnum */
+	pq_sendint(&buf, TEXTOID, 4);		/* type oid */
+	pq_sendint(&buf, -1, 2);	/* typlen */
+	pq_sendint(&buf, 0, 4);		/* typmod */
+	pq_sendint(&buf, 0, 2);		/* format code */
 
 	/* second field */
-	pq_sendstring(&buf, "timeline");		/* col name */
-	pq_sendint(&buf, 0, 4); /* table oid */
-	pq_sendint(&buf, 0, 2); /* attnum */
-	pq_sendint(&buf, INT4OID, 4);	/* type oid */
-	pq_sendint(&buf, 4, 2); /* typlen */
-	pq_sendint(&buf, 0, 4); /* typmod */
-	pq_sendint(&buf, 0, 2); /* format code */
+	pq_sendstring(&buf, "timeline");	/* col name */
+	pq_sendint(&buf, 0, 4);		/* table oid */
+	pq_sendint(&buf, 0, 2);		/* attnum */
+	pq_sendint(&buf, INT4OID, 4);		/* type oid */
+	pq_sendint(&buf, 4, 2);		/* typlen */
+	pq_sendint(&buf, 0, 4);		/* typmod */
+	pq_sendint(&buf, 0, 2);		/* format code */
 	pq_endmessage(&buf);
 
 	/* Send a DataRow message */
 	pq_beginmessage(&buf, 'D');
-	pq_sendint(&buf, 2, 2); /* # of columns */
-	pq_sendint(&buf, strlen(sysid), 4);		/* col1 len */
+	pq_sendint(&buf, 2, 2);		/* # of columns */
+	pq_sendint(&buf, strlen(sysid), 4); /* col1 len */
 	pq_sendbytes(&buf, (char *) &sysid, strlen(sysid));
-	pq_sendint(&buf, strlen(tli), 4);		/* col2 len */
+	pq_sendint(&buf, strlen(tli), 4);	/* col2 len */
 	pq_sendbytes(&buf, (char *) tli, strlen(tli));
 	pq_endmessage(&buf);
 
@@ -308,26 +308,24 @@ IdentifySystem(void)
  * START_REPLICATION
  */
 static void
-StartReplication(StartReplicationCmd *cmd)
+StartReplication(StartReplicationCmd * cmd)
 {
 	StringInfoData buf;
 
 	/*
-	 * Check that we're logging enough information in the
-	 * WAL for log-shipping.
+	 * Check that we're logging enough information in the WAL for
+	 * log-shipping.
 	 *
-	 * NOTE: This only checks the current value of
-	 * wal_level. Even if the current setting is not
-	 * 'minimal', there can be old WAL in the pg_xlog
-	 * directory that was created with 'minimal'. So this
-	 * is not bulletproof, the purpose is just to give a
-	 * user-friendly error message that hints how to
-	 * configure the system correctly.
+	 * NOTE: This only checks the current value of wal_level. Even if the
+	 * current setting is not 'minimal', there can be old WAL in the pg_xlog
+	 * directory that was created with 'minimal'. So this is not bulletproof,
+	 * the purpose is just to give a user-friendly error message that hints
+	 * how to configure the system correctly.
 	 */
 	if (wal_level == WAL_LEVEL_MINIMAL)
 		ereport(FATAL,
 				(errcode(ERRCODE_CANNOT_CONNECT_NOW),
-				 errmsg("standby connections not allowed because wal_level=minimal")));
+		errmsg("standby connections not allowed because wal_level=minimal")));
 
 	/* Send a CopyBothResponse message, and start streaming */
 	pq_beginmessage(&buf, 'W');
@@ -337,8 +335,8 @@ StartReplication(StartReplicationCmd *cmd)
 	pq_flush();
 
 	/*
-	 * Initialize position to the received one, then the
-	 * xlog records begin to be shipped from that position
+	 * Initialize position to the received one, then the xlog records begin to
+	 * be shipped from that position
 	 */
 	sentPtr = cmd->startpoint;
 }
@@ -351,7 +349,7 @@ HandleReplicationCommand(const char *cmd_string)
 {
 	bool		replication_started = false;
 	int			parse_rc;
-	Node		*cmd_node;
+	Node	   *cmd_node;
 	MemoryContext cmd_context;
 	MemoryContext old_context;
 
@@ -371,7 +369,7 @@ HandleReplicationCommand(const char *cmd_string)
 
 	cmd_node = replication_parse_result;
 
-	switch(cmd_node->type)
+	switch (cmd_node->type)
 	{
 		case T_IdentifySystemCmd:
 			IdentifySystem();
@@ -385,17 +383,17 @@ HandleReplicationCommand(const char *cmd_string)
 			break;
 
 		case T_BaseBackupCmd:
-		{
-			BaseBackupCmd *cmd = (BaseBackupCmd *) cmd_node;
+			{
+				BaseBackupCmd *cmd = (BaseBackupCmd *) cmd_node;
 
-			SendBaseBackup(cmd->label, cmd->progress);
+				SendBaseBackup(cmd->label, cmd->progress);
 
-			/* Send CommandComplete and ReadyForQuery messages */
-			EndCommand("SELECT", DestRemote);
-			ReadyForQuery(DestRemote);
-			/* ReadyForQuery did pq_flush for us */
-			break;
-		}
+				/* Send CommandComplete and ReadyForQuery messages */
+				EndCommand("SELECT", DestRemote);
+				ReadyForQuery(DestRemote);
+				/* ReadyForQuery did pq_flush for us */
+				break;
+			}
 
 		default:
 			ereport(FATAL,
