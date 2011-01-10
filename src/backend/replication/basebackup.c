@@ -72,8 +72,8 @@ SendBaseBackup(const char *options)
 	bool		progress = false;
 	List	   *tablespaces = NIL;
 	tablespaceinfo *ti;
-	MemoryContext	backup_context;
-	MemoryContext	old_context;
+	MemoryContext backup_context;
+	MemoryContext old_context;
 
 	backup_context = AllocSetContextCreate(CurrentMemoryContext,
 										   "Streaming base backup context",
@@ -122,7 +122,7 @@ SendBaseBackup(const char *options)
 		if (readlink(fullpath, linkpath, sizeof(linkpath) - 1) == -1)
 		{
 			ereport(WARNING,
-					(errmsg("unable to read symbolic link %s: %m", fullpath)));
+				  (errmsg("unable to read symbolic link %s: %m", fullpath)));
 			continue;
 		}
 
@@ -295,15 +295,15 @@ sendDir(char *path, char *basepath, bool sizeonly)
 
 		/*
 		 * We can skip pg_xlog, the WAL segments need to be fetched from the
-		 * WAL archive anyway. But include it as an empty directory anyway,
-		 * so we get permissions right.
+		 * WAL archive anyway. But include it as an empty directory anyway, so
+		 * we get permissions right.
 		 */
 		if (strcmp(pathbuf, "./pg_xlog") == 0)
 		{
 			if (!sizeonly)
 				_tarWriteHeader(pathbuf + strlen(basepath) + 1, NULL, &statbuf);
 			size += 512;		/* Size of the header just added */
-			continue; /* don't recurse into pg_xlog */
+			continue;			/* don't recurse into pg_xlog */
 		}
 
 #ifndef WIN32
@@ -422,7 +422,7 @@ sendFile(char *filename, char *basepath, struct stat * statbuf)
 	if (statbuf->st_size > MAX_TAR_MEMBER_FILELEN)
 		ereport(ERROR,
 				(errmsg("archive member \"%s\" too large for tar format",
-					filename)));
+						filename)));
 
 	_tarWriteHeader(filename + strlen(basepath) + 1, NULL, statbuf);
 

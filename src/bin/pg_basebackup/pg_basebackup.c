@@ -164,7 +164,6 @@ ReceiveTarFile(PGconn *conn, PGresult *res, int rownum)
 		}
 	else
 	{
-
 		/*
 		 * Specific tablespace
 		 */
@@ -206,10 +205,10 @@ ReceiveTarFile(PGconn *conn, PGresult *res, int rownum)
 			/*
 			 * End of chunk. Close file (but not stdout).
 			 *
-			 * Also, write two completely empty blocks at the end
-			 * of the tar file, as required by some tar programs.
+			 * Also, write two completely empty blocks at the end of the tar
+			 * file, as required by some tar programs.
 			 */
-			char zerobuf[1024];
+			char		zerobuf[1024];
 
 			MemSet(zerobuf, 0, sizeof(zerobuf));
 			fwrite(zerobuf, sizeof(zerobuf), 1, tarfile);
@@ -318,7 +317,7 @@ ReceiveAndUnpackTarFile(PGconn *conn, PGresult *res, int rownum)
 			if (sscanf(copybuf + 124, "%11o", &current_len_left) != 1)
 			{
 				fprintf(stderr, _("%s: could not parse file size!\n"),
-					progname);
+						progname);
 				exit(1);
 			}
 
@@ -346,7 +345,7 @@ ReceiveAndUnpackTarFile(PGconn *conn, PGresult *res, int rownum)
 					if (mkdir(fn, S_IRWXU) != 0)		/* XXX: permissions */
 					{
 						fprintf(stderr,
-								_("%s: could not create directory \"%s\": %m\n"),
+							_("%s: could not create directory \"%s\": %m\n"),
 								progname, fn);
 						exit(1);
 					}
@@ -556,7 +555,7 @@ BaseBackup()
 	if (showprogress)
 	{
 		progress_report(PQntuples(res), "");
-		fprintf(stderr, "\n");			/* Need to move to next line */
+		fprintf(stderr, "\n");	/* Need to move to next line */
 	}
 
 	res = PQgetResult(conn);
@@ -686,7 +685,7 @@ main(int argc, char **argv)
 	if (basedir != NULL && tardir != NULL)
 	{
 		fprintf(stderr,
-				_("%s: both directory mode and tar mode cannot be specified\n"),
+			 _("%s: both directory mode and tar mode cannot be specified\n"),
 				progname);
 		fprintf(stderr, _("Try \"%s --help\" for more information.\n"),
 				progname);
