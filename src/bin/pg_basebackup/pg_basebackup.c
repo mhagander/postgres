@@ -1,4 +1,3 @@
-
 /*-------------------------------------------------------------------------
  *
  * pg_basebackup.c - receive a base backup using streaming replication protocol
