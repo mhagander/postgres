@@ -12,7 +12,7 @@ PostgreSQL documentation
 
  <refnamediv>
   <refname>pg_basebackup</refname>
-  <refpurpose>base backup of a <productname>PostgreSQL</productname> cluster</refpurpose>
+  <refpurpose>take a base backup of a <productname>PostgreSQL</productname> cluster</refpurpose>
  </refnamediv>
 
  <indexterm zone="app-pgbasebackup">
@@ -35,8 +35,8 @@ PostgreSQL documentation
    a running <productname>PostgreSQL</productname> database cluster. These
    are taken without affecting other clients to the database, and can be used
    both for point-in-time recovery (see <xref linkend="continuous-archiving">)
-   and as the starting point for log shipping or streaming replicatoin
-   (see <xref linkend="warm-standby">).
+   and as the starting point for a log shipping or streaming replication standby
+   server (see <xref linkend="warm-standby">).
   </para>
 
   <para>
@@ -107,7 +107,7 @@ $ <userinput>pg_basebackup -c "host=192.168.0.2 user=backup"</userinput>
       <listitem>
        <para>
         Directory to place tar format files in. When this is specified, the
-        backup will constist of a number of tar files, one for each tablespace
+        backup will consist of a number of tar files, one for each tablespace
         in the database, stored in this directory. The tar file for the main
         data directory will be named <filename>base.tar</>, and all other
         tablespaces will be named after the tablespace oid.
@@ -220,7 +220,7 @@ $ <userinput>pg_basebackup -c "host=192.168.0.2 user=backup"</userinput>
   </para>
 
   <para>
-   The way <productname>PostgreSQL</productname> manageas tablespaces, the path
+   The way <productname>PostgreSQL</productname> manages tablespaces, the path
    for all additional tablespaces must be identical whenever a backup is
    restored. The main data directory, however, is relocatable to any location.
   </para>

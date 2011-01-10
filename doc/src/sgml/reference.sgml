@@ -202,7 +202,7 @@
    &droplang;
    &dropuser;
    &ecpgRef;
-   &pgbasebackup;
+   &pgBasebackup;
    &pgConfig;
    &pgDump;
    &pgDumpall;
