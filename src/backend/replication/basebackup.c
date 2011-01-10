@@ -267,7 +267,7 @@ sendDir(char *path, char *basepath, bool sizeonly)
 
 		snprintf(pathbuf, MAXPGPATH, "%s/%s", path, de->d_name);
 
-		/* Skip postmaster.pid in PGDATA */
+		/* Skip postmaster.pid in the data directory */
 		if (strcmp(pathbuf, "./postmaster.pid") == 0)
 			continue;
 
@@ -281,16 +281,17 @@ sendDir(char *path, char *basepath, bool sizeonly)
 			continue;
 		}
 
+		/*
+		 * We can skip pg_xlog, the WAL segments need to be fetched from the
+		 * WAL archive anyway. But include it as an empty directory anyway,
+		 * so we get permissions right.
+		 */
 		if (strcmp(pathbuf, "./pg_xlog") == 0)
 		{
-			/*
-			 * Write an empty directory for pg_xlog in the tar though, so we
-			 * get permissions right. But don't recurse to get the contents.
-			 */
 			if (!sizeonly)
 				_tarWriteHeader(pathbuf + strlen(basepath) + 1, NULL, &statbuf);
 			size += 512;		/* Size of the header just added */
-			continue;
+			continue; /* don't recurse into pg_xlog */
 		}
 
 #ifndef WIN32
@@ -304,10 +305,8 @@ sendDir(char *path, char *basepath, bool sizeonly)
 
 			MemSet(linkpath, 0, sizeof(linkpath));
 			if (readlink(pathbuf, linkpath, sizeof(linkpath) - 1) == -1)
-			{
 				elog(WARNING, "unable to read symbolic link \"%s\": %m",
 					 pathbuf);
-			}
 			if (!sizeonly)
 				_tarWriteHeader(pathbuf + strlen(basepath) + 1, linkpath, &statbuf);
 			size += 512;		/* Size of the header just added */
