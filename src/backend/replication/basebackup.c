@@ -60,10 +60,6 @@ typedef struct
  *
  * The function will take care of running pg_start_backup() and
  * pg_stop_backup() for the user.
- *
- * It will contain one or more batches. Each batch has a header,
- * in normal result format, followed by a tar format dump in
- * CopyOut format.
  */
 void
 SendBaseBackup(const char *options)
