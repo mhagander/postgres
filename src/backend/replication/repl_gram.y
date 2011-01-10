@@ -115,12 +115,15 @@ base_backup:
 
 					$$ = (Node *) cmd;
 				}
+			;
 
 opt_label: K_LABEL SCONST { $$ = $2; }
 			| /* EMPTY */		{ $$ = NULL; }
+			;
 
 opt_progress: K_PROGRESS		{ $$ = true; }
 			| /* EMPTY */		{ $$ = false; }
+			;
 
 /*
  * START_REPLICATION %X/%X
@@ -135,6 +138,7 @@ start_replication:
 
 					$$ = (Node *) cmd;
 				}
+			;
 %%
 
 #include "repl_scanner.c"
