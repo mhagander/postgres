@@ -29,6 +29,7 @@
 #include "utils/builtins.h"
 #include "utils/elog.h"
 #include "utils/memutils.h"
+#include "utils/ps_status.h"
 
 static int64 sendDir(char *path, int basepathlen, bool sizeonly);
 static void sendFile(char *path, int basepathlen, struct stat * statbuf);
@@ -82,6 +83,15 @@ SendBaseBackup(const char *backup_label, bool progress)
 
 	if (backup_label == NULL)
 		backup_label = "base backup";
+
+	if (update_process_title)
+	{
+		char		activitymsg[50];
+
+		snprintf(activitymsg, sizeof(activitymsg), "sending backup \"%s\"",
+				 backup_label);
+		set_ps_display(activitymsg, false);
+	}
 
 	/* Make sure we can open the directory with tablespaces in it */
 	dir = AllocateDir("pg_tblspc");
