@@ -132,12 +132,12 @@ progress_report(int tablespacenum, char *fn)
 {
 	if (verbose)
 		fprintf(stderr,
-				"%llu/%llu kB (%i%%) %i/%i tablespaces (%-30s)\r",
+				INT64_FORMAT "/" INT64_FORMAT " kB (%i%%) %i/%i tablespaces (%-30s)\r",
 				totaldone / 1024, totalsize,
 				(int) ((totaldone / 1024) * 100 / totalsize),
 				tablespacenum, tablespacecount, fn);
 	else
-		fprintf(stderr, "%llu/%llu kB (%i%%) %i/%i tablespaces\r",
+		fprintf(stderr, INT64_FORMAT "/" INT64_FORMAT " kB (%i%%) %i/%i tablespaces\r",
 				totaldone / 1024, totalsize,
 				(int) ((totaldone / 1024) * 100 / totalsize),
 				tablespacenum, tablespacecount);
