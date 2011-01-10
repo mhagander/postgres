@@ -15,8 +15,7 @@
 
 #include "postgres.h"
 
-#include "nodes/nodes.h"
-#include "nodes/replnodes.h"
+#include "replication/replnodes.h"
 #include "replication/walsender.h"
 
 /* Result of the parsing is returned here */
