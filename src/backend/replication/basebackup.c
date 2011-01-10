@@ -80,6 +80,9 @@ SendBaseBackup(const char *backup_label, bool progress)
 										   ALLOCSET_DEFAULT_MAXSIZE);
 	old_context = MemoryContextSwitchTo(backup_context);
 
+	if (backup_label == NULL)
+		backup_label = "base backup";
+
 	/* Make sure we can open the directory with tablespaces in it */
 	dir = AllocateDir("pg_tblspc");
 	if (!dir)

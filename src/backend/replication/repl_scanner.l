@@ -58,6 +58,7 @@ quotestop		{quote}
 
 BASE_BACKUP			{ return K_BASE_BACKUP; }
 IDENTIFY_SYSTEM		{ return K_IDENTIFY_SYSTEM; }
+LABEL			{ return K_LABEL; }
 PROGRESS			{ return K_PROGRESS; }
 START_REPLICATION	{ return K_START_REPLICATION; }
 ","				{ return ','; }

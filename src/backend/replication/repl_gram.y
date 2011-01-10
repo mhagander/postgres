@@ -65,12 +65,14 @@ Node *replication_parse_result;
 /* Keyword tokens. */
 %token K_BASE_BACKUP
 %token K_IDENTIFY_SYSTEM
+%token K_LABEL
 %token K_PROGRESS
 %token K_START_REPLICATION
 
 %type <node>	command
 %type <node>	base_backup start_replication identify_system
 %type <boolval>	opt_progress
+%type <str>     opt_label
 
 %%
 
@@ -101,10 +103,10 @@ identify_system:
 			;
 
 /*
- * BASE_BACKUP <label> [PROGRESS]
+ * BASE_BACKUP [LABEL <label>] [PROGRESS]
  */
 base_backup:
-			K_BASE_BACKUP SCONST opt_progress
+			K_BASE_BACKUP opt_label opt_progress
 				{
 					BaseBackupCmd *cmd = (BaseBackupCmd *) makeNode(BaseBackupCmd);
 
@@ -116,6 +118,9 @@ base_backup:
 
 opt_progress: K_PROGRESS		{ $$ = true; }
 			| /* EMPTY */		{ $$ = false; }
+
+opt_label: K_LABEL SCONST { $$ = $2; }
+			| /* EMPTY */		{ $$ = NULL; }
 
 /*
  * START_REPLICATION %X/%X
