@@ -274,8 +274,10 @@ sendDir(char *path, char *basepath, bool sizeonly)
 		if (lstat(pathbuf, &statbuf) != 0)
 		{
 			if (errno != ENOENT)
-				elog(WARNING, "could not stat file or directory \"%s\": %m",
-					 pathbuf);
+				ereport(ERROR,
+						(errcode(errcode_for_file_access()),
+						 errmsg("could not stat file or directory \"%s\": %m",
+								pathbuf)));
 
 			/* If the file went away while scanning, it's no error. */
 			continue;
@@ -305,8 +307,10 @@ sendDir(char *path, char *basepath, bool sizeonly)
 
 			MemSet(linkpath, 0, sizeof(linkpath));
 			if (readlink(pathbuf, linkpath, sizeof(linkpath) - 1) == -1)
-				elog(WARNING, "unable to read symbolic link \"%s\": %m",
-					 pathbuf);
+				ereport(ERROR,
+						(errcode(errcode_for_file_access()),
+						 errmsg("could not read symbolic link \"%s\": %m",
+								pathbuf)));
 			if (!sizeonly)
 				_tarWriteHeader(pathbuf + strlen(basepath) + 1, linkpath, &statbuf);
 			size += 512;		/* Size of the header just added */
@@ -333,7 +337,8 @@ sendDir(char *path, char *basepath, bool sizeonly)
 			size += 512;		/* Size of the header of the file */
 		}
 		else
-			elog(WARNING, "skipping special file \"%s\"", pathbuf);
+			ereport(WARNING,
+					(errmsg("skipping special file \"%s\"", pathbuf)));
 	}
 	FreeDir(dir);
 	return size;
@@ -396,14 +401,18 @@ sendFile(char *filename, char *basepath, struct stat * statbuf)
 
 	fp = AllocateFile(filename, "rb");
 	if (fp == NULL)
-		elog(ERROR, "could not open file \"%s\": %m", filename);
+		ereport(ERROR,
+				(errcode(errcode_for_file_access()),
+				 errmsg("could not open file \"%s\": %m", filename)));
 
 	/*
 	 * Some compilers will throw a warning knowing this test can never be true
 	 * because pgoff_t can't exceed the compared maximum on their platform.
 	 */
 	if (statbuf->st_size > MAX_TAR_MEMBER_FILELEN)
-		elog(ERROR, "archive member too large for tar format");
+		ereport(ERROR,
+				(errmsg("archive member \"%s\" too large for tar format",
+					filename)));
 
 	_tarWriteHeader(filename + strlen(basepath) + 1, NULL, statbuf);
 
