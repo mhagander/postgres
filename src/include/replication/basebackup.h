@@ -5,7 +5,7 @@
  *
  * Portions Copyright (c) 2010-2010, PostgreSQL Global Development Group
  *
- * $PostgreSQL$
+ * src/include/replication/walsender.h
  *
  *-------------------------------------------------------------------------
  */
