@@ -59,7 +59,7 @@ Node *replication_parse_result;
 }
 
 /* Non-keyword tokens */
-%token <str> SCONST 
+%token <str> SCONST
 %token <recptr> RECPTR
 
 /* Keyword tokens. */
