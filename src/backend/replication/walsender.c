@@ -179,7 +179,7 @@ WalSndHandshake(void)
 	{
 		int			firstchar;
 
-		WalSndSetState(WalSndState_IDLE);
+		WalSndSetState(WALSNDSTATE_IDLE);
 		set_ps_display("idle", false);
 
 		/* Wait for a command to arrive */
@@ -485,7 +485,7 @@ WalSndLoop(void)
 		}
 
 		/* Update our state to indicate if we're behind or not */
-		WalSndSetState(caughtup ? WalSndState_STREAMING : WalSndState_CATCHUP);
+		WalSndSetState(caughtup ? WALSNDSTATE_STREAMING : WALSNDSTATE_CATCHUP);
 	}
 
 	/*
@@ -537,7 +537,7 @@ InitWalSnd(void)
 			 */
 			walsnd->pid = MyProcPid;
 			MemSet(&walsnd->sentPtr, 0, sizeof(XLogRecPtr));
-			walsnd->state = WalSndState_IDLE;
+			walsnd->state = WALSNDSTATE_IDLE;
 			SpinLockRelease(&walsnd->mutex);
 			/* don't need the lock anymore */
 			OwnLatch((Latch *) &walsnd->latch);
@@ -985,10 +985,10 @@ WalSndGetStateString(WalSndState state)
 {
 	switch (state)
 	{
-		case WalSndState_IDLE: return "IDLE";
-		case WalSndState_BACKUP: return "BACKUP";
-		case WalSndState_CATCHUP: return "CATCHUP";
-		case WalSndState_STREAMING: return "STREAMING";
+		case WALSNDSTATE_IDLE: return "IDLE";
+		case WALSNDSTATE_BACKUP: return "BACKUP";
+		case WALSNDSTATE_CATCHUP: return "CATCHUP";
+		case WALSNDSTATE_STREAMING: return "STREAMING";
 	}
 	return "UNKNOWN";
 }

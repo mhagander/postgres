@@ -18,10 +18,10 @@
 
 
 typedef enum WalSndState {
-	WalSndState_IDLE = 0,
-	WalSndState_BACKUP,
-	WalSndState_CATCHUP,
-	WalSndState_STREAMING
+	WALSNDSTATE_IDLE = 0,
+	WALSNDSTATE_BACKUP,
+	WALSNDSTATE_CATCHUP,
+	WALSNDSTATE_STREAMING
 } WalSndState;
 
 /*

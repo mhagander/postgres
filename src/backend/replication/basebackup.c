@@ -84,7 +84,7 @@ SendBaseBackup(const char *options)
 										   ALLOCSET_DEFAULT_MAXSIZE);
 	old_context = MemoryContextSwitchTo(backup_context);
 
-	WalSndSetState(WalSndState_BACKUP);
+	WalSndSetState(WALSNDSTATE_BACKUP);
 
 	if (backup_label == NULL)
 		ereport(FATAL,
