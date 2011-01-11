@@ -179,7 +179,7 @@ WalSndHandshake(void)
 	{
 		int			firstchar;
 
-		WalSndSetState(WALSNDSTATE_IDLE);
+		WalSndSetState(WALSNDSTATE_STARTUP);
 		set_ps_display("idle", false);
 
 		/* Wait for a command to arrive */
@@ -537,7 +537,7 @@ InitWalSnd(void)
 			 */
 			walsnd->pid = MyProcPid;
 			MemSet(&walsnd->sentPtr, 0, sizeof(XLogRecPtr));
-			walsnd->state = WALSNDSTATE_IDLE;
+			walsnd->state = WALSNDSTATE_STARTUP;
 			SpinLockRelease(&walsnd->mutex);
 			/* don't need the lock anymore */
 			OwnLatch((Latch *) &walsnd->latch);
@@ -990,7 +990,7 @@ WalSndGetStateString(WalSndState state)
 {
 	switch (state)
 	{
-		case WALSNDSTATE_IDLE: return "IDLE";
+		case WALSNDSTATE_STARTUP: return "STARTUP";
 		case WALSNDSTATE_BACKUP: return "BACKUP";
 		case WALSNDSTATE_CATCHUP: return "CATCHUP";
 		case WALSNDSTATE_STREAMING: return "STREAMING";
