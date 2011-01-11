@@ -971,6 +971,11 @@ void WalSndSetState(WalSndState state)
 	/* use volatile pointer to prevent code rearrangement */
 	volatile WalSnd *walsnd = MyWalSnd;
 
+	Assert(am_walsender);
+
+	if (walsnd->state == state)
+		return;
+
 	SpinLockAcquire(&walsnd->mutex);
 	walsnd->state = state;
 	SpinLockRelease(&walsnd->mutex);
