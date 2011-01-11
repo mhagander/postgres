@@ -24,6 +24,7 @@
 #include "libpq/pqformat.h"
 #include "nodes/pg_list.h"
 #include "replication/basebackup.h"
+#include "replication/walsender.h"
 #include "storage/fd.h"
 #include "storage/ipc.h"
 #include "utils/builtins.h"
@@ -82,6 +83,8 @@ SendBaseBackup(const char *options)
 										   ALLOCSET_DEFAULT_INITSIZE,
 										   ALLOCSET_DEFAULT_MAXSIZE);
 	old_context = MemoryContextSwitchTo(backup_context);
+
+	WalSndSetState(WalSndState_BACKUP);
 
 	if (backup_label == NULL)
 		ereport(FATAL,

@@ -16,12 +16,21 @@
 #include "storage/latch.h"
 #include "storage/spin.h"
 
+
+typedef enum WalSndState {
+	WalSndState_IDLE = 0,
+	WalSndState_BACKUP,
+	WalSndState_CATCHUP,
+	WalSndState_STREAMING
+} WalSndState;
+
 /*
  * Each walsender has a WalSnd struct in shared memory.
  */
 typedef struct WalSnd
 {
 	pid_t		pid;			/* this walsender's process id, or 0 */
+	WalSndState	state;			/* this walsender's state */
 	XLogRecPtr	sentPtr;		/* WAL has been sent up to this point */
 
 	slock_t		mutex;			/* locks shared variables shown above */
@@ -53,6 +62,7 @@ extern void WalSndSignals(void);
 extern Size WalSndShmemSize(void);
 extern void WalSndShmemInit(void);
 extern void WalSndWakeup(void);
+extern void WalSndSetState(WalSndState state);
 
 extern Datum pg_stat_get_wal_senders(PG_FUNCTION_ARGS);
 
