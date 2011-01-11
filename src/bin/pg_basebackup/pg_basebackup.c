@@ -546,7 +546,7 @@ BaseBackup()
 	snprintf(current_path, sizeof(current_path), "BASE_BACKUP LABEL '%s' %s",
 			 escaped_label,
 			 showprogress ? "PROGRESS" : "");
-	fprintf(stderr, "%s\n", current_path);
+
 	if (PQsendQuery(conn, current_path) == 0)
 	{
 		fprintf(stderr, _("%s: coult not start base backup: %s\n"),
