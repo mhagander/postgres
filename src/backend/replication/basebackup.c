@@ -24,6 +24,7 @@
 #include "libpq/pqformat.h"
 #include "nodes/pg_list.h"
 #include "replication/basebackup.h"
+#include "replication/walsender.h"
 #include "storage/fd.h"
 #include "storage/ipc.h"
 #include "utils/builtins.h"
@@ -39,6 +40,7 @@ static void send_int8_string(StringInfoData *buf, int64 intval);
 static void SendBackupHeader(List *tablespaces);
 static void SendBackupDirectory(char *location, char *spcoid);
 static void base_backup_cleanup(int code, Datum arg);
+static void perform_base_backup(const char *backup_label, List *tablespaces);
 
 typedef struct
 {
@@ -111,6 +113,8 @@ SendBaseBackup(const char *backup_label, bool progress)
 										   ALLOCSET_DEFAULT_INITSIZE,
 										   ALLOCSET_DEFAULT_MAXSIZE);
 	old_context = MemoryContextSwitchTo(backup_context);
+
+	WalSndSetState(WALSNDSTATE_BACKUP);
 
 	if (backup_label == NULL)
 		backup_label = "base backup";
