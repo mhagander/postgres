@@ -99,7 +99,9 @@ START_REPLICATION	{ return K_START_REPLICATION; }
 				}
 
 .				{
-					elog(ERROR, "syntax error: unexpected character \"%s\"", yytext);
+					ereport(ERROR,
+							(errcode(ERRCODE_SYNTAX_ERROR),
+							 errmsg("syntax error: unexpected character \"%s\"", yytext)));
 				}
 %%
 
@@ -131,7 +133,9 @@ addlitchar(unsigned char ychar)
 void
 yyerror(const char *message)
 {
-	elog(ERROR, "%s", message);
+    ereport(ERROR,
+			(errcode(ERRCODE_SYNTAX_ERROR),
+			 errmsg_internal("%s", message)));
 }
 
 

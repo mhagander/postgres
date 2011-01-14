@@ -368,7 +368,10 @@ HandleReplicationCommand(const char *cmd_string)
 	replication_scanner_init(cmd_string);
 	parse_rc = replication_yyparse();
 	if (parse_rc != 0)
-		elog(ERROR, "replication command parser returned %d", parse_rc);
+		ereport(ERROR,
+				(errcode(ERRCODE_SYNTAX_ERROR),
+				 (errmsg_internal("replication command parser returned %d",
+								  parse_rc))));
 
 	cmd_node = replication_parse_result;
 
