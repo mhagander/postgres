@@ -69,7 +69,6 @@ START_REPLICATION	{ return K_START_REPLICATION; }
 " "				;
 
 {hexdigit}+\/{hexdigit}+		{
-					yylval.str = pstrdup(yytext);
 					if (sscanf(yytext, "%X/%X", &yylval.recptr.xlogid, &yylval.recptr.xrecoff) != 2)
 						yyerror("invalid streaming start location");
 					return RECPTR;
