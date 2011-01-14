@@ -24,6 +24,7 @@
 #include "libpq/pqformat.h"
 #include "nodes/pg_list.h"
 #include "replication/basebackup.h"
+#include "replication/walsender.h"
 #include "storage/fd.h"
 #include "storage/ipc.h"
 #include "utils/builtins.h"
@@ -39,6 +40,7 @@ static void send_int8_string(StringInfoData *buf, int64 intval);
 static void SendBackupHeader(List *tablespaces);
 static void SendBackupDirectory(char *location, char *spcoid);
 static void base_backup_cleanup(int code, Datum arg);
+static void perform_base_backup(const char *backup_label, List *tablespaces);
 
 typedef struct
 {
@@ -96,12 +98,10 @@ perform_base_backup(const char *backup_label, List *tablespaces)
  * pg_stop_backup() for the user.
  */
 void
-SendBaseBackup(const char *options)
+SendBaseBackup(const char *backup_label, bool progress)
 {
 	DIR		   *dir;
 	struct dirent *de;
-	char	   *backup_label = strchr(options, ';');
-	bool		progress = false;
 	List	   *tablespaces = NIL;
 	tablespaceinfo *ti;
 	MemoryContext backup_context;
@@ -114,19 +114,10 @@ SendBaseBackup(const char *options)
 										   ALLOCSET_DEFAULT_MAXSIZE);
 	old_context = MemoryContextSwitchTo(backup_context);
 
-	if (backup_label == NULL)
-		ereport(FATAL,
-				(errcode(ERRCODE_PROTOCOL_VIOLATION),
-				 errmsg("invalid base backup options: %s", options)));
-	backup_label++;				/* Walk past the semicolon */
+	WalSndSetState(WALSNDSTATE_BACKUP);
 
-	/* Currently the only option string supported is PROGRESS */
-	if (strncmp(options, "PROGRESS", 8) == 0)
-		progress = true;
-	else if (options[0] != ';')
-		ereport(FATAL,
-				(errcode(ERRCODE_PROTOCOL_VIOLATION),
-				 errmsg("invalid base backup options: %s", options)));
+	if (backup_label == NULL)
+		backup_label = "base backup";
 
 	if (update_process_title)
 	{
@@ -304,6 +295,15 @@ sendDir(char *path, int basepathlen, bool sizeonly)
 					strlen(PG_TEMP_FILE_PREFIX)) == 0)
 			continue;
 
+		/*
+		 * Check if the postmaster has signaled us to exit, and abort
+		 * with an error in that case. The error handler further up
+		 * will call do_pg_abort_backup() for us.
+		 */
+		if (walsender_shutdown_requested || walsender_ready_to_stop)
+			ereport(ERROR,
+					(errmsg("shutdown requested, aborting active base backup")));
+
 		snprintf(pathbuf, MAXPGPATH, "%s/%s", path, de->d_name);
 
 		/* Skip postmaster.pid in the data directory */
@@ -458,7 +458,10 @@ sendFile(char *filename, int basepathlen, struct stat * statbuf)
 	while ((cnt = fread(buf, 1, Min(sizeof(buf), statbuf->st_size - len), fp)) > 0)
 	{
 		/* Send the chunk as a CopyData message */
-		pq_putmessage('d', buf, cnt);
+		if (pq_putmessage('d', buf, cnt))
+			ereport(ERROR,
+					(errmsg("base backup could not send data, aborting backup")));
+
 		len += cnt;
 
 		if (len >= statbuf->st_size)
