@@ -152,8 +152,7 @@ perform_base_backup(const char *backup_label, bool progress, DIR *tblspcdir, boo
 			struct stat statbuf;
 
 			/* Send the current WAL file */
-#define TIMELINE 1
-			XLogFileName(xlogname, TIMELINE, logid, logseg);
+			XLogFileName(xlogname, ThisTimeLineID, logid, logseg);
 			sprintf(fn, "./pg_xlog/%s", xlogname);
 			if (lstat(fn, &statbuf) != 0)
 				ereport(ERROR,
