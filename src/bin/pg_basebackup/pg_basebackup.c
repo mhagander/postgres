@@ -420,6 +420,14 @@ ReceiveAndUnpackTarFile(PGconn *conn, PGresult *res, int rownum)
 				exit(1);
 			}
 
+			/* Set permissions on the file */
+			if (sscanf(&copybuf[100], "%07o ", &filemode) != 1)
+			{
+				fprintf(stderr, _("%s: could not parse file mode!\n"),
+						progname);
+				exit(1);
+			}
+
 			/*
 			 * All files are padded up to 512 bytes
 			 */
@@ -441,13 +449,18 @@ ReceiveAndUnpackTarFile(PGconn *conn, PGresult *res, int rownum)
 					 * Directory
 					 */
 					fn[strlen(fn) - 1] = '\0';	/* Remove trailing slash */
-					if (mkdir(fn, S_IRWXU) != 0)		/* XXX: permissions */
+					if (mkdir(fn, S_IRWXU) != 0)
 					{
 						fprintf(stderr,
 							_("%s: could not create directory \"%s\": %m\n"),
 								progname, fn);
 						exit(1);
 					}
+#ifndef WIN32
+					if (chmod(fn, filemode))
+						fprintf(stderr, _("%s: could not set permissions on directory '%s': %m\n"),
+								progname, fn);
+#endif
 				}
 				else if (copybuf[156] == '2')
 				{
@@ -462,10 +475,6 @@ ReceiveAndUnpackTarFile(PGconn *conn, PGresult *res, int rownum)
 								progname, fn, &copybuf[157]);
 						exit(1);
 					}
-
-					/*
-					 * XXX: permissions
-					 */
 				}
 				else
 				{
@@ -488,13 +497,6 @@ ReceiveAndUnpackTarFile(PGconn *conn, PGresult *res, int rownum)
 			}
 
 #ifndef WIN32
-			/* Set permissions on the file */
-			if (sscanf(&copybuf[100], "%07o ", &filemode) != 1)
-			{
-				fprintf(stderr, _("%s: could not read file mode from tar!\n"),
-						progname);
-				exit(1);
-			}
 			if (chmod(fn, filemode))
 				fprintf(stderr, _("%s: could not set permissions on file '%s': %m\n"),
 								  progname, fn);
