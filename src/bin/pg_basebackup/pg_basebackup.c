@@ -398,6 +398,10 @@ ReceiveAndUnpackTarFile(PGconn *conn, PGresult *res, int rownum)
 
 		if (file == NULL)
 		{
+#ifndef WIN32
+			mode_t	filemode;
+#endif
+
 			/*
 			 * No current file, so this must be the header for a new file
 			 */
@@ -475,13 +479,26 @@ ReceiveAndUnpackTarFile(PGconn *conn, PGresult *res, int rownum)
 			/*
 			 * regular file
 			 */
-			file = fopen(fn, "wb");		/* XXX: permissions & owner */
+			file = fopen(fn, "wb");
 			if (!file)
 			{
 				fprintf(stderr, _("%s: could not create file '%s': %m\n"),
 						progname, fn);
 				exit(1);
 			}
+
+#ifndef WIN32
+			/* Set permissions on the file */
+			if (sscanf(&copybuf[100], "%07o ", &filemode) != 1)
+			{
+				fprintf(stderr, _("%s: could not read file mode from tar!\n"),
+						progname);
+				exit(1);
+			}
+			if (chmod(fn, filemode))
+				fprintf(stderr, _("%s: could not set permissions on file '%s': %m\n"),
+								  progname, fn);
+#endif
 
 			if (current_len_left == 0)
 			{
