@@ -33,6 +33,7 @@ char	   *label = "pg_basebackup base backup";
 bool		showprogress = false;
 int			verbose = 0;
 int			compresslevel = 0;
+bool		includewal = false;
 char	   *conninfo = NULL;
 
 /* Progress counters */
@@ -97,6 +98,7 @@ usage(void)
 	printf(_("  -d, --basedir=directory   receive base backup into directory\n"));
 	printf(_("  -t, --tardir=directory    receive base backup into tar files\n"
 			 "                            stored in specified directory\n"));
+	printf(_("  -w, --wal                 include required WAL files in backup\n"));
 	printf(_("  -Z, --compress=0-9        compress tar output\n"));
 	printf(_("  -l, --label=label         set backup label\n"));
 	printf(_("  -p, --progress            show progress information\n"));
@@ -642,9 +644,10 @@ BaseBackup()
 	conn = GetConnection();
 
 	PQescapeStringConn(conn, escaped_label, label, sizeof(escaped_label), &i);
-	snprintf(current_path, sizeof(current_path), "BASE_BACKUP LABEL '%s' %s",
+	snprintf(current_path, sizeof(current_path), "BASE_BACKUP LABEL '%s' %s %s",
 			 escaped_label,
-			 showprogress ? "PROGRESS" : "");
+			 showprogress ? "PROGRESS" : "",
+			 includewal ? "WAL" : "");
 
 	if (PQsendQuery(conn, current_path) == 0)
 	{
@@ -687,7 +690,7 @@ BaseBackup()
 		 * once since it can be relocated, and it will be checked before we do
 		 * anything anyway.
 		 */
-		if (basedir != NULL && i > 0)
+		if (basedir != NULL && !PQgetisnull(res, i, 1))
 			verify_dir_is_empty_or_create(PQgetvalue(res, i, 1));
 	}
 
@@ -747,6 +750,7 @@ main(int argc, char **argv)
 		{"conninfo", required_argument, NULL, 'c'},
 		{"basedir", required_argument, NULL, 'd'},
 		{"tardir", required_argument, NULL, 't'},
+		{"wal", no_argument, NULL, 'w'},
 		{"compress", required_argument, NULL, 'Z'},
 		{"label", required_argument, NULL, 'l'},
 		{"verbose", no_argument, NULL, 'v'},
@@ -776,7 +780,7 @@ main(int argc, char **argv)
 		}
 	}
 
-	while ((c = getopt_long(argc, argv, "c:d:t:l:Z:vp",
+	while ((c = getopt_long(argc, argv, "c:d:t:l:Z:wvp",
 							long_options, &option_index)) != -1)
 	{
 		switch (c)
@@ -789,6 +793,9 @@ main(int argc, char **argv)
 				break;
 			case 't':
 				tardir = xstrdup(optarg);
+				break;
+			case 'w':
+				includewal = true;
 				break;
 			case 'l':
 				label = xstrdup(optarg);

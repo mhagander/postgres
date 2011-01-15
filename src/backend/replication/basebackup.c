@@ -38,9 +38,9 @@ static void _tarWriteHeader(char *filename, char *linktarget,
 				struct stat * statbuf);
 static void send_int8_string(StringInfoData *buf, int64 intval);
 static void SendBackupHeader(List *tablespaces);
-static void SendBackupDirectory(char *location, char *spcoid);
+static void SendBackupDirectory(char *location, char *spcoid, bool closetar);
 static void base_backup_cleanup(int code, Datum arg);
-static void perform_base_backup(const char *backup_label, bool progress, DIR *tblspcdir);
+static void perform_base_backup(const char *backup_label, bool progress, DIR *tblspcdir, bool includewal);
 
 typedef struct
 {
@@ -67,9 +67,12 @@ base_backup_cleanup(int code, Datum arg)
  * clobbered by longjmp" from stupider versions of gcc.
  */
 static void
-perform_base_backup(const char *backup_label, bool progress, DIR *tblspcdir)
+perform_base_backup(const char *backup_label, bool progress, DIR *tblspcdir, bool includewal)
 {
-	do_pg_start_backup(backup_label, true);
+	XLogRecPtr	startptr;
+	XLogRecPtr	endptr;
+
+	startptr = do_pg_start_backup(backup_label, true);
 
 	PG_ENSURE_ERROR_CLEANUP(base_backup_cleanup, (Datum) 0);
 	{
@@ -78,11 +81,6 @@ perform_base_backup(const char *backup_label, bool progress, DIR *tblspcdir)
 		struct dirent *de;
 		tablespaceinfo *ti;
 
-
-		/* Add a node for the base directory */
-		ti = palloc0(sizeof(tablespaceinfo));
-		ti->size = progress ? sendDir(".", 1, true) : -1;
-		tablespaces = lappend(tablespaces, ti);
 
 		/* Collect information about all tablespaces */
 		while ((de = ReadDir(tblspcdir, "pg_tblspc")) != NULL)
@@ -111,6 +109,10 @@ perform_base_backup(const char *backup_label, bool progress, DIR *tblspcdir)
 			tablespaces = lappend(tablespaces, ti);
 		}
 
+		/* Add a node for the base directory at the end */
+		ti = palloc0(sizeof(tablespaceinfo));
+		ti->size = progress ? sendDir(".", 1, true) : -1;
+		tablespaces = lappend(tablespaces, ti);
 
 		/* Send tablespace header */
 		SendBackupHeader(tablespaces);
@@ -120,12 +122,62 @@ perform_base_backup(const char *backup_label, bool progress, DIR *tblspcdir)
 		{
 			tablespaceinfo *ti = (tablespaceinfo *) lfirst(lc);
 
-			SendBackupDirectory(ti->path, ti->oid);
+			SendBackupDirectory(ti->path, ti->oid,
+								!includewal || ti->path != NULL);
 		}
 	}
 	PG_END_ENSURE_ERROR_CLEANUP(base_backup_cleanup, (Datum) 0);
 
-	do_pg_stop_backup();
+	endptr = do_pg_stop_backup();
+
+	if (includewal)
+	{
+		/*
+		 * We've left the last tar file "open", so we can now append the
+		 * required WAL files to it.
+		 */
+		int 	logid;
+		int		logseg;
+
+		elog(LOG, "Going to write wal from %i.%i to %i.%i",
+			 startptr.xlogid, startptr.xrecoff / XLogSegSize,
+			 endptr.xlogid, endptr.xrecoff / XLogSegSize);
+		logid = startptr.xlogid;
+		logseg = startptr.xrecoff / XLogSegSize;
+
+		while (true)
+		{
+			char	xlogname[64];
+			char	fn[MAXPGPATH];
+			struct stat statbuf;
+
+			/* Send the current WAL file */
+#define TIMELINE 1
+			XLogFileName(xlogname, TIMELINE, logid, logseg);
+			sprintf(fn, "./pg_xlog/%s", xlogname);
+			if (lstat(fn, &statbuf) != 0)
+				ereport(ERROR,
+						(errcode(errcode_for_file_access()),
+						 errmsg("could not stat file \"%s\": %m",
+								fn)));
+
+			if (!S_ISREG(statbuf.st_mode))
+				ereport(ERROR,
+						(errmsg("\"%s\" is not a file",
+								fn)));
+			sendFile(fn, 1, &statbuf);
+
+			/* Advance to the next WAL file */
+			NextLogSeg(logid, logseg);
+
+			/* Have we reached our stop position yet? */
+			if (logid > endptr.xlogid ||
+				(logid == endptr.xlogid && logseg >= endptr.xrecoff / XLogSegSize))
+				break;
+		}
+		/* Send CopyDone message for the last tar file*/
+		pq_putemptymessage('c');
+	}
 }
 
 /*
@@ -135,7 +187,7 @@ perform_base_backup(const char *backup_label, bool progress, DIR *tblspcdir)
  * pg_stop_backup() for the user.
  */
 void
-SendBaseBackup(const char *backup_label, bool progress)
+SendBaseBackup(const char *backup_label, bool progress, bool includewal)
 {
 	DIR		   *dir;
 	MemoryContext backup_context;
@@ -168,7 +220,7 @@ SendBaseBackup(const char *backup_label, bool progress)
 		ereport(ERROR,
 				(errmsg("unable to open directory pg_tblspc: %m")));
 
-	perform_base_backup(backup_label, progress, dir);
+	perform_base_backup(backup_label, progress, dir, includewal);
 
 	FreeDir(dir);
 
@@ -256,7 +308,7 @@ SendBackupHeader(List *tablespaces)
 }
 
 static void
-SendBackupDirectory(char *location, char *spcoid)
+SendBackupDirectory(char *location, char *spcoid, bool closetar)
 {
 	StringInfoData buf;
 
@@ -272,7 +324,8 @@ SendBackupDirectory(char *location, char *spcoid)
 			false);
 
 	/* Send CopyDone message */
-	pq_putemptymessage('c');
+	if (closetar)
+		pq_putemptymessage('c');
 }
 
 
