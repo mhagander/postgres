@@ -665,13 +665,13 @@ BaseBackup()
 		else
 			ReceiveAndUnpackTarFile(conn, res, i);
 	}							/* Loop over all tablespaces */
-	PQclear(res);
 
 	if (showprogress)
 	{
 		progress_report(PQntuples(res), "");
 		fprintf(stderr, "\n");	/* Need to move to next line */
 	}
+	PQclear(res);
 
 	res = PQgetResult(conn);
 	if (!res || PQresultStatus(res) != PGRES_COMMAND_OK)
