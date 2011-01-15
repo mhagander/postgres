@@ -52,6 +52,10 @@ static void ReceiveAndUnpackTarFile(PGconn *conn, PGresult *res, int rownum);
 static void BaseBackup();
 
 
+/*
+ * strdup() replacement that prints an error and exists if something goes
+ * wrong. Can never return NULL.
+ */
 static char *
 xstrdup(const char *s)
 {
@@ -88,6 +92,12 @@ usage(void)
 	printf(_("  -V, --version             output version information, then exit\n"));
 }
 
+
+/*
+ * Verify that the given directory exists and is empty. If it does not
+ * exist, it is created. If it exists but is not empty, an error will
+ * be give and the process ended.
+ */
 static void
 verify_dir_is_empty_or_create(char *dirname)
 {
@@ -141,6 +151,11 @@ verify_dir_is_empty_or_create(char *dirname)
 	}
 }
 
+
+/*
+ * Print a progress report based on the global variables. If verbose output
+ * is disabled, also print the current file name.
+ */
 static void
 progress_report(int tablespacenum, char *fn)
 {
@@ -157,6 +172,17 @@ progress_report(int tablespacenum, char *fn)
 				tablespacenum, tablespacecount);
 }
 
+
+/*
+ * Receive a tar format file from the connection to the server, and write
+ * the data from this file directly into a tar file. If compression is
+ * enabled, the data will be compressed while written to the file.
+ *
+ * The file will be named base.tar[.gz] if it's for the main data directory
+ * or <tablespaceoid>.tar[.gz] if it's for another tablespace.
+ *
+ * No attempt to inspect or validate the contents of the file is done.
+ */
 static void
 ReceiveTarFile(PGconn *conn, PGresult *res, int rownum)
 {
@@ -300,7 +326,16 @@ ReceiveTarFile(PGconn *conn, PGresult *res, int rownum)
 		PQfreemem(copybuf);
 }
 
-
+/*
+ * Receive a tar format stream from the connection to the server, and unpack
+ * the contents of it into a directory. Only files, directories and
+ * symlinks are supported, no other kinds of special files.
+ *
+ * If the data is for the main data directory, it will be restored in the
+ * specified directory. If it's for another tablespace, it will be restored
+ * in the original directory, since relocation of tablespaces is not
+ * supported.
+ */
 static void
 ReceiveAndUnpackTarFile(PGconn *conn, PGresult *res, int rownum)
 {
