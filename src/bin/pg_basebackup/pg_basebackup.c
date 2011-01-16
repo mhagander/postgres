@@ -704,6 +704,8 @@ GetConnection(void)
 		}
 
 		/* Connection ok! */
+		free(values);
+		free(keywords);
 		return conn;
 	}
 }
