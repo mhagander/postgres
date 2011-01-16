@@ -634,7 +634,7 @@ static PGconn *
 GetConnection(void)
 {
 	PGconn	   *conn;
-	int			argcount = 3;	/* dbname, replication, password */
+	int			argcount = 4;	/* dbname, replication, fallback_app_name, password */
 	int			i;
 	const char **keywords;
 	const char **values;
@@ -654,7 +654,9 @@ GetConnection(void)
 	values[0] = "replication";
 	keywords[1] = "replication";
 	values[1] = "true";
-	i = 2;
+	keywords[2] = "fallback_application_name";
+	values[2] = "pg_basebackup";
+	i = 3;
 	if (dbhost)
 	{
 		keywords[i] = "host";
