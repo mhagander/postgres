@@ -69,8 +69,8 @@ PostgreSQL documentation
    <para>
     <variablelist>
      <varlistentry>
-      <term><option>-d <replaceable class="parameter">directory</replaceable></option></term>
-      <term><option>--basedir=<replaceable class="parameter">directory</replaceable></option></term>
+      <term><option>-D <replaceable class="parameter">directory</replaceable></option></term>
+      <term><option>--pgdata=<replaceable class="parameter">directory</replaceable></option></term>
       <listitem>
        <para>
         Directory to restore the base data directory to. When the cluster has
@@ -81,7 +81,7 @@ PostgreSQL documentation
         on the server.
        </para>
        <para>
-        Only one of <literal>-d</> and <literal>-t</> can be specified.
+        Only one of <literal>-D</> and <literal>-T</> can be specified.
        </para>
       </listitem>
      </varlistentry>
@@ -117,7 +117,7 @@ PostgreSQL documentation
      </varlistentry>
 
      <varlistentry>
-      <term><option>-t <replaceable class="parameter">directory</replaceable></option></term>
+      <term><option>-T <replaceable class="parameter">directory</replaceable></option></term>
       <term><option>--tardir=<replaceable class="parameter">directory</replaceable></option></term>
       <listitem>
        <para>
@@ -134,7 +134,7 @@ PostgreSQL documentation
         the cluster has no additional tablespaces.
        </para>
        <para>
-        Only one of <literal>-d</> and <literal>-t</> can be specified.
+        Only one of <literal>-D</> and <literal>-T</> can be specified.
        </para>
       </listitem>
      </varlistentry>

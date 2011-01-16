@@ -111,8 +111,8 @@ usage(void)
 	printf(_("Usage:\n"));
 	printf(_("  %s [OPTION]...\n"), progname);
 	printf(_("\nOptions:\n"));
-	printf(_("  -d, --basedir=directory   receive base backup into directory\n"));
-	printf(_("  -t, --tardir=directory    receive base backup into tar files\n"
+	printf(_("  -D, --pgdata=directory   receive base backup into directory\n"));
+	printf(_("  -T, --tardir=directory    receive base backup into tar files\n"
 			 "                            stored in specified directory\n"));
 	printf(_("  -Z, --compress=0-9        compress tar output\n"));
 	printf(_("  -l, --label=label         set backup label\n"));
@@ -825,8 +825,8 @@ main(int argc, char **argv)
 	static struct option long_options[] = {
 		{"help", no_argument, NULL, '?'},
 		{"version", no_argument, NULL, 'V'},
-		{"basedir", required_argument, NULL, 'd'},
-		{"tardir", required_argument, NULL, 't'},
+		{"pgdata", required_argument, NULL, 'D'},
+		{"tardir", required_argument, NULL, 'T'},
 		{"compress", required_argument, NULL, 'Z'},
 		{"label", required_argument, NULL, 'l'},
 		{"host", required_argument, NULL, 'h'},
@@ -861,15 +861,15 @@ main(int argc, char **argv)
 		}
 	}
 
-	while ((c = getopt_long(argc, argv, "d:t:l:Z:h:p:U:wWvP",
+	while ((c = getopt_long(argc, argv, "D:T:l:Z:h:p:U:wWvP",
 							long_options, &option_index)) != -1)
 	{
 		switch (c)
 		{
-			case 'd':
+			case 'D':
 				basedir = xstrdup(optarg);
 				break;
-			case 't':
+			case 'T':
 				tardir = xstrdup(optarg);
 				break;
 			case 'l':
