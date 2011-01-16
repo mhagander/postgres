@@ -69,21 +69,6 @@ PostgreSQL documentation
    <para>
     <variablelist>
      <varlistentry>
-      <term><option>-c <replaceable class="parameter">conninfo</replaceable></option></term>
-      <term><option>--conninfo=<replaceable class="parameter">conninfo</replaceable></option></term>
-      <listitem>
-       <para>
-        Specify the conninfo string used to connect to the server. For example:
-<programlisting>
-$ <userinput>pg_basebackup -c "host=192.168.0.2 user=backup"</userinput>
-</programlisting>
-        See <xref linkend="libpq-connect"> for more information on all the
-        available connection options.
-       </para>
-      </listitem>
-     </varlistentry>
-
-     <varlistentry>
       <term><option>-d <replaceable class="parameter">directory</replaceable></option></term>
       <term><option>--basedir=<replaceable class="parameter">directory</replaceable></option></term>
       <listitem>
@@ -174,6 +159,85 @@ $ <userinput>pg_basebackup -c "host=192.168.0.2 user=backup"</userinput>
         Enables gzip compression of tar file output. Compression is only
         available when generating tar files, and is not available when sending
         output to standard output.
+       </para>
+      </listitem>
+     </varlistentry>
+    </variablelist>
+   </para>
+
+   <para>
+    The following command-line options control the database connection parameters.
+
+    <variablelist>
+     <varlistentry>
+      <term><option>-h <replaceable class="parameter">host</replaceable></option></term>
+      <term><option>--host=<replaceable class="parameter">host</replaceable></option></term>
+      <listitem>
+       <para>
+        Specifies the host name of the machine on which the server is
+        running.  If the value begins with a slash, it is used as the
+        directory for the Unix domain socket. The default is taken
+        from the <envar>PGHOST</envar> environment variable, if set,
+        else a Unix domain socket connection is attempted.
+       </para>
+      </listitem>
+     </varlistentry>
+
+     <varlistentry>
+      <term><option>-p <replaceable class="parameter">port</replaceable></option></term>
+      <term><option>--port=<replaceable class="parameter">port</replaceable></option></term>
+      <listitem>
+       <para>
+        Specifies the TCP port or local Unix domain socket file
+        extension on which the server is listening for connections.
+        Defaults to the <envar>PGPORT</envar> environment variable, if
+        set, or a compiled-in default.
+       </para>
+      </listitem>
+     </varlistentry>
+
+     <varlistentry>
+      <term><option>-U <replaceable>username</replaceable></option></term>
+      <term><option>--username=<replaceable class="parameter">username</replaceable></option></term>
+      <listitem>
+       <para>
+        User name to connect as.
+       </para>
+      </listitem>
+     </varlistentry>
+
+     <varlistentry>
+      <term><option>-w</></term>
+      <term><option>--no-password</></term>
+      <listitem>
+       <para>
+        Never issue a password prompt.  If the server requires
+        password authentication and a password is not available by
+        other means such as a <filename>.pgpass</filename> file, the
+        connection attempt will fail.  This option can be useful in
+        batch jobs and scripts where no user is present to enter a
+        password.
+       </para>
+      </listitem>
+     </varlistentry>
+
+     <varlistentry>
+      <term><option>-W</option></term>
+      <term><option>--password</option></term>
+      <listitem>
+       <para>
+        Force <application>pg_basebackup</application> to prompt for a
+        password before connecting to a database.
+       </para>
+
+       <para>
+        This option is never essential, since
+        <application>pg_bsaebackup</application> will automatically prompt
+        for a password if the server demands password authentication.
+        However, <application>pg_basebackup</application> will waste a
+        connection attempt finding out that the server wants a password.
+        In some cases it is worth typing <option>-W</> to avoid the extra
+        connection attempt.
        </para>
       </listitem>
      </varlistentry>

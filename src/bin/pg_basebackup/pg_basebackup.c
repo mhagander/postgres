@@ -33,7 +33,10 @@ char	   *label = "pg_basebackup base backup";
 bool		showprogress = false;
 int			verbose = 0;
 int			compresslevel = 0;
-char	   *conninfo = NULL;
+char	   *dbhost = NULL;
+char	   *dbuser = NULL;
+char	   *dbport = NULL;
+int			dbgetpassword = 0;	/* 0=auto, -1=never, 1=always */
 
 /* Progress counters */
 static uint64 totalsize;
@@ -42,6 +45,7 @@ static int	tablespacecount;
 
 /* Function headers */
 static char *xstrdup(const char *s);
+static void *xmalloc0(int size);
 static void usage(void);
 static void verify_dir_is_empty_or_create(char *dirname);
 static void progress_report(int tablespacenum, char *fn);
@@ -67,8 +71,8 @@ get_gz_error(gzFile *gzf)
 #endif
 
 /*
- * strdup() replacement that prints an error and exists if something goes
- * wrong. Can never return NULL.
+ * strdup() and malloc() replacements that prints an error and exits
+ * if something goes wrong. Can never return NULL.
  */
 static char *
 xstrdup(const char *s)
@@ -84,6 +88,20 @@ xstrdup(const char *s)
 	return result;
 }
 
+static void *
+xmalloc0(int size)
+{
+	void	   *result;
+
+	result = malloc(size);
+	if (!result)
+	{
+		fprintf(stderr, _("%s: out of memory\n"), progname);
+		exit(1);
+	}
+	MemSet(result, 0, size);
+	return result;
+}
 
 static void
 usage(void)
@@ -93,7 +111,6 @@ usage(void)
 	printf(_("Usage:\n"));
 	printf(_("  %s [OPTION]...\n"), progname);
 	printf(_("\nOptions:\n"));
-	printf(_("  -c, --conninfo=conninfo   connection info string to server\n"));
 	printf(_("  -d, --basedir=directory   receive base backup into directory\n"));
 	printf(_("  -t, --tardir=directory    receive base backup into tar files\n"
 			 "                            stored in specified directory\n"));
@@ -101,9 +118,16 @@ usage(void)
 	printf(_("  -l, --label=label         set backup label\n"));
 	printf(_("  -p, --progress            show progress information\n"));
 	printf(_("  -v, --verbose             output verbose messages\n"));
+	printf(_("\nConnection options:\n"));
+	printf(_("  -h, --host=HOSTNAME      database server host or socket directory\n"));
+	printf(_("  -p, --port=PORT          database server port number\n"));
+	printf(_("  -U, --username=NAME      connect as specified database user\n"));
+	printf(_("  -w, --no-password        never prompt for password\n"));
+	printf(_("  -W, --password           force password prompt (should happen automatically)\n"));
 	printf(_("\nOther options:\n"));
 	printf(_("  -?, --help                show this help, then exit\n"));
 	printf(_("  -V, --version             output version information, then exit\n"));
+	printf(_("\nReport bugs to <pgsql-bugs@postgresql.org>.\n"));
 }
 
 
@@ -115,10 +139,11 @@ usage(void)
 static void
 verify_dir_is_empty_or_create(char *dirname)
 {
-	/*  ** * *  * * *  *  *   * * *  * * *
-	 * XXX: hack to allow restoring backups locally, remove before
-	 * commit!!!
-	 * =======================================*/
+	/*
+	 * ** * *  * * *  *  *	 * * *	* * * XXX: hack to allow restoring backups
+	 * locally, remove before commit!!!
+	 * =======================================
+	 */
 	if (dirname[0] == '/')
 	{
 		dirname[0] = '_';
@@ -608,23 +633,79 @@ ReceiveAndUnpackTarFile(PGconn *conn, PGresult *res, int rownum)
 static PGconn *
 GetConnection(void)
 {
-	char		buf[MAXPGPATH];
 	PGconn	   *conn;
+	int			argcount = 3;	/* dbname, replication, password */
+	int			i;
+	const char **keywords;
+	const char **values;
+	char	   *password = NULL;
 
-	snprintf(buf, sizeof(buf), "%s dbname=replication replication=true", conninfo);
+	if (dbhost)
+		argcount++;
+	if (dbuser)
+		argcount++;
+	if (dbport)
+		argcount++;
 
-	if (verbose)
-		fprintf(stderr, _("%s: Connecting to \"%s\"\n"), progname, buf);
+	keywords = xmalloc0((argcount + 1) * sizeof(*keywords));
+	values = xmalloc0((argcount + 1) * sizeof(*values));
 
-	conn = PQconnectdb(buf);
-	if (!conn || PQstatus(conn) != CONNECTION_OK)
+	keywords[0] = "dbname";
+	values[0] = "replication";
+	keywords[1] = "replication";
+	values[1] = "true";
+	i = 2;
+	if (dbhost)
 	{
-		fprintf(stderr, _("%s: could not connect to server: %s\n"),
-				progname, PQerrorMessage(conn));
-		exit(1);
+		keywords[i] = "host";
+		values[i] = dbhost;
+		i++;
+	}
+	if (dbuser)
+	{
+		keywords[i] = "user";
+		values[i] = dbuser;
+		i++;
+	}
+	if (dbport)
+	{
+		keywords[i] = "port";
+		values[i] = dbport;
+		i++;
 	}
 
-	return conn;
+	while (true)
+	{
+		if (dbgetpassword == 1)
+		{
+			/* Prompt for a password */
+			password = simple_prompt(_("Password: "), 100, false);
+			keywords[argcount - 1] = "password";
+			values[argcount - 1] = password;
+		}
+
+		conn = PQconnectdbParams(keywords, values, true);
+		if (password)
+			free(password);
+
+		if (PQstatus(conn) == CONNECTION_BAD &&
+			PQconnectionNeedsPassword(conn) &&
+			dbgetpassword != -1)
+		{
+			dbgetpassword = 1;	/* ask for password next time */
+			continue;
+		}
+
+		if (PQstatus(conn) != CONNECTION_OK)
+		{
+			fprintf(stderr, _("%s: could not connect to server: %s\n"),
+					progname, PQerrorMessage(conn));
+			exit(1);
+		}
+
+		/* Connection ok! */
+		return conn;
+	}
 }
 
 static void
@@ -744,13 +825,17 @@ main(int argc, char **argv)
 	static struct option long_options[] = {
 		{"help", no_argument, NULL, '?'},
 		{"version", no_argument, NULL, 'V'},
-		{"conninfo", required_argument, NULL, 'c'},
 		{"basedir", required_argument, NULL, 'd'},
 		{"tardir", required_argument, NULL, 't'},
 		{"compress", required_argument, NULL, 'Z'},
 		{"label", required_argument, NULL, 'l'},
+		{"host", required_argument, NULL, 'h'},
+		{"port", required_argument, NULL, 'p'},
+		{"username", required_argument, NULL, 'U'},
+		{"no-password", no_argument, NULL, 'w'},
+		{"password", no_argument, NULL, 'W'},
 		{"verbose", no_argument, NULL, 'v'},
-		{"progress", no_argument, NULL, 'p'},
+		{"progress", no_argument, NULL, 'P'},
 		{NULL, 0, NULL, 0}
 	};
 	int			c;
@@ -776,14 +861,11 @@ main(int argc, char **argv)
 		}
 	}
 
-	while ((c = getopt_long(argc, argv, "c:d:t:l:Z:vp",
+	while ((c = getopt_long(argc, argv, "d:t:l:Z:h:p:U:wWvP",
 							long_options, &option_index)) != -1)
 	{
 		switch (c)
 		{
-			case 'c':
-				conninfo = xstrdup(optarg);
-				break;
 			case 'd':
 				basedir = xstrdup(optarg);
 				break;
@@ -796,10 +878,31 @@ main(int argc, char **argv)
 			case 'Z':
 				compresslevel = atoi(optarg);
 				break;
+			case 'h':
+				dbhost = xstrdup(optarg);
+				break;
+			case 'p':
+				if (atoi(optarg) == 0)
+				{
+					fprintf(stderr, _("%s: invalid port number \"%s\""),
+							progname, optarg);
+					exit(1);
+				}
+				dbport = xstrdup(optarg);
+				break;
+			case 'U':
+				dbuser = xstrdup(optarg);
+				break;
+			case 'w':
+				dbgetpassword = -1;
+				break;
+			case 'W':
+				dbgetpassword = 1;
+				break;
 			case 'v':
 				verbose++;
 				break;
-			case 'p':
+			case 'P':
 				showprogress = true;
 				break;
 			default:
@@ -832,14 +935,6 @@ main(int argc, char **argv)
 	if (basedir == NULL && tardir == NULL)
 	{
 		fprintf(stderr, _("%s: no target directory specified\n"), progname);
-		fprintf(stderr, _("Try \"%s --help\" for more information.\n"),
-				progname);
-		exit(1);
-	}
-
-	if (conninfo == NULL)
-	{
-		fprintf(stderr, _("%s: no conninfo string specified\n"), progname);
 		fprintf(stderr, _("Try \"%s --help\" for more information.\n"),
 				progname);
 		exit(1);
