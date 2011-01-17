@@ -116,7 +116,7 @@ usage(void)
 			 "                            stored in specified directory\n"));
 	printf(_("  -Z, --compress=0-9        compress tar output\n"));
 	printf(_("  -l, --label=label         set backup label\n"));
-	printf(_("  -p, --progress            show progress information\n"));
+	printf(_("  -P, --progress            show progress information\n"));
 	printf(_("  -v, --verbose             output verbose messages\n"));
 	printf(_("\nConnection options:\n"));
 	printf(_("  -h, --host=HOSTNAME      database server host or socket directory\n"));
@@ -733,7 +733,7 @@ BaseBackup()
 
 	if (PQsendQuery(conn, current_path) == 0)
 	{
-		fprintf(stderr, _("%s: coult not start base backup: %s\n"),
+		fprintf(stderr, _("%s: could not start base backup: %s\n"),
 				progname, PQerrorMessage(conn));
 		PQfinish(conn);
 		exit(1);
@@ -880,14 +880,20 @@ main(int argc, char **argv)
 				break;
 			case 'Z':
 				compresslevel = atoi(optarg);
+				if (compresslevel <= 0)
+				{
+					fprintf(stderr, _("%s: invalid compression level \"%s\"\n"),
+							progname, optarg);
+					exit(1);
+				}
 				break;
 			case 'h':
 				dbhost = xstrdup(optarg);
 				break;
 			case 'p':
-				if (atoi(optarg) == 0)
+				if (atoi(optarg) <= 0)
 				{
-					fprintf(stderr, _("%s: invalid port number \"%s\""),
+					fprintf(stderr, _("%s: invalid port number \"%s\"\n"),
 							progname, optarg);
 					exit(1);
 				}
@@ -926,7 +932,7 @@ main(int argc, char **argv)
 	{
 		fprintf(stderr,
 				_("%s: too many command-line arguments (first is \"%s\")\n"),
-				progname, argv[optind + 1]);
+				progname, argv[optind]);
 		fprintf(stderr, _("Try \"%s --help\" for more information.\n"),
 				progname);
 		exit(1);
