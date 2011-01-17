@@ -695,6 +695,7 @@ GetConnection(void)
 			dbgetpassword != -1)
 		{
 			dbgetpassword = 1;	/* ask for password next time */
+			PQfinish(conn);
 			continue;
 		}
 
