@@ -344,7 +344,7 @@ ReceiveTarFile(PGconn *conn, PGresult *res, int rownum)
 			{
 				if (gzwrite(ztarfile, zerobuf, sizeof(zerobuf)) != sizeof(zerobuf))
 				{
-					fprintf(stderr, _("%s: could not write to compressed file '%s': %s\n"),
+					fprintf(stderr, _("%s: could not write to compressed file \"%s\": %s\n"),
 							progname, fn, get_gz_error(ztarfile));
 				}
 			}
@@ -353,7 +353,7 @@ ReceiveTarFile(PGconn *conn, PGresult *res, int rownum)
 			{
 				if (fwrite(zerobuf, sizeof(zerobuf), 1, tarfile) != 1)
 				{
-					fprintf(stderr, _("%s: could not write to file '%s': %m\n"),
+					fprintf(stderr, _("%s: could not write to file \"%s\": %m\n"),
 							progname, fn);
 					exit(1);
 				}
@@ -383,7 +383,7 @@ ReceiveTarFile(PGconn *conn, PGresult *res, int rownum)
 		{
 			if (gzwrite(ztarfile, copybuf, r) != r)
 			{
-				fprintf(stderr, _("%s: could not write to compressed file '%s': %s\n"),
+				fprintf(stderr, _("%s: could not write to compressed file \"%s\": %s\n"),
 						progname, fn, get_gz_error(ztarfile));
 			}
 		}
@@ -392,7 +392,7 @@ ReceiveTarFile(PGconn *conn, PGresult *res, int rownum)
 		{
 			if (fwrite(copybuf, r, 1, tarfile) != 1)
 			{
-				fprintf(stderr, _("%s: could not write to file '%s': %m\n"),
+				fprintf(stderr, _("%s: could not write to file \"%s\": %m\n"),
 						progname, fn);
 				exit(1);
 			}
@@ -538,7 +538,7 @@ ReceiveAndUnpackTarFile(PGconn *conn, PGresult *res, int rownum)
 					}
 #ifndef WIN32
 					if (chmod(fn, filemode))
-						fprintf(stderr, _("%s: could not set permissions on directory '%s': %m\n"),
+						fprintf(stderr, _("%s: could not set permissions on directory \"%s\": %m\n"),
 								progname, fn);
 #endif
 				}
@@ -558,7 +558,7 @@ ReceiveAndUnpackTarFile(PGconn *conn, PGresult *res, int rownum)
 				}
 				else
 				{
-					fprintf(stderr, _("%s: unknown link indicator '%c'\n"),
+					fprintf(stderr, _("%s: unknown link indicator \"%c\"\n"),
 							progname, copybuf[156]);
 					exit(1);
 				}
@@ -571,14 +571,14 @@ ReceiveAndUnpackTarFile(PGconn *conn, PGresult *res, int rownum)
 			file = fopen(fn, "wb");
 			if (!file)
 			{
-				fprintf(stderr, _("%s: could not create file '%s': %m\n"),
+				fprintf(stderr, _("%s: could not create file \"%s\": %m\n"),
 						progname, fn);
 				exit(1);
 			}
 
 #ifndef WIN32
 			if (chmod(fn, filemode))
-				fprintf(stderr, _("%s: could not set permissions on file '%s': %m\n"),
+				fprintf(stderr, _("%s: could not set permissions on file \"%s\": %m\n"),
 						progname, fn);
 #endif
 
@@ -611,7 +611,7 @@ ReceiveAndUnpackTarFile(PGconn *conn, PGresult *res, int rownum)
 
 			if (fwrite(copybuf, r, 1, file) != 1)
 			{
-				fprintf(stderr, _("%s: could not write to file '%s': %m\n"),
+				fprintf(stderr, _("%s: could not write to file \"%s\": %m\n"),
 						progname, fn);
 				exit(1);
 			}
