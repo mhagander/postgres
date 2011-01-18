@@ -287,14 +287,23 @@ ReceiveTarFile(PGconn *conn, PGresult *res, int rownum)
 	}
 
 #ifdef HAVE_LIBZ
-	if (!tarfile && !ztarfile)
-#else
-	if (!tarfile)
+	if (compresslevel > 0 && !ztarfile)
+	{
+		/* Compression is in use */
+		fprintf(stderr, _("%s: could not create compressed file \"%s\": %s\n"),
+				progname, fn, get_gz_error(ztarfile));
+		exit(1);
+	}
+	else
 #endif
 	{
-		fprintf(stderr, _("%s: could not create file \"%s\": %s\n"),
-				progname, fn, strerror(errno));
-		exit(1);
+		/* Either no zlib support, or zlib support but compresslevel = 0 */
+		if (!tarfile)
+		{
+			fprintf(stderr, _("%s: could not create file \"%s\": %s\n"),
+					progname, fn, strerror(errno));
+			exit(1);
+		}
 	}
 
 	/*
