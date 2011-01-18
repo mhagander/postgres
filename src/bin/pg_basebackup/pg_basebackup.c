@@ -271,6 +271,12 @@ ReceiveTarFile(PGconn *conn, PGresult *res, int rownum)
 		{
 			snprintf(fn, sizeof(fn), "%s/%s.tar.gz", tardir, PQgetvalue(res, rownum, 0));
 			ztarfile = gzopen(fn, "wb");
+			if (gzsetparams(ztarfile, compresslevel, Z_DEFAULT_STRATEGY) != Z_OK)
+			{
+				fprintf(stderr, _("%s: could not set compression level %i\n"),
+						progname, compresslevel);
+				exit(1);
+			}
 		}
 		else
 #endif
