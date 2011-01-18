@@ -655,7 +655,7 @@ GetConnection(void)
 	keywords[1] = "replication";
 	values[1] = "true";
 	keywords[2] = "fallback_application_name";
-	values[2] = "pg_basebackup";
+	values[2] = progname;
 	i = 3;
 	if (dbhost)
 	{
