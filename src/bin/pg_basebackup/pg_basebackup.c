@@ -300,12 +300,15 @@ ReceiveTarFile(PGconn *conn, PGresult *res, int rownum)
 	}
 
 #ifdef HAVE_LIBZ
-	if (compresslevel > 0 && !ztarfile)
+	if (compresslevel > 0)
 	{
-		/* Compression is in use */
-		fprintf(stderr, _("%s: could not create compressed file \"%s\": %s\n"),
-				progname, fn, get_gz_error(ztarfile));
-		disconnect_and_exit(1);
+		if (!ztarfile)
+		{
+			/* Compression is in use */
+			fprintf(stderr, _("%s: could not create compressed file \"%s\": %s\n"),
+					progname, fn, get_gz_error(ztarfile));
+			disconnect_and_exit(1);
+		}
 	}
 	else
 #endif
