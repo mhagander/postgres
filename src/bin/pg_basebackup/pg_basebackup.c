@@ -310,7 +310,7 @@ ReceiveTarFile(PGconn *conn, PGresult *res, int rownum)
 	 * Get the COPY data stream
 	 */
 	res = PQgetResult(conn);
-	if (!res || PQresultStatus(res) != PGRES_COPY_OUT)
+	if (PQresultStatus(res) != PGRES_COPY_OUT)
 	{
 		fprintf(stderr, _("%s: could not get COPY data stream: %s\n"),
 				progname, PQerrorMessage(conn));
@@ -440,7 +440,7 @@ ReceiveAndUnpackTarFile(PGconn *conn, PGresult *res, int rownum)
 	 * Get the COPY data
 	 */
 	res = PQgetResult(conn);
-	if (!res || PQresultStatus(res) != PGRES_COPY_OUT)
+	if (PQresultStatus(res) != PGRES_COPY_OUT)
 	{
 		fprintf(stderr, _("%s: could not get COPY data stream: %s\n"),
 				progname, PQerrorMessage(conn));
@@ -759,7 +759,7 @@ BaseBackup()
 	 * Get the header
 	 */
 	res = PQgetResult(conn);
-	if (!res || PQresultStatus(res) != PGRES_TUPLES_OK)
+	if (PQresultStatus(res) != PGRES_TUPLES_OK)
 	{
 		fprintf(stderr, _("%s: could not initiate base backup: %s\n"),
 				progname, PQerrorMessage(conn));
@@ -822,7 +822,7 @@ BaseBackup()
 	PQclear(res);
 
 	res = PQgetResult(conn);
-	if (!res || PQresultStatus(res) != PGRES_COMMAND_OK)
+	if (PQresultStatus(res) != PGRES_COMMAND_OK)
 	{
 		fprintf(stderr, _("%s: final receive failed: %s\n"),
 				progname, PQerrorMessage(conn));
