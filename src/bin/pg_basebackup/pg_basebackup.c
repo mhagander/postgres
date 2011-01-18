@@ -33,6 +33,7 @@ char	   *label = "pg_basebackup base backup";
 bool		showprogress = false;
 int			verbose = 0;
 int			compresslevel = 0;
+bool		fastcheckpoint = false;
 char	   *dbhost = NULL;
 char	   *dbuser = NULL;
 char	   *dbport = NULL;
@@ -126,6 +127,8 @@ usage(void)
 			 "                            stored in specified directory\n"));
 	printf(_("  -Z, --compress=0-9        compress tar output\n"));
 	printf(_("  -l, --label=label         set backup label\n"));
+	printf(_("  -c, --checkpoint=fast|slow\n"
+			 "                            set fast or slow checkpoinging\n"));
 	printf(_("  -P, --progress            show progress information\n"));
 	printf(_("  -v, --verbose             output verbose messages\n"));
 	printf(_("\nConnection options:\n"));
@@ -753,9 +756,10 @@ BaseBackup()
 	conn = GetConnection();
 
 	PQescapeStringConn(conn, escaped_label, label, sizeof(escaped_label), &i);
-	snprintf(current_path, sizeof(current_path), "BASE_BACKUP LABEL '%s' %s",
+	snprintf(current_path, sizeof(current_path), "BASE_BACKUP LABEL '%s' %s %s",
 			 escaped_label,
-			 showprogress ? "PROGRESS" : "");
+			 showprogress ? "PROGRESS" : "",
+			 fastcheckpoint ? "FAST" : "");
 
 	if (PQsendQuery(conn, current_path) == 0)
 	{
@@ -886,7 +890,7 @@ main(int argc, char **argv)
 		}
 	}
 
-	while ((c = getopt_long(argc, argv, "D:T:l:Z:h:p:U:wWvP",
+	while ((c = getopt_long(argc, argv, "D:T:l:Z:c:h:p:U:wWvP",
 							long_options, &option_index)) != -1)
 	{
 		switch (c)
@@ -905,6 +909,18 @@ main(int argc, char **argv)
 				if (compresslevel <= 0 || compresslevel > 9)
 				{
 					fprintf(stderr, _("%s: invalid compression level \"%s\"\n"),
+							progname, optarg);
+					exit(1);
+				}
+				break;
+			case 'c':
+				if (strcasecmp(optarg, "fast") == 0)
+					fastcheckpoint = true;
+				else if (strcasecmp(optarg, "slow") == 0)
+					fastcheckpoint = false;
+				else
+				{
+					fprintf(stderr, _("%s: invalid checkpoint argument \"%s\", must be \"fast\" or \"slow\"\n"),
 							progname, optarg);
 					exit(1);
 				}

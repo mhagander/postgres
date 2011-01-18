@@ -140,6 +140,16 @@ PostgreSQL documentation
      </varlistentry>
 
      <varlistentry>
+      <term><option>-c <replaceable class="parameter">fast|slow</replaceable></option></term>
+      <term><option>--checkpoint <replaceable class="parameter">fast|slow</replaceable></option></term>
+      <listitem>
+       <para>
+        Sets checkpoint mode to fast or slow (default).
+       </para>
+      </listitem>
+     </varlistentry>
+
+     <varlistentry>
       <term><option>-v</option></term>
       <term><option>--verbose</option></term>
       <listitem>
