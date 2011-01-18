@@ -44,7 +44,8 @@ static uint64 totaldone;
 static int	tablespacecount;
 
 /* Connection kept global so we can disconnect easily */
-static PGconn  *conn = NULL;
+static PGconn *conn = NULL;
+
 #define disconnect_and_exit(code)				\
 	{											\
 	if (conn != NULL) PQfinish(conn);			\
@@ -658,7 +659,8 @@ static PGconn *
 GetConnection(void)
 {
 	PGconn	   *tmpconn;
-	int			argcount = 4;	/* dbname, replication, fallback_app_name, password */
+	int			argcount = 4;	/* dbname, replication, fallback_app_name,
+								 * password */
 	int			i;
 	const char **keywords;
 	const char **values;
