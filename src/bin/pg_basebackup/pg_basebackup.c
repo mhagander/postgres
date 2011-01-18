@@ -366,8 +366,8 @@ ReceiveTarFile(PGconn *conn, PGresult *res, int rownum)
 			{
 				if (fwrite(zerobuf, sizeof(zerobuf), 1, tarfile) != 1)
 				{
-					fprintf(stderr, _("%s: could not write to file \"%s\": %m\n"),
-							progname, fn);
+					fprintf(stderr, _("%s: could not write to file \"%s\": %s\n"),
+							progname, fn, strerror(errno));
 					disconnect_and_exit(1);
 				}
 			}
@@ -405,8 +405,8 @@ ReceiveTarFile(PGconn *conn, PGresult *res, int rownum)
 		{
 			if (fwrite(copybuf, r, 1, tarfile) != 1)
 			{
-				fprintf(stderr, _("%s: could not write to file \"%s\": %m\n"),
-						progname, fn);
+				fprintf(stderr, _("%s: could not write to file \"%s\": %s\n"),
+						progname, fn, strerror(errno));
 				disconnect_and_exit(1);
 			}
 		}
@@ -545,14 +545,14 @@ ReceiveAndUnpackTarFile(PGconn *conn, PGresult *res, int rownum)
 					if (mkdir(fn, S_IRWXU) != 0)
 					{
 						fprintf(stderr,
-							_("%s: could not create directory \"%s\": %m\n"),
-								progname, fn);
+							_("%s: could not create directory \"%s\": %s\n"),
+								progname, fn, strerror(errno));
 						disconnect_and_exit(1);
 					}
 #ifndef WIN32
 					if (chmod(fn, filemode))
-						fprintf(stderr, _("%s: could not set permissions on directory \"%s\": %m\n"),
-								progname, fn);
+						fprintf(stderr, _("%s: could not set permissions on directory \"%s\": %s\n"),
+								progname, fn, strerror(errno));
 #endif
 				}
 				else if (copybuf[156] == '2')
@@ -564,8 +564,8 @@ ReceiveAndUnpackTarFile(PGconn *conn, PGresult *res, int rownum)
 					if (symlink(&copybuf[157], fn) != 0)
 					{
 						fprintf(stderr,
-								_("%s: could not create symbolic link from %s to %s: %m\n"),
-								progname, fn, &copybuf[157]);
+								_("%s: could not create symbolic link from %s to %s: %s\n"),
+								progname, fn, &copybuf[157], strerror(errno));
 						disconnect_and_exit(1);
 					}
 				}
@@ -584,15 +584,15 @@ ReceiveAndUnpackTarFile(PGconn *conn, PGresult *res, int rownum)
 			file = fopen(fn, "wb");
 			if (!file)
 			{
-				fprintf(stderr, _("%s: could not create file \"%s\": %m\n"),
-						progname, fn);
+				fprintf(stderr, _("%s: could not create file \"%s\": %s\n"),
+						progname, fn, strerror(errno));
 				disconnect_and_exit(1);
 			}
 
 #ifndef WIN32
 			if (chmod(fn, filemode))
-				fprintf(stderr, _("%s: could not set permissions on file \"%s\": %m\n"),
-						progname, fn);
+				fprintf(stderr, _("%s: could not set permissions on file \"%s\": %s\n"),
+						progname, fn, strerror(errno));
 #endif
 
 			if (current_len_left == 0)
@@ -624,8 +624,8 @@ ReceiveAndUnpackTarFile(PGconn *conn, PGresult *res, int rownum)
 
 			if (fwrite(copybuf, r, 1, file) != 1)
 			{
-				fprintf(stderr, _("%s: could not write to file \"%s\": %m\n"),
-						progname, fn);
+				fprintf(stderr, _("%s: could not write to file \"%s\": %s\n"),
+						progname, fn, strerror(errno));
 				disconnect_and_exit(1);
 			}
 			totaldone += r;
