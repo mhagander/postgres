@@ -262,8 +262,8 @@ ReceiveTarFile(PGconn *conn, PGresult *res, int rownum)
 				ztarfile = gzopen(fn, "wb");
 				if (gzsetparams(ztarfile, compresslevel, Z_DEFAULT_STRATEGY) != Z_OK)
 				{
-					fprintf(stderr, _("%s: could not set compression level %i\n"),
-							progname, compresslevel);
+					fprintf(stderr, _("%s: could not set compression level %i: %s\n"),
+							progname, compresslevel, get_gz_error(ztarfile));
 					disconnect_and_exit(1);
 				}
 			}
@@ -286,8 +286,8 @@ ReceiveTarFile(PGconn *conn, PGresult *res, int rownum)
 			ztarfile = gzopen(fn, "wb");
 			if (gzsetparams(ztarfile, compresslevel, Z_DEFAULT_STRATEGY) != Z_OK)
 			{
-				fprintf(stderr, _("%s: could not set compression level %i\n"),
-						progname, compresslevel);
+				fprintf(stderr, _("%s: could not set compression level %i: %s\n"),
+						progname, compresslevel, get_gz_error(ztarfile));
 				disconnect_and_exit(1);
 			}
 		}
