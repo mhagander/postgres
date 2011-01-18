@@ -43,6 +43,14 @@ static uint64 totalsize;
 static uint64 totaldone;
 static int	tablespacecount;
 
+/* Connection kept global so we can disconnect easily */
+static PGconn  *conn = NULL;
+#define disconnect_and_exit(code)				\
+	{											\
+	if (conn != NULL) PQfinish(conn);			\
+	exit(code);									\
+	}
+
 /* Function headers */
 static char *xstrdup(const char *s);
 static void *xmalloc0(int size);
@@ -103,6 +111,7 @@ xmalloc0(int size)
 	return result;
 }
 
+
 static void
 usage(void)
 {
@@ -161,7 +170,7 @@ verify_dir_is_empty_or_create(char *dirname)
 				fprintf(stderr,
 						_("%s: could not create directory \"%s\": %s\n"),
 						progname, dirname, strerror(errno));
-				exit(1);
+				disconnect_and_exit(1);
 			}
 			return;
 		case 1:
@@ -178,7 +187,7 @@ verify_dir_is_empty_or_create(char *dirname)
 			fprintf(stderr,
 					_("%s: directory \"%s\" exists but is not empty\n"),
 					progname, dirname);
-			exit(1);
+			disconnect_and_exit(1);
 		case -1:
 
 			/*
@@ -186,14 +195,14 @@ verify_dir_is_empty_or_create(char *dirname)
 			 */
 			fprintf(stderr, _("%s: could not access directory \"%s\": %s\n"),
 					progname, dirname, strerror(errno));
-			exit(1);
+			disconnect_and_exit(1);
 	}
 }
 
 
 /*
  * Print a progress report based on the global variables. If verbose output
- * is disabled, also print the current file name.
+ * is enabled, also print the current file name.
  */
 static void
 progress_report(int tablespacenum, char *fn)
@@ -251,7 +260,7 @@ ReceiveTarFile(PGconn *conn, PGresult *res, int rownum)
 				{
 					fprintf(stderr, _("%s: could not set compression level %i\n"),
 							progname, compresslevel);
-					exit(1);
+					disconnect_and_exit(1);
 				}
 			}
 			else
@@ -275,7 +284,7 @@ ReceiveTarFile(PGconn *conn, PGresult *res, int rownum)
 			{
 				fprintf(stderr, _("%s: could not set compression level %i\n"),
 						progname, compresslevel);
-				exit(1);
+				disconnect_and_exit(1);
 			}
 		}
 		else
@@ -292,7 +301,7 @@ ReceiveTarFile(PGconn *conn, PGresult *res, int rownum)
 		/* Compression is in use */
 		fprintf(stderr, _("%s: could not create compressed file \"%s\": %s\n"),
 				progname, fn, get_gz_error(ztarfile));
-		exit(1);
+		disconnect_and_exit(1);
 	}
 	else
 #endif
@@ -302,7 +311,7 @@ ReceiveTarFile(PGconn *conn, PGresult *res, int rownum)
 		{
 			fprintf(stderr, _("%s: could not create file \"%s\": %s\n"),
 					progname, fn, strerror(errno));
-			exit(1);
+			disconnect_and_exit(1);
 		}
 	}
 
@@ -314,7 +323,7 @@ ReceiveTarFile(PGconn *conn, PGresult *res, int rownum)
 	{
 		fprintf(stderr, _("%s: could not get COPY data stream: %s\n"),
 				progname, PQerrorMessage(conn));
-		exit(1);
+		disconnect_and_exit(1);
 	}
 
 	while (1)
@@ -355,7 +364,7 @@ ReceiveTarFile(PGconn *conn, PGresult *res, int rownum)
 				{
 					fprintf(stderr, _("%s: could not write to file \"%s\": %m\n"),
 							progname, fn);
-					exit(1);
+					disconnect_and_exit(1);
 				}
 			}
 
@@ -375,7 +384,7 @@ ReceiveTarFile(PGconn *conn, PGresult *res, int rownum)
 		{
 			fprintf(stderr, _("%s: could not read COPY data: %s\n"),
 					progname, PQerrorMessage(conn));
-			exit(1);
+			disconnect_and_exit(1);
 		}
 
 #ifdef HAVE_LIBZ
@@ -394,7 +403,7 @@ ReceiveTarFile(PGconn *conn, PGresult *res, int rownum)
 			{
 				fprintf(stderr, _("%s: could not write to file \"%s\": %m\n"),
 						progname, fn);
-				exit(1);
+				disconnect_and_exit(1);
 			}
 		}
 		totaldone += r;
@@ -444,7 +453,7 @@ ReceiveAndUnpackTarFile(PGconn *conn, PGresult *res, int rownum)
 	{
 		fprintf(stderr, _("%s: could not get COPY data stream: %s\n"),
 				progname, PQerrorMessage(conn));
-		exit(1);
+		disconnect_and_exit(1);
 	}
 
 	while (1)
@@ -473,7 +482,7 @@ ReceiveAndUnpackTarFile(PGconn *conn, PGresult *res, int rownum)
 		{
 			fprintf(stderr, _("%s: could not read COPY data: %s\n"),
 					progname, PQerrorMessage(conn));
-			exit(1);
+			disconnect_and_exit(1);
 		}
 
 		if (file == NULL)
@@ -489,7 +498,7 @@ ReceiveAndUnpackTarFile(PGconn *conn, PGresult *res, int rownum)
 			{
 				fprintf(stderr, _("%s: Invalid tar block header size: %i\n"),
 						progname, r);
-				exit(1);
+				disconnect_and_exit(1);
 			}
 			totaldone += 512;
 
@@ -497,7 +506,7 @@ ReceiveAndUnpackTarFile(PGconn *conn, PGresult *res, int rownum)
 			{
 				fprintf(stderr, _("%s: could not parse file size!\n"),
 						progname);
-				exit(1);
+				disconnect_and_exit(1);
 			}
 
 			/* Set permissions on the file */
@@ -505,7 +514,7 @@ ReceiveAndUnpackTarFile(PGconn *conn, PGresult *res, int rownum)
 			{
 				fprintf(stderr, _("%s: could not parse file mode!\n"),
 						progname);
-				exit(1);
+				disconnect_and_exit(1);
 			}
 
 			/*
@@ -534,7 +543,7 @@ ReceiveAndUnpackTarFile(PGconn *conn, PGresult *res, int rownum)
 						fprintf(stderr,
 							_("%s: could not create directory \"%s\": %m\n"),
 								progname, fn);
-						exit(1);
+						disconnect_and_exit(1);
 					}
 #ifndef WIN32
 					if (chmod(fn, filemode))
@@ -553,14 +562,14 @@ ReceiveAndUnpackTarFile(PGconn *conn, PGresult *res, int rownum)
 						fprintf(stderr,
 								_("%s: could not create symbolic link from %s to %s: %m\n"),
 								progname, fn, &copybuf[157]);
-						exit(1);
+						disconnect_and_exit(1);
 					}
 				}
 				else
 				{
 					fprintf(stderr, _("%s: unknown link indicator \"%c\"\n"),
 							progname, copybuf[156]);
-					exit(1);
+					disconnect_and_exit(1);
 				}
 				continue;		/* directory or link handled */
 			}
@@ -573,7 +582,7 @@ ReceiveAndUnpackTarFile(PGconn *conn, PGresult *res, int rownum)
 			{
 				fprintf(stderr, _("%s: could not create file \"%s\": %m\n"),
 						progname, fn);
-				exit(1);
+				disconnect_and_exit(1);
 			}
 
 #ifndef WIN32
@@ -613,7 +622,7 @@ ReceiveAndUnpackTarFile(PGconn *conn, PGresult *res, int rownum)
 			{
 				fprintf(stderr, _("%s: could not write to file \"%s\": %m\n"),
 						progname, fn);
-				exit(1);
+				disconnect_and_exit(1);
 			}
 			totaldone += r;
 			if (showprogress)
@@ -637,7 +646,7 @@ ReceiveAndUnpackTarFile(PGconn *conn, PGresult *res, int rownum)
 	if (file != NULL)
 	{
 		fprintf(stderr, _("%s: last file was never finsihed!\n"), progname);
-		exit(1);
+		disconnect_and_exit(1);
 	}
 
 	if (copybuf != NULL)
@@ -648,7 +657,7 @@ ReceiveAndUnpackTarFile(PGconn *conn, PGresult *res, int rownum)
 static PGconn *
 GetConnection(void)
 {
-	PGconn	   *conn;
+	PGconn	   *tmpconn;
 	int			argcount = 4;	/* dbname, replication, fallback_app_name, password */
 	int			i;
 	const char **keywords;
@@ -701,37 +710,36 @@ GetConnection(void)
 			values[argcount - 1] = password;
 		}
 
-		conn = PQconnectdbParams(keywords, values, true);
+		tmpconn = PQconnectdbParams(keywords, values, true);
 		if (password)
 			free(password);
 
-		if (PQstatus(conn) == CONNECTION_BAD &&
-			PQconnectionNeedsPassword(conn) &&
+		if (PQstatus(tmpconn) == CONNECTION_BAD &&
+			PQconnectionNeedsPassword(tmpconn) &&
 			dbgetpassword != -1)
 		{
 			dbgetpassword = 1;	/* ask for password next time */
-			PQfinish(conn);
+			PQfinish(tmpconn);
 			continue;
 		}
 
-		if (PQstatus(conn) != CONNECTION_OK)
+		if (PQstatus(tmpconn) != CONNECTION_OK)
 		{
 			fprintf(stderr, _("%s: could not connect to server: %s\n"),
-					progname, PQerrorMessage(conn));
+					progname, PQerrorMessage(tmpconn));
 			exit(1);
 		}
 
 		/* Connection ok! */
 		free(values);
 		free(keywords);
-		return conn;
+		return tmpconn;
 	}
 }
 
 static void
 BaseBackup()
 {
-	PGconn	   *conn;
 	PGresult   *res;
 	char		current_path[MAXPGPATH];
 	char		escaped_label[MAXPGPATH];
@@ -751,8 +759,7 @@ BaseBackup()
 	{
 		fprintf(stderr, _("%s: could not start base backup: %s\n"),
 				progname, PQerrorMessage(conn));
-		PQfinish(conn);
-		exit(1);
+		disconnect_and_exit(1);
 	}
 
 	/*
@@ -763,14 +770,12 @@ BaseBackup()
 	{
 		fprintf(stderr, _("%s: could not initiate base backup: %s\n"),
 				progname, PQerrorMessage(conn));
-		PQfinish(conn);
-		exit(1);
+		disconnect_and_exit(1);
 	}
 	if (PQntuples(res) < 1)
 	{
 		fprintf(stderr, _("%s: no data returned from server.\n"), progname);
-		PQfinish(conn);
-		exit(1);
+		disconnect_and_exit(1);
 	}
 
 	/*
@@ -799,8 +804,7 @@ BaseBackup()
 	{
 		fprintf(stderr, _("%s: can only write single tablespace to stdout, database has %i.\n"),
 				progname, PQntuples(res));
-		PQfinish(conn);
-		exit(1);
+		disconnect_and_exit(1);
 	}
 
 	/*
@@ -826,7 +830,7 @@ BaseBackup()
 	{
 		fprintf(stderr, _("%s: final receive failed: %s\n"),
 				progname, PQerrorMessage(conn));
-		exit(1);
+		disconnect_and_exit(1);
 	}
 
 	/*
