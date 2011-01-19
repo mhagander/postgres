@@ -7,7 +7,7 @@
  * Portions Copyright (c) 1996-2011, PostgreSQL Global Development Group
  *
  * IDENTIFICATION
- *		  src/bin/pg_basebackup.c
+ *		  src/bin/pg_basebackup/pg_basebackup.c
  *-------------------------------------------------------------------------
  */
 
@@ -128,7 +128,7 @@ usage(void)
 	printf(_("  -Z, --compress=0-9        compress tar output\n"));
 	printf(_("  -l, --label=label         set backup label\n"));
 	printf(_("  -c, --checkpoint=fast|slow\n"
-			 "                            set fast or slow checkpoinging\n"));
+			 "                            set fast or slow checkpointing\n"));
 	printf(_("  -P, --progress            show progress information\n"));
 	printf(_("  -v, --verbose             output verbose messages\n"));
 	printf(_("\nConnection options:\n"));
@@ -860,6 +860,7 @@ main(int argc, char **argv)
 		{"version", no_argument, NULL, 'V'},
 		{"pgdata", required_argument, NULL, 'D'},
 		{"tardir", required_argument, NULL, 'T'},
+		{"checkpoint", required_argument, NULL, 'c'},
 		{"compress", required_argument, NULL, 'Z'},
 		{"label", required_argument, NULL, 'l'},
 		{"host", required_argument, NULL, 'h'},
