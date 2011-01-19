@@ -127,8 +127,8 @@ usage(void)
 			 "                            stored in specified directory\n"));
 	printf(_("  -Z, --compress=0-9        compress tar output\n"));
 	printf(_("  -l, --label=label         set backup label\n"));
-	printf(_("  -c, --checkpoint=fast|slow\n"
-			 "                            set fast or slow checkpointing\n"));
+	printf(_("  -c, --checkpoint=fast|spread\n"
+			 "                            set fast or spread checkpointing\n"));
 	printf(_("  -P, --progress            show progress information\n"));
 	printf(_("  -v, --verbose             output verbose messages\n"));
 	printf(_("\nConnection options:\n"));
@@ -920,11 +920,11 @@ main(int argc, char **argv)
 			case 'c':
 				if (strcasecmp(optarg, "fast") == 0)
 					fastcheckpoint = true;
-				else if (strcasecmp(optarg, "slow") == 0)
+				else if (strcasecmp(optarg, "spread") == 0)
 					fastcheckpoint = false;
 				else
 				{
-					fprintf(stderr, _("%s: invalid checkpoint argument \"%s\", must be \"fast\" or \"slow\"\n"),
+					fprintf(stderr, _("%s: invalid checkpoint argument \"%s\", must be \"fast\" or \"spread\"\n"),
 							progname, optarg);
 					exit(1);
 				}
