@@ -28,7 +28,7 @@
 /* Global options */
 static const char *progname;
 char	   *basedir = NULL;
-char	   *tardir = NULL;
+char		format = 'p';		/* p(lain)/t(ar) */
 char	   *label = "pg_basebackup base backup";
 bool		showprogress = false;
 int			verbose = 0;
@@ -121,25 +121,24 @@ usage(void)
 		   progname);
 	printf(_("Usage:\n"));
 	printf(_("  %s [OPTION]...\n"), progname);
-	printf(_("\nOptions:\n"));
-	printf(_("  -D, --pgdata=directory   receive base backup into directory\n"));
-	printf(_("  -T, --tardir=directory    receive base backup into tar files\n"
-			 "                            stored in specified directory\n"));
+	printf(_("\nOptions controlling the output:\n"));
+	printf(_("  -D, --pgdata=directory    receive base backup into directory\n"));
+	printf(_("  -F, --format=p|t          output format (plain, tar)\n"));
 	printf(_("  -Z, --compress=0-9        compress tar output\n"));
-	printf(_("  -l, --label=label         set backup label\n"));
+	printf(_("\nGeneral options:\n"));
 	printf(_("  -c, --checkpoint=fast|spread\n"
 			 "                            set fast or spread checkpointing\n"));
+	printf(_("  -l, --label=label         set backup label\n"));
 	printf(_("  -P, --progress            show progress information\n"));
 	printf(_("  -v, --verbose             output verbose messages\n"));
+	printf(_("  -?, --help                show this help, then exit\n"));
+	printf(_("  -V, --version             output version information, then exit\n"));
 	printf(_("\nConnection options:\n"));
 	printf(_("  -h, --host=HOSTNAME      database server host or socket directory\n"));
 	printf(_("  -p, --port=PORT          database server port number\n"));
 	printf(_("  -U, --username=NAME      connect as specified database user\n"));
 	printf(_("  -w, --no-password        never prompt for password\n"));
 	printf(_("  -W, --password           force password prompt (should happen automatically)\n"));
-	printf(_("\nOther options:\n"));
-	printf(_("  -?, --help                show this help, then exit\n"));
-	printf(_("  -V, --version             output version information, then exit\n"));
 	printf(_("\nReport bugs to <pgsql-bugs@postgresql.org>.\n"));
 }
 
@@ -251,14 +250,14 @@ ReceiveTarFile(PGconn *conn, PGresult *res, int rownum)
 		/*
 		 * Base tablespaces
 		 */
-		if (strcmp(tardir, "-") == 0)
+		if (strcmp(basedir, "-") == 0)
 			tarfile = stdout;
 		else
 		{
 #ifdef HAVE_LIBZ
 			if (compresslevel > 0)
 			{
-				snprintf(fn, sizeof(fn), "%s/base.tar.gz", tardir);
+				snprintf(fn, sizeof(fn), "%s/base.tar.gz", basedir);
 				ztarfile = gzopen(fn, "wb");
 				if (gzsetparams(ztarfile, compresslevel, Z_DEFAULT_STRATEGY) != Z_OK)
 				{
@@ -270,7 +269,7 @@ ReceiveTarFile(PGconn *conn, PGresult *res, int rownum)
 			else
 #endif
 			{
-				snprintf(fn, sizeof(fn), "%s/base.tar", tardir);
+				snprintf(fn, sizeof(fn), "%s/base.tar", basedir);
 				tarfile = fopen(fn, "wb");
 			}
 		}
@@ -282,7 +281,7 @@ ReceiveTarFile(PGconn *conn, PGresult *res, int rownum)
 #ifdef HAVE_LIBZ
 		if (compresslevel > 0)
 		{
-			snprintf(fn, sizeof(fn), "%s/%s.tar.gz", tardir, PQgetvalue(res, rownum, 0));
+			snprintf(fn, sizeof(fn), "%s/%s.tar.gz", basedir, PQgetvalue(res, rownum, 0));
 			ztarfile = gzopen(fn, "wb");
 			if (gzsetparams(ztarfile, compresslevel, Z_DEFAULT_STRATEGY) != Z_OK)
 			{
@@ -294,7 +293,7 @@ ReceiveTarFile(PGconn *conn, PGresult *res, int rownum)
 		else
 #endif
 		{
-			snprintf(fn, sizeof(fn), "%s/%s.tar", tardir, PQgetvalue(res, rownum, 0));
+			snprintf(fn, sizeof(fn), "%s/%s.tar", basedir, PQgetvalue(res, rownum, 0));
 			tarfile = fopen(fn, "wb");
 		}
 	}
@@ -375,7 +374,7 @@ ReceiveTarFile(PGconn *conn, PGresult *res, int rownum)
 				}
 			}
 
-			if (strcmp(tardir, "-") != 0)
+			if (strcmp(basedir, "-") != 0)
 			{
 #ifdef HAVE_LIBZ
 				if (ztarfile != NULL)
@@ -798,18 +797,18 @@ BaseBackup()
 			totalsize += atol(PQgetvalue(res, i, 2));
 
 		/*
-		 * Verify tablespace directories are empty Don't bother with the first
-		 * once since it can be relocated, and it will be checked before we do
-		 * anything anyway.
+		 * Verify tablespace directories are empty. Don't bother with the
+		 * first once since it can be relocated, and it will be checked before
+		 * we do anything anyway.
 		 */
-		if (basedir != NULL && i > 0)
+		if (format == 'p' && i > 0)
 			verify_dir_is_empty_or_create(PQgetvalue(res, i, 1));
 	}
 
 	/*
 	 * When writing to stdout, require a single tablespace
 	 */
-	if (tardir != NULL && strcmp(tardir, "-") == 0 && PQntuples(res) > 1)
+	if (format == 't' && strcmp(basedir, "-") == 0 && PQntuples(res) > 1)
 	{
 		fprintf(stderr, _("%s: can only write single tablespace to stdout, database has %i.\n"),
 				progname, PQntuples(res));
@@ -821,7 +820,7 @@ BaseBackup()
 	 */
 	for (i = 0; i < PQntuples(res); i++)
 	{
-		if (tardir != NULL)
+		if (format == 't')
 			ReceiveTarFile(conn, res, i);
 		else
 			ReceiveAndUnpackTarFile(conn, res, i);
@@ -859,7 +858,7 @@ main(int argc, char **argv)
 		{"help", no_argument, NULL, '?'},
 		{"version", no_argument, NULL, 'V'},
 		{"pgdata", required_argument, NULL, 'D'},
-		{"tardir", required_argument, NULL, 'T'},
+		{"format", required_argument, NULL, 'F'},
 		{"checkpoint", required_argument, NULL, 'c'},
 		{"compress", required_argument, NULL, 'Z'},
 		{"label", required_argument, NULL, 'l'},
@@ -894,7 +893,7 @@ main(int argc, char **argv)
 		}
 	}
 
-	while ((c = getopt_long(argc, argv, "D:T:l:Z:c:h:p:U:wWvP",
+	while ((c = getopt_long(argc, argv, "D:F:l:Z:c:h:p:U:wWvP",
 							long_options, &option_index)) != -1)
 	{
 		switch (c)
@@ -902,8 +901,17 @@ main(int argc, char **argv)
 			case 'D':
 				basedir = xstrdup(optarg);
 				break;
-			case 'T':
-				tardir = xstrdup(optarg);
+			case 'F':
+				if (strcmp(optarg, "p") == 0 || strcmp(optarg, "plain") == 0)
+					format = 'p';
+				else if (strcmp(optarg, "t") == 0 || strcmp(optarg, "tar") == 0)
+					format = 't';
+				else
+				{
+					fprintf(stderr, _("%s: invalid output format \"%s\", must be \"plain\" or \"tar\"\n"),
+							progname, optarg);
+					exit(1);
+				}
 				break;
 			case 'l':
 				label = xstrdup(optarg);
@@ -983,7 +991,7 @@ main(int argc, char **argv)
 	/*
 	 * Required arguments
 	 */
-	if (basedir == NULL && tardir == NULL)
+	if (basedir == NULL)
 	{
 		fprintf(stderr, _("%s: no target directory specified\n"), progname);
 		fprintf(stderr, _("Try \"%s --help\" for more information.\n"),
@@ -994,17 +1002,7 @@ main(int argc, char **argv)
 	/*
 	 * Mutually exclusive arguments
 	 */
-	if (basedir != NULL && tardir != NULL)
-	{
-		fprintf(stderr,
-			 _("%s: both directory mode and tar mode cannot be specified\n"),
-				progname);
-		fprintf(stderr, _("Try \"%s --help\" for more information.\n"),
-				progname);
-		exit(1);
-	}
-
-	if (basedir != NULL && compresslevel > 0)
+	if (format == 'p' && compresslevel > 0)
 	{
 		fprintf(stderr,
 				_("%s: only tar mode backups can be compressed\n"),
@@ -1023,7 +1021,7 @@ main(int argc, char **argv)
 		exit(1);
 	}
 #else
-	if (compresslevel > 0 && strcmp(tardir, "-") == 0)
+	if (compresslevel > 0 && strcmp(basedir, "-") == 0)
 	{
 		fprintf(stderr,
 				_("%s: compression is not supported on standard output\n"),
@@ -1033,13 +1031,12 @@ main(int argc, char **argv)
 #endif
 
 	/*
-	 * Verify directories
+	 * Verify that the target directory exists, or create it. For plaintext
+	 * backups, always require the directory. For tar backups, require it
+	 * unless we are writing to stdout.
 	 */
-	if (basedir)
+	if (format == 'p' || strcmp(basedir, "-") != 0)
 		verify_dir_is_empty_or_create(basedir);
-	else if (strcmp(tardir, "-") != 0)
-		verify_dir_is_empty_or_create(tardir);
-
 
 
 	BaseBackup();

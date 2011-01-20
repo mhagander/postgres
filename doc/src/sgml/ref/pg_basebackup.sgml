@@ -67,21 +67,104 @@ PostgreSQL documentation
   <title>Options</title>
 
    <para>
+    The following command-line options control the location and format of the
+    output.
+
     <variablelist>
      <varlistentry>
       <term><option>-D <replaceable class="parameter">directory</replaceable></option></term>
       <term><option>--pgdata=<replaceable class="parameter">directory</replaceable></option></term>
       <listitem>
        <para>
-        Directory to restore the base data directory to. When the cluster has
-        no additional tablespaces, the whole database will be placed in this
-        directory. If the cluster contains additional tablespaces, the main
-        data directory will be placed in this directory, but all other
-        tablespaces will be placed in the same absolute path as they have
-        on the server.
+        Directory to write the output to.
        </para>
        <para>
-        Only one of <literal>-D</> and <literal>-T</> can be specified.
+        When the backup is in tar mode, and the directory is specified as
+        <literal>-</literal> (dash), the tar file will be written to
+        <literal>stdout</literal>.
+       </para>
+       <para>
+        This parameter is required.
+       </para>
+      </listitem>
+     </varlistentry>
+
+     <varlistentry>
+      <term><option>-F <replaceable class="parameter">format</replaceable></option></term>
+      <term><option>--format=<replaceable class="parameter">format</replaceable></option></term>
+      <listitem>
+       <para>
+        Selects the format for the output. <replaceable>format</replaceable>
+        can be one of the following:
+
+        <variablelist>
+         <varlistentry>
+          <term><literal>p</literal></term>
+          <term><literal>plain</literal></term>
+          <listitem>
+           <para>
+            Write the output as plain files, with the same layout as the
+            current data directory and tablespaces. When the cluster has
+            no additional tablespaces, the whole database will be placed in
+            the target directory. If the cluster contains additional
+            tablespaces, the main data directory will be placed in the
+            target directory, but all other tablespaces will be placed
+            in the same absolute path as they have on the server.
+           </para>
+           <para>
+            This is the default format.
+           </para>
+          </listitem>
+         </varlistentry>
+
+         <varlistentry>
+          <term><literal>t</literal></term>
+          <term><literal>tar</literal></term>
+          <listitem>
+           <para>
+            Write the output as tar files in the target directory. The main
+            data directory will be written to a file named
+            <filename>base.tar</filename>, and all other tablespaces will
+            be named after the tablespace oid.
+            </para>
+           <para>
+            If the value <literal>-</literal> (dash) is specified as
+            target directory, the tar contents will be written to
+            standard output, suitable for piping to for example
+            <productname>gzip</productname>. This is only possible if
+            the cluster has no additional tablespaces.
+           </para>
+           </listitem>
+         </varlistentry>
+        </variablelist>
+       </para>
+      </listitem>
+     </varlistentry>
+
+     <varlistentry>
+      <term><option>-Z <replaceable class="parameter">level</replaceable></option></term>
+      <term><option>--compress=<replaceable class="parameter">level</replaceable></option></term>
+      <listitem>
+       <para>
+        Enables gzip compression of tar file output. Compression is only
+        available when generating tar files, and is not available when sending
+        output to standard output.
+       </para>
+      </listitem>
+     </varlistentry>
+    </variablelist>
+   </para>
+   <para>
+    The following command-line options control the generation of the
+    backup and the running of the program.
+
+    <variablelist>
+     <varlistentry>
+      <term><option>-c <replaceable class="parameter">fast|spread</replaceable></option></term>
+      <term><option>--checkpoint <replaceable class="parameter">fast|spread</replaceable></option></term>
+      <listitem>
+       <para>
+        Sets checkpoint mode to fast or spread (default).
        </para>
       </listitem>
      </varlistentry>
@@ -98,7 +181,7 @@ PostgreSQL documentation
      </varlistentry>
 
      <varlistentry>
-      <term><option>-p</option></term>
+      <term><option>-P</option></term>
       <term><option>--progress</option></term>
       <listitem>
        <para>
@@ -117,39 +200,6 @@ PostgreSQL documentation
      </varlistentry>
 
      <varlistentry>
-      <term><option>-T <replaceable class="parameter">directory</replaceable></option></term>
-      <term><option>--tardir=<replaceable class="parameter">directory</replaceable></option></term>
-      <listitem>
-       <para>
-        Directory to place tar format files in. When this is specified, the
-        backup will consist of a number of tar files, one for each tablespace
-        in the database, stored in this directory. The tar file for the main
-        data directory will be named <filename>base.tar</>, and all other
-        tablespaces will be named after the tablespace oid.
-       </para>
-       <para>
-        If the value <literal>-</> (dash) is specified as tar directory,
-        the tar contents will be written to standard output, suitable for
-        piping to for example <productname>gzip</>. This is only possible if
-        the cluster has no additional tablespaces.
-       </para>
-       <para>
-        Only one of <literal>-D</> and <literal>-T</> can be specified.
-       </para>
-      </listitem>
-     </varlistentry>
-
-     <varlistentry>
-      <term><option>-c <replaceable class="parameter">fast|spread</replaceable></option></term>
-      <term><option>--checkpoint <replaceable class="parameter">fast|spread</replaceable></option></term>
-      <listitem>
-       <para>
-        Sets checkpoint mode to fast or spread (default).
-       </para>
-      </listitem>
-     </varlistentry>
-
-     <varlistentry>
       <term><option>-v</option></term>
       <term><option>--verbose</option></term>
       <listitem>
@@ -161,17 +211,6 @@ PostgreSQL documentation
       </listitem>
      </varlistentry>
 
-     <varlistentry>
-      <term><option>-Z <replaceable class="parameter">level</replaceable></option></term>
-      <term><option>--compress=<replaceable class="parameter">level</replaceable></option></term>
-      <listitem>
-       <para>
-        Enables gzip compression of tar file output. Compression is only
-        available when generating tar files, and is not available when sending
-        output to standard output.
-       </para>
-      </listitem>
-     </varlistentry>
     </variablelist>
    </para>
 
