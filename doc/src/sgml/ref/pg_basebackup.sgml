@@ -52,7 +52,10 @@ PostgreSQL documentation
    The backup is made over a regular <productname>PostgreSQL</productname>
    connection, and uses the replication protocol. The connection must be
    made with a user having <literal>REPLICATION</literal> permissions (see
-   <xref linkend="role-attributes">).
+   <xref linkend="role-attributes">), and the user must be granted explicit
+   permissions in <filename>pg_hba.conf</filename>. The server must also
+   be configured with <xref linkend="guc-max-wal-senders"> set high enough
+   to leave at least one session available for the backup.
   </para>
 
   <para>
