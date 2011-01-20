@@ -1007,12 +1007,13 @@ PLy_function_handler(FunctionCallInfo fcinfo, PLyProcedure *proc)
 			plargs = PLy_function_build_args(fcinfo, proc);
 			plrv = PLy_procedure_call(proc, "args", plargs);
 			if (!proc->is_setof)
-
+			{
 				/*
 				 * SETOF function parameters will be deleted when last row is
 				 * returned
 				 */
 				PLy_function_delete_args(proc);
+			}
 			Assert(plrv != NULL);
 			Assert(!PLy_error_in_progress);
 		}
@@ -1163,6 +1164,14 @@ PLy_function_handler(FunctionCallInfo fcinfo, PLyProcedure *proc)
 	{
 		Py_XDECREF(plargs);
 		Py_XDECREF(plrv);
+
+		/*
+		 * If there was an error the iterator might have not been exhausted
+		 * yet. Set it to NULL so the next invocation of the function will
+		 * start the iteration again.
+		 */
+		Py_XDECREF(proc->setof);
+		proc->setof = NULL;
 
 		PG_RE_THROW();
 	}
@@ -1597,7 +1606,7 @@ PLy_procedure_compile(PLyProcedure *proc, const char *src)
 	 */
 	msrc = PLy_procedure_munge_source(proc->pyname, src);
 	crv = PyRun_String(msrc, Py_file_input, proc->globals, NULL);
-	free(msrc);
+	pfree(msrc);
 
 	if (crv != NULL)
 	{
@@ -1617,7 +1626,11 @@ PLy_procedure_compile(PLyProcedure *proc, const char *src)
 			return;
 	}
 
-	PLy_elog(ERROR, "could not compile PL/Python function \"%s\"", proc->proname);
+	if (proc->proname)
+		PLy_elog(ERROR, "could not compile PL/Python function \"%s\"",
+				 proc->proname);
+	else
+		PLy_elog(ERROR, "could not compile anonymous PL/Python code block");
 }
 
 static char *
@@ -1634,7 +1647,7 @@ PLy_procedure_munge_source(const char *name, const char *src)
 	 */
 	mlen = (strlen(src) * 2) + strlen(name) + 16;
 
-	mrc = PLy_malloc(mlen);
+	mrc = palloc(mlen);
 	plen = snprintf(mrc, mlen, "def %s():\n\t", name);
 	Assert(plen >= 0 && plen < mlen);
 
@@ -2296,6 +2309,9 @@ PLyMapping_ToTuple(PLyTypeInfo *info, PyObject *mapping)
 		PyObject   *volatile value;
 		PLyObToDatum *att;
 
+		if (desc->attrs[i]->attisdropped)
+			continue;
+
 		key = NameStr(desc->attrs[i]->attname);
 		value = NULL;
 		att = &info->out.r.atts[i];
@@ -2346,6 +2362,7 @@ PLySequence_ToTuple(PLyTypeInfo *info, PyObject *sequence)
 	HeapTuple	tuple;
 	Datum	   *values;
 	bool	   *nulls;
+	volatile int idx;
 	volatile int i;
 
 	Assert(PySequence_Check(sequence));
@@ -2356,7 +2373,13 @@ PLySequence_ToTuple(PLyTypeInfo *info, PyObject *sequence)
 	 * plpython developer's errors we are strict here
 	 */
 	desc = lookup_rowtype_tupdesc(info->out.d.typoid, -1);
-	if (PySequence_Length(sequence) != desc->natts)
+	idx = 0;
+	for (i = 0; i < desc->natts; i++)
+	{
+		if (!desc->attrs[i]->attisdropped)
+			idx++;
+	}
+	if (PySequence_Length(sequence) != idx)
 		ereport(ERROR,
 				(errcode(ERRCODE_DATATYPE_MISMATCH),
 				 errmsg("length of returned sequence did not match number of columns in row")));
@@ -2368,16 +2391,20 @@ PLySequence_ToTuple(PLyTypeInfo *info, PyObject *sequence)
 	/* Build tuple */
 	values = palloc(sizeof(Datum) * desc->natts);
 	nulls = palloc(sizeof(bool) * desc->natts);
+	idx = 0;
 	for (i = 0; i < desc->natts; ++i)
 	{
 		PyObject   *volatile value;
 		PLyObToDatum *att;
 
+		if (desc->attrs[i]->attisdropped)
+			continue;
+
 		value = NULL;
 		att = &info->out.r.atts[i];
 		PG_TRY();
 		{
-			value = PySequence_GetItem(sequence, i);
+			value = PySequence_GetItem(sequence, idx);
 			Assert(value);
 			if (value == Py_None)
 			{
@@ -2399,6 +2426,8 @@ PLySequence_ToTuple(PLyTypeInfo *info, PyObject *sequence)
 			PG_RE_THROW();
 		}
 		PG_END_TRY();
+
+		idx++;
 	}
 
 	tuple = heap_form_tuple(desc, values, nulls);
@@ -2432,6 +2461,9 @@ PLyObject_ToTuple(PLyTypeInfo *info, PyObject *object)
 		char	   *key;
 		PyObject   *volatile value;
 		PLyObToDatum *att;
+
+		if (desc->attrs[i]->attisdropped)
+			continue;
 
 		key = NameStr(desc->attrs[i]->attname);
 		value = NULL;
@@ -2644,12 +2676,13 @@ PLy_plan_new(void)
 {
 	PLyPlanObject *ob;
 
-	if ((ob = PyObject_NEW(PLyPlanObject, &PLy_PlanType)) == NULL)
+	if ((ob = PyObject_New(PLyPlanObject, &PLy_PlanType)) == NULL)
 		return NULL;
 
 	ob->plan = NULL;
 	ob->nargs = 0;
 	ob->types = NULL;
+	ob->values = NULL;
 	ob->args = NULL;
 
 	return (PyObject *) ob;
@@ -2665,6 +2698,8 @@ PLy_plan_dealloc(PyObject *arg)
 		SPI_freeplan(ob->plan);
 	if (ob->types)
 		PLy_free(ob->types);
+	if (ob->values)
+		PLy_free(ob->values);
 	if (ob->args)
 	{
 		int			i;
@@ -2700,7 +2735,7 @@ PLy_result_new(void)
 {
 	PLyResultObject *ob;
 
-	if ((ob = PyObject_NEW(PLyResultObject, &PLy_ResultType)) == NULL)
+	if ((ob = PyObject_New(PLyResultObject, &PLy_ResultType)) == NULL)
 		return NULL;
 
 	/* ob->tuples = NULL; */
@@ -3656,13 +3691,8 @@ PLy_traceback(int *xlevel)
 static void *
 PLy_malloc(size_t bytes)
 {
-	void	   *ptr = malloc(bytes);
-
-	if (ptr == NULL)
-		ereport(FATAL,
-				(errcode(ERRCODE_OUT_OF_MEMORY),
-				 errmsg("out of memory")));
-	return ptr;
+	/* We need our allocations to be long-lived, so use TopMemoryContext */
+	return MemoryContextAlloc(TopMemoryContext, bytes);
 }
 
 static void *
@@ -3691,7 +3721,7 @@ PLy_strdup(const char *str)
 static void
 PLy_free(void *ptr)
 {
-	free(ptr);
+	pfree(ptr);
 }
 
 /*
