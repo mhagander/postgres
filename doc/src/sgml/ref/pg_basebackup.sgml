@@ -36,7 +36,7 @@ PostgreSQL documentation
    are taken without affecting other clients to the database, and can be used
    both for point-in-time recovery (see <xref linkend="continuous-archiving">)
    and as the starting point for a log shipping or streaming replication standby
-   server (see <xref linkend="warm-standby">).
+   servers (see <xref linkend="warm-standby">).
   </para>
 
   <para>
