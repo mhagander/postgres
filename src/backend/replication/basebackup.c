@@ -333,7 +333,16 @@ sendDir(char *path, int basepathlen, bool sizeonly)
 		if (strcmp(pathbuf, "./pg_xlog") == 0)
 		{
 			if (!sizeonly)
+			{
+				/* If pg_xlog is a symlink, write it as a directory anyway */
+#ifndef WIN32
+				if (S_ISLNK(statbuf.st_mode))
+#else
+				if (pgwin32_is_junction(pathbuf))
+#endif
+					statbuf.st_mode = S_IFDIR | S_IRWXU;
 				_tarWriteHeader(pathbuf + basepathlen + 1, NULL, &statbuf);
+			}
 			size += 512;		/* Size of the header just added */
 			continue;			/* don't recurse into pg_xlog */
 		}
