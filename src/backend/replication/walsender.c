@@ -110,6 +110,7 @@ static bool XLogSend(char *msgbuf, bool *caughtup);
 static void CheckClosedConnection(void);
 static void IdentifySystem(void);
 static void StartReplication(StartReplicationCmd * cmd);
+static void parse_basebackup_options(List *options, basebackup_options *opt);
 
 
 /* Main entry point for walsender process */
@@ -355,6 +356,40 @@ StartReplication(StartReplicationCmd * cmd)
 }
 
 /*
+ * Parse the base backup options passed down by the parser
+ */
+static void
+parse_basebackup_options(List *options, basebackup_options *opt)
+{
+	ListCell   *lopt;
+
+	MemSet(opt, 0, sizeof(basebackup_options));
+	foreach(lopt, options)
+	{
+		ReplOption *ro = (ReplOption *) lfirst(lopt);
+
+		switch (ro->type)
+		{
+			case RO_label:
+				opt->label = ro->stringval;
+				break;
+			case RO_progress:
+				opt->progress = ro->boolval;
+				break;
+			case RO_fastcheckpoint:
+				opt->fastcheckpoint = ro->boolval;
+				break;
+			default:
+				elog(ERROR, "option %i not recognized",
+					 ro->type);
+		}
+	}
+	if (opt->label == NULL)
+		opt->label = "base backup";
+}
+
+
+/*
  * Execute an incoming replication command.
  */
 static bool
@@ -402,32 +437,8 @@ HandleReplicationCommand(const char *cmd_string)
 			{
 				BaseBackupCmd *cmd = (BaseBackupCmd *) cmd_node;
 				basebackup_options opt;
-				ListCell   *lopt;
 
-				MemSet(&opt, 0, sizeof(opt));
-				foreach(lopt, cmd->options)
-				{
-					ReplOption *ro = (ReplOption *) lfirst(lopt);
-
-					switch (ro->type)
-					{
-						case RO_label:
-							opt.label = ro->stringval;
-							break;
-						case RO_progress:
-							opt.progress = ro->boolval;
-							break;
-						case RO_fastcheckpoint:
-							opt.fastcheckpoint = ro->boolval;
-							break;
-						default:
-						elog(ERROR, "option %i not recognized",
-							 ro->type);
-					}
-				}
-				if (opt.label == NULL)
-					opt.label = "base backup";
-
+				parse_basebackup_options(cmd->options, &opt);
 				SendBaseBackup(&opt);
 
 				/* Send CommandComplete and ReadyForQuery messages */
