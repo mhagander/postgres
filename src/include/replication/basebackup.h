@@ -12,13 +12,8 @@
 #ifndef _BASEBACKUP_H
 #define _BASEBACKUP_H
 
-typedef struct
-{
-	const char *label;
-	bool		progress;
-	bool		fastcheckpoint;
-}	basebackup_options;
+#include "replication/replnodes.h"
 
-extern void SendBaseBackup(basebackup_options *opt);
+extern void SendBaseBackup(BaseBackupCmd *cmd);
 
 #endif   /* _BASEBACKUP_H */

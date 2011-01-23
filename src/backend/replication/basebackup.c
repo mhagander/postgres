@@ -32,6 +32,14 @@
 #include "utils/memutils.h"
 #include "utils/ps_status.h"
 
+typedef struct
+{
+	const char *label;
+	bool		progress;
+	bool		fastcheckpoint;
+}	basebackup_options;
+
+
 static int64 sendDir(char *path, int basepathlen, bool sizeonly);
 static void sendFile(char *path, int basepathlen, struct stat * statbuf);
 static void _tarWriteHeader(char *filename, char *linktarget,
@@ -41,6 +49,8 @@ static void SendBackupHeader(List *tablespaces);
 static void SendBackupDirectory(char *location, char *spcoid);
 static void base_backup_cleanup(int code, Datum arg);
 static void perform_base_backup(basebackup_options *opt, DIR *tblspcdir);
+static void parse_basebackup_options(List *options, basebackup_options *opt);
+
 
 typedef struct
 {
@@ -129,17 +139,72 @@ perform_base_backup(basebackup_options *opt, DIR *tblspcdir)
 }
 
 /*
+ * Parse the base backup options passed down by the parser
+ */
+static void
+parse_basebackup_options(List *options, basebackup_options *opt)
+{
+	ListCell   *lopt;
+	bool		o_label = false;
+	bool		o_progress = false;
+	bool		o_fast = false;
+
+	MemSet(opt, 0, sizeof(opt));
+	foreach(lopt, options)
+	{
+		DefElem    *defel = (DefElem *) lfirst(lopt);
+
+		if (strcmp(defel->defname, "label") == 0)
+		{
+			if (o_label)
+				ereport(ERROR,
+						(errcode(ERRCODE_SYNTAX_ERROR),
+						 errmsg("duplicate option \"%s\"", defel->defname)));
+			opt->label = strVal(defel->arg);
+			o_label = true;
+		}
+		else if (strcmp(defel->defname, "progress") == 0)
+		{
+			if (o_progress)
+				ereport(ERROR,
+						(errcode(ERRCODE_SYNTAX_ERROR),
+						 errmsg("duplicate option \"%s\"", defel->defname)));
+			opt->progress = true;
+			o_progress = true;
+		}
+		else if (strcmp(defel->defname, "fast") == 0)
+		{
+			if (o_fast)
+				ereport(ERROR,
+						(errcode(ERRCODE_SYNTAX_ERROR),
+						 errmsg("duplicate option \"%s\"", defel->defname)));
+			opt->fastcheckpoint = true;
+			o_fast = true;
+		}
+		else
+			elog(ERROR, "option \"%s\" not recognized",
+				 defel->defname);
+	}
+	if (opt->label == NULL)
+		opt->label = "base backup";
+}
+
+
+/*
  * SendBaseBackup() - send a complete base backup.
  *
  * The function will take care of running pg_start_backup() and
  * pg_stop_backup() for the user.
  */
 void
-SendBaseBackup(basebackup_options *opt)
+SendBaseBackup(BaseBackupCmd *cmd)
 {
 	DIR		   *dir;
 	MemoryContext backup_context;
 	MemoryContext old_context;
+	basebackup_options opt;
+
+	parse_basebackup_options(cmd->options, &opt);
 
 	backup_context = AllocSetContextCreate(CurrentMemoryContext,
 										   "Streaming base backup context",
@@ -155,7 +220,7 @@ SendBaseBackup(basebackup_options *opt)
 		char		activitymsg[50];
 
 		snprintf(activitymsg, sizeof(activitymsg), "sending backup \"%s\"",
-				 opt->label);
+				 opt.label);
 		set_ps_display(activitymsg, false);
 	}
 
@@ -165,7 +230,7 @@ SendBaseBackup(basebackup_options *opt)
 		ereport(ERROR,
 				(errmsg("unable to open directory pg_tblspc: %m")));
 
-	perform_base_backup(opt, dir);
+	perform_base_backup(&opt, dir);
 
 	FreeDir(dir);
 
