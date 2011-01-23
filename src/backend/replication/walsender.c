@@ -363,26 +363,20 @@ parse_basebackup_options(List *options, basebackup_options *opt)
 {
 	ListCell   *lopt;
 
-	MemSet(opt, 0, sizeof(basebackup_options));
+	MemSet(opt, 0, sizeof(opt));
 	foreach(lopt, options)
 	{
-		ReplOption *ro = (ReplOption *) lfirst(lopt);
+		DefElem    *defel = (DefElem *) lfirst(lopt);
 
-		switch (ro->type)
-		{
-			case RO_label:
-				opt->label = ro->stringval;
-				break;
-			case RO_progress:
-				opt->progress = ro->boolval;
-				break;
-			case RO_fastcheckpoint:
-				opt->fastcheckpoint = ro->boolval;
-				break;
-			default:
-				elog(ERROR, "option %i not recognized",
-					 ro->type);
-		}
+		if (strcmp(defel->defname, "label") == 0)
+			opt->label = strVal(defel->arg);
+		else if (strcmp(defel->defname, "progress") == 0)
+			opt->progress = true;
+		else if (strcmp(defel->defname, "fast") == 0)
+			opt->fastcheckpoint = true;
+		else
+			elog(ERROR, "option \"%s\" not recognized",
+				 defel->defname);
 	}
 	if (opt->label == NULL)
 		opt->label = "base backup";

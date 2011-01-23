@@ -19,27 +19,6 @@
 #include "nodes/value.h"
 
 /*
- * Replication options passed back from the parser
- */
-typedef enum ReplOptionTag
-{
-	RO_label,
-	RO_progress,
-	RO_fastcheckpoint
-}	ReplOptionTag;
-
-typedef struct ReplOption
-{
-	ReplOptionTag type;
-	union
-	{
-		bool		boolval;
-		int			intval;
-		char	   *stringval;
-	};
-}	ReplOption;
-
-/*
  * NodeTags for replication parser
  */
 typedef enum ReplNodeTag
