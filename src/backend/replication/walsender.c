@@ -362,6 +362,9 @@ static void
 parse_basebackup_options(List *options, basebackup_options *opt)
 {
 	ListCell   *lopt;
+	bool		o_label = false;
+	bool		o_progress = false;
+	bool		o_fast = false;
 
 	MemSet(opt, 0, sizeof(opt));
 	foreach(lopt, options)
@@ -369,11 +372,32 @@ parse_basebackup_options(List *options, basebackup_options *opt)
 		DefElem    *defel = (DefElem *) lfirst(lopt);
 
 		if (strcmp(defel->defname, "label") == 0)
+		{
+			if (o_label)
+				ereport(ERROR,
+						(errcode(ERRCODE_SYNTAX_ERROR),
+						 errmsg("duplicate option \"%s\"", defel->defname)));
 			opt->label = strVal(defel->arg);
+			o_label = true;
+		}
 		else if (strcmp(defel->defname, "progress") == 0)
+		{
+			if (o_progress)
+				ereport(ERROR,
+						(errcode(ERRCODE_SYNTAX_ERROR),
+						 errmsg("duplicate option \"%s\"", defel->defname)));
 			opt->progress = true;
+			o_progress= true;
+		}
 		else if (strcmp(defel->defname, "fast") == 0)
+		{
+			if (o_fast)
+				ereport(ERROR,
+						(errcode(ERRCODE_SYNTAX_ERROR),
+						 errmsg("duplicate option \"%s\"", defel->defname)));
 			opt->fastcheckpoint = true;
+			o_fast = true;
+		}
 		else
 			elog(ERROR, "option \"%s\" not recognized",
 				 defel->defname);
