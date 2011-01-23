@@ -21,13 +21,14 @@
 /* Result of the parsing is returned here */
 Node *replication_parse_result;
 
-#define makeReplOption(optiontype)							\
-  (  {														\
-    ReplOption *_option;									\
-    _option = palloc0fast(sizeof(ReplOption));				\
-    _option->type = optiontype;								\
-    _option;												\
-  })
+static ReplOption *
+makeReplOption(ReplOptionTag optiontype)
+{
+  ReplOption *option = palloc0(sizeof(ReplOption));
+  option->type = optiontype;
+  return option;
+}
+
 /* Location tracking support --- simpler than bison's default */
 #define YYLLOC_DEFAULT(Current, Rhs, N) \
 	do { \
