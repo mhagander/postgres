@@ -354,7 +354,6 @@ StartReplication(StartReplicationCmd * cmd)
 	sentPtr = cmd->startpoint;
 }
 
-
 /*
  * Execute an incoming replication command.
  */

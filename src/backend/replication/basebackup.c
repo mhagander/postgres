@@ -51,7 +51,6 @@ static void base_backup_cleanup(int code, Datum arg);
 static void perform_base_backup(basebackup_options *opt, DIR *tblspcdir);
 static void parse_basebackup_options(List *options, basebackup_options *opt);
 
-
 typedef struct
 {
 	char	   *oid;
