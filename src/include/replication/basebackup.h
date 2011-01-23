@@ -12,6 +12,13 @@
 #ifndef _BASEBACKUP_H
 #define _BASEBACKUP_H
 
-extern void SendBaseBackup(const char *backup_label, bool progress, bool fastcheckpoint);
+typedef struct
+{
+	const char *label;
+	bool		progress;
+	bool		fastcheckpoint;
+}	basebackup_options;
+
+extern void SendBaseBackup(basebackup_options *opt);
 
 #endif   /* _BASEBACKUP_H */

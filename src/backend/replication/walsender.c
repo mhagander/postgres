@@ -401,8 +401,28 @@ HandleReplicationCommand(const char *cmd_string)
 		case T_BaseBackupCmd:
 			{
 				BaseBackupCmd *cmd = (BaseBackupCmd *) cmd_node;
+				basebackup_options opt;
+				ListCell   *lopt;
 
-				SendBaseBackup(cmd->label, cmd->progress, cmd->fastcheckpoint);
+				MemSet(&opt, 0, sizeof(opt));
+				foreach(lopt, cmd->options)
+				{
+					DefElem    *defel = (DefElem *) lfirst(lopt);
+
+					if (strcmp(defel->defname, "label") == 0)
+						opt.label = strVal(defel->arg);
+					else if (strcmp(defel->defname, "progress") == 0)
+						opt.progress = true;
+					else if (strcmp(defel->defname, "fast") == 0)
+						opt.fastcheckpoint = true;
+					else
+						elog(ERROR, "option \"%s\" not recognized",
+							 defel->defname);
+				}
+				if (opt.label == NULL)
+					opt.label = "base backup";
+
+				SendBaseBackup(&opt);
 
 				/* Send CommandComplete and ReadyForQuery messages */
 				EndCommand("SELECT", DestRemote);

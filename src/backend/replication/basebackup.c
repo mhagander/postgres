@@ -40,7 +40,7 @@ static void send_int8_string(StringInfoData *buf, int64 intval);
 static void SendBackupHeader(List *tablespaces);
 static void SendBackupDirectory(char *location, char *spcoid);
 static void base_backup_cleanup(int code, Datum arg);
-static void perform_base_backup(const char *backup_label, bool progress, DIR *tblspcdir, bool fastcheckpoint);
+static void perform_base_backup(basebackup_options *opt, DIR *tblspcdir);
 
 typedef struct
 {
@@ -67,9 +67,9 @@ base_backup_cleanup(int code, Datum arg)
  * clobbered by longjmp" from stupider versions of gcc.
  */
 static void
-perform_base_backup(const char *backup_label, bool progress, DIR *tblspcdir, bool fastcheckpoint)
+perform_base_backup(basebackup_options *opt, DIR *tblspcdir)
 {
-	do_pg_start_backup(backup_label, fastcheckpoint);
+	do_pg_start_backup(opt->label, opt->fastcheckpoint);
 
 	PG_ENSURE_ERROR_CLEANUP(base_backup_cleanup, (Datum) 0);
 	{
@@ -81,7 +81,7 @@ perform_base_backup(const char *backup_label, bool progress, DIR *tblspcdir, boo
 
 		/* Add a node for the base directory */
 		ti = palloc0(sizeof(tablespaceinfo));
-		ti->size = progress ? sendDir(".", 1, true) : -1;
+		ti->size = opt->progress ? sendDir(".", 1, true) : -1;
 		tablespaces = lappend(tablespaces, ti);
 
 		/* Collect information about all tablespaces */
@@ -107,7 +107,7 @@ perform_base_backup(const char *backup_label, bool progress, DIR *tblspcdir, boo
 			ti = palloc(sizeof(tablespaceinfo));
 			ti->oid = pstrdup(de->d_name);
 			ti->path = pstrdup(linkpath);
-			ti->size = progress ? sendDir(linkpath, strlen(linkpath), true) : -1;
+			ti->size = opt->progress ? sendDir(linkpath, strlen(linkpath), true) : -1;
 			tablespaces = lappend(tablespaces, ti);
 		}
 
@@ -135,7 +135,7 @@ perform_base_backup(const char *backup_label, bool progress, DIR *tblspcdir, boo
  * pg_stop_backup() for the user.
  */
 void
-SendBaseBackup(const char *backup_label, bool progress, bool fastcheckpoint)
+SendBaseBackup(basebackup_options *opt)
 {
 	DIR		   *dir;
 	MemoryContext backup_context;
@@ -150,15 +150,12 @@ SendBaseBackup(const char *backup_label, bool progress, bool fastcheckpoint)
 
 	WalSndSetState(WALSNDSTATE_BACKUP);
 
-	if (backup_label == NULL)
-		backup_label = "base backup";
-
 	if (update_process_title)
 	{
 		char		activitymsg[50];
 
 		snprintf(activitymsg, sizeof(activitymsg), "sending backup \"%s\"",
-				 backup_label);
+				 opt->label);
 		set_ps_display(activitymsg, false);
 	}
 
@@ -168,7 +165,7 @@ SendBaseBackup(const char *backup_label, bool progress, bool fastcheckpoint)
 		ereport(ERROR,
 				(errmsg("unable to open directory pg_tblspc: %m")));
 
-	perform_base_backup(backup_label, progress, dir, fastcheckpoint);
+	perform_base_backup(opt, dir);
 
 	FreeDir(dir);
 
