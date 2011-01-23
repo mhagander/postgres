@@ -407,17 +407,23 @@ HandleReplicationCommand(const char *cmd_string)
 				MemSet(&opt, 0, sizeof(opt));
 				foreach(lopt, cmd->options)
 				{
-					DefElem    *defel = (DefElem *) lfirst(lopt);
+					ReplOption *ro = (ReplOption *) lfirst(lopt);
 
-					if (strcmp(defel->defname, "label") == 0)
-						opt.label = strVal(defel->arg);
-					else if (strcmp(defel->defname, "progress") == 0)
-						opt.progress = true;
-					else if (strcmp(defel->defname, "fast") == 0)
-						opt.fastcheckpoint = true;
-					else
-						elog(ERROR, "option \"%s\" not recognized",
-							 defel->defname);
+					switch (ro->type)
+					{
+						case RO_label:
+							opt.label = ro->stringval;
+							break;
+						case RO_progress:
+							opt.progress = ro->boolval;
+							break;
+						case RO_fastcheckpoint:
+							opt.fastcheckpoint = ro->boolval;
+							break;
+						default:
+						elog(ERROR, "option %i not recognized",
+							 ro->type);
+					}
 				}
 				if (opt.label == NULL)
 					opt.label = "base backup";

@@ -15,14 +15,19 @@
 
 #include "postgres.h"
 
-#include "nodes/makefuncs.h"
-#include "nodes/parsenodes.h"
 #include "replication/replnodes.h"
 #include "replication/walsender.h"
 
 /* Result of the parsing is returned here */
 Node *replication_parse_result;
 
+#define makeReplOption(optiontype)							\
+  (  {														\
+    ReplOption *_option;									\
+    _option = palloc0fast(sizeof(ReplOption));				\
+    _option->type = optiontype;								\
+    _option;												\
+  })
 /* Location tracking support --- simpler than bison's default */
 #define YYLLOC_DEFAULT(Current, Rhs, N) \
 	do { \
@@ -58,7 +63,7 @@ Node *replication_parse_result;
 		XLogRecPtr				recptr;
 		Node					*node;
 		List					*list;
-		DefElem					*defelt;
+		ReplOption				*replopt;
 }
 
 /* Non-keyword tokens */
@@ -76,7 +81,7 @@ Node *replication_parse_result;
 %type <node>	command
 %type <node>	base_backup start_replication identify_system
 %type <list>	base_backup_opt_list
-%type <defelt>	base_backup_opt
+%type <replopt>	base_backup_opt
 %%
 
 firstcmd: command opt_semicolon
@@ -123,18 +128,18 @@ base_backup_opt_list: base_backup_opt_list base_backup_opt { $$ = lappend($1, $2
 base_backup_opt:
 			K_LABEL SCONST
 				{
-				  $$ = makeDefElem("label",
-						   (Node *)makeString($2));
+				  $$ = makeReplOption(RO_label);
+				  $$->stringval = $2;
 				}
 			| K_PROGRESS
 				{
-				  $$ = makeDefElem("progress",
-						   (Node *)makeInteger(TRUE));
+				  $$ = makeReplOption(RO_progress);
+				  $$->boolval = true;
 				}
 			| K_FAST
 				{
-				  $$ = makeDefElem("fast",
-						   (Node *)makeInteger(TRUE));
+				  $$ = makeReplOption(RO_fastcheckpoint);
+				  $$->boolval = true;
 				}
 
 
