@@ -387,7 +387,7 @@ parse_basebackup_options(List *options, basebackup_options *opt)
 						(errcode(ERRCODE_SYNTAX_ERROR),
 						 errmsg("duplicate option \"%s\"", defel->defname)));
 			opt->progress = true;
-			o_progress= true;
+			o_progress = true;
 		}
 		else if (strcmp(defel->defname, "fast") == 0)
 		{
