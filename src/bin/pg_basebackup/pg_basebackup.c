@@ -151,16 +151,6 @@ usage(void)
 static void
 verify_dir_is_empty_or_create(char *dirname)
 {
-	/*
-	 * ** * *  * * *  *  *	 * * *	* * * XXX: hack to allow restoring backups
-	 * locally, remove before commit!!!
-	 * =======================================
-	 */
-	if (dirname[0] == '/')
-	{
-		dirname[0] = '_';
-	}
-
 	switch (pg_check_dir(dirname))
 	{
 		case 0:
