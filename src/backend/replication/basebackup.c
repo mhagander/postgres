@@ -198,6 +198,7 @@ parse_basebackup_options(List *options, basebackup_options *opt)
 	bool		o_label = false;
 	bool		o_progress = false;
 	bool		o_fast = false;
+	bool		o_wal = false;
 
 	MemSet(opt, 0, sizeof(opt));
 	foreach(lopt, options)
@@ -230,6 +231,15 @@ parse_basebackup_options(List *options, basebackup_options *opt)
 						 errmsg("duplicate option \"%s\"", defel->defname)));
 			opt->fastcheckpoint = true;
 			o_fast = true;
+		}
+		else if (strcmp(defel->defname, "wal") == 0)
+		{
+			if (o_wal)
+				ereport(ERROR,
+						(errcode(ERRCODE_SYNTAX_ERROR),
+						 errmsg("duplicate option \"%s\"", defel->defname)));
+			opt->includewal = true;
+			o_wal = true;
 		}
 		else
 			elog(ERROR, "option \"%s\" not recognized",
