@@ -1460,7 +1460,7 @@ The commands accepted in walsender mode are:
   </varlistentry>
 
   <varlistentry>
-    <term>BASE_BACKUP [<literal>LABEL</literal> <replaceable>'label'</replaceable>] [<literal>PROGRESS</literal>] [<literal>FAST</literal>]</term>
+    <term>BASE_BACKUP [<literal>LABEL</literal> <replaceable>'label'</replaceable>] [<literal>PROGRESS</literal>] [<literal>FAST</literal>] [<literal>WAL</literal>]</term>
     <listitem>
      <para>
       Instructs the server to start streaming a base backup.
@@ -1502,6 +1502,18 @@ The commands accepted in walsender mode are:
         <listitem>
          <para>
           Request a fast checkpoint.
+         </para>
+        </listitem>
+       </varlistentry>
+
+       <varlistentry>
+        <term><literal>WAL</literal></term>
+        <listitem>
+         <para>
+          Include the necessary WAL segments in the backup. This will include
+          all the files between start and stop backup in the
+          <filename>pg_xlog</filename> directory of the base directory tar
+          file.
          </para>
         </listitem>
        </varlistentry>
