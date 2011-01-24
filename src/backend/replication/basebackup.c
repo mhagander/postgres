@@ -150,7 +150,7 @@ perform_base_backup(basebackup_options *opt, DIR *tblspcdir)
 
 		XLByteToSeg(startptr, logid, logseg);
 		XLByteToSeg(endptr, endlogid, endlogseg);
-		elog(LOG, "Going to write wal from %i.%i to %i.%i",
+		elog(DEBUG1, "Going to send wal from %i.%i to %i.%i",
 			 logid, logseg,
 			 endlogid, endlogseg);
 
