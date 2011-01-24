@@ -36,7 +36,7 @@ PostgreSQL documentation
    are taken without affecting other clients to the database, and can be used
    both for point-in-time recovery (see <xref linkend="continuous-archiving">)
    and as the starting point for a log shipping or streaming replication standby
-   server (see <xref linkend="warm-standby">).
+   servers (see <xref linkend="warm-standby">).
   </para>
 
   <para>
@@ -52,7 +52,10 @@ PostgreSQL documentation
    The backup is made over a regular <productname>PostgreSQL</productname>
    connection, and uses the replication protocol. The connection must be
    made with a user having <literal>REPLICATION</literal> permissions (see
-   <xref linkend="role-attributes">).
+   <xref linkend="role-attributes">), and the user must be granted explicit
+   permissions in <filename>pg_hba.conf</filename>. The server must also
+   be configured with <xref linkend="guc-max-wal-senders"> set high enough
+   to leave at least one session available for the backup.
   </para>
 
   <para>
@@ -67,36 +70,104 @@ PostgreSQL documentation
   <title>Options</title>
 
    <para>
+    The following command-line options control the location and format of the
+    output.
+
     <variablelist>
      <varlistentry>
-      <term><option>-c <replaceable class="parameter">conninfo</replaceable></option></term>
-      <term><option>--conninfo=<replaceable class="parameter">conninfo</replaceable></option></term>
+      <term><option>-D <replaceable class="parameter">directory</replaceable></option></term>
+      <term><option>--pgdata=<replaceable class="parameter">directory</replaceable></option></term>
       <listitem>
        <para>
-        Specify the conninfo string used to connect to the server. For example:
-<programlisting>
-$ <userinput>pg_basebackup -c "host=192.168.0.2 user=backup"</userinput>
-</programlisting>
-        See <xref linkend="libpq-connect"> for more information on all the
-        available connection options.
+        Directory to write the output to.
+       </para>
+       <para>
+        When the backup is in tar mode, and the directory is specified as
+        <literal>-</literal> (dash), the tar file will be written to
+        <literal>stdout</literal>.
+       </para>
+       <para>
+        This parameter is required.
        </para>
       </listitem>
      </varlistentry>
 
      <varlistentry>
-      <term><option>-d <replaceable class="parameter">directory</replaceable></option></term>
-      <term><option>--basedir=<replaceable class="parameter">directory</replaceable></option></term>
+      <term><option>-F <replaceable class="parameter">format</replaceable></option></term>
+      <term><option>--format=<replaceable class="parameter">format</replaceable></option></term>
       <listitem>
        <para>
-        Directory to restore the base data directory to. When the cluster has
-        no additional tablespaces, the whole database will be placed in this
-        directory. If the cluster contains additional tablespaces, the main
-        data directory will be placed in this directory, but all other
-        tablespaces will be placed in the same absolute path as they have
-        on the server.
+        Selects the format for the output. <replaceable>format</replaceable>
+        can be one of the following:
+
+        <variablelist>
+         <varlistentry>
+          <term><literal>p</literal></term>
+          <term><literal>plain</literal></term>
+          <listitem>
+           <para>
+            Write the output as plain files, with the same layout as the
+            current data directory and tablespaces. When the cluster has
+            no additional tablespaces, the whole database will be placed in
+            the target directory. If the cluster contains additional
+            tablespaces, the main data directory will be placed in the
+            target directory, but all other tablespaces will be placed
+            in the same absolute path as they have on the server.
+           </para>
+           <para>
+            This is the default format.
+           </para>
+          </listitem>
+         </varlistentry>
+
+         <varlistentry>
+          <term><literal>t</literal></term>
+          <term><literal>tar</literal></term>
+          <listitem>
+           <para>
+            Write the output as tar files in the target directory. The main
+            data directory will be written to a file named
+            <filename>base.tar</filename>, and all other tablespaces will
+            be named after the tablespace oid.
+            </para>
+           <para>
+            If the value <literal>-</literal> (dash) is specified as
+            target directory, the tar contents will be written to
+            standard output, suitable for piping to for example
+            <productname>gzip</productname>. This is only possible if
+            the cluster has no additional tablespaces.
+           </para>
+           </listitem>
+         </varlistentry>
+        </variablelist>
        </para>
+      </listitem>
+     </varlistentry>
+
+     <varlistentry>
+      <term><option>-Z <replaceable class="parameter">level</replaceable></option></term>
+      <term><option>--compress=<replaceable class="parameter">level</replaceable></option></term>
+      <listitem>
        <para>
-        Only one of <literal>-d</> and <literal>-t</> can be specified.
+        Enables gzip compression of tar file output. Compression is only
+        available when generating tar files, and is not available when sending
+        output to standard output.
+       </para>
+      </listitem>
+     </varlistentry>
+    </variablelist>
+   </para>
+   <para>
+    The following command-line options control the generation of the
+    backup and the running of the program.
+
+    <variablelist>
+     <varlistentry>
+      <term><option>-c <replaceable class="parameter">fast|spread</replaceable></option></term>
+      <term><option>--checkpoint <replaceable class="parameter">fast|spread</replaceable></option></term>
+      <listitem>
+       <para>
+        Sets checkpoint mode to fast or spread (default).
        </para>
       </listitem>
      </varlistentry>
@@ -113,7 +184,7 @@ $ <userinput>pg_basebackup -c "host=192.168.0.2 user=backup"</userinput>
      </varlistentry>
 
      <varlistentry>
-      <term><option>-p</option></term>
+      <term><option>-P</option></term>
       <term><option>--progress</option></term>
       <listitem>
        <para>
@@ -132,29 +203,6 @@ $ <userinput>pg_basebackup -c "host=192.168.0.2 user=backup"</userinput>
      </varlistentry>
 
      <varlistentry>
-      <term><option>-t <replaceable class="parameter">directory</replaceable></option></term>
-      <term><option>--tardir=<replaceable class="parameter">directory</replaceable></option></term>
-      <listitem>
-       <para>
-        Directory to place tar format files in. When this is specified, the
-        backup will consist of a number of tar files, one for each tablespace
-        in the database, stored in this directory. The tar file for the main
-        data directory will be named <filename>base.tar</>, and all other
-        tablespaces will be named after the tablespace oid.
-       </para>
-       <para>
-        If the value <literal>-</> (dash) is specified as tar directory,
-        the tar contents will be written to standard output, suitable for
-        piping to for example <productname>gzip</>. This is only possible if
-        the cluster has no additional tablespaces.
-       </para>
-       <para>
-        Only one of <literal>-d</> and <literal>-t</> can be specified.
-       </para>
-      </listitem>
-     </varlistentry>
-
-     <varlistentry>
       <term><option>-v</option></term>
       <term><option>--verbose</option></term>
       <listitem>
@@ -166,14 +214,82 @@ $ <userinput>pg_basebackup -c "host=192.168.0.2 user=backup"</userinput>
       </listitem>
      </varlistentry>
 
+    </variablelist>
+   </para>
+
+   <para>
+    The following command-line options control the database connection parameters.
+
+    <variablelist>
      <varlistentry>
-      <term><option>-Z <replaceable class="parameter">level</replaceable></option></term>
-      <term><option>--compress=<replaceable class="parameter">level</replaceable></option></term>
+      <term><option>-h <replaceable class="parameter">host</replaceable></option></term>
+      <term><option>--host=<replaceable class="parameter">host</replaceable></option></term>
       <listitem>
        <para>
-        Enables gzip compression of tar file output. Compression is only
-        available when generating tar files, and is not available when sending
-        output to standard output.
+        Specifies the host name of the machine on which the server is
+        running.  If the value begins with a slash, it is used as the
+        directory for the Unix domain socket. The default is taken
+        from the <envar>PGHOST</envar> environment variable, if set,
+        else a Unix domain socket connection is attempted.
+       </para>
+      </listitem>
+     </varlistentry>
+
+     <varlistentry>
+      <term><option>-p <replaceable class="parameter">port</replaceable></option></term>
+      <term><option>--port=<replaceable class="parameter">port</replaceable></option></term>
+      <listitem>
+       <para>
+        Specifies the TCP port or local Unix domain socket file
+        extension on which the server is listening for connections.
+        Defaults to the <envar>PGPORT</envar> environment variable, if
+        set, or a compiled-in default.
+       </para>
+      </listitem>
+     </varlistentry>
+
+     <varlistentry>
+      <term><option>-U <replaceable>username</replaceable></option></term>
+      <term><option>--username=<replaceable class="parameter">username</replaceable></option></term>
+      <listitem>
+       <para>
+        User name to connect as.
+       </para>
+      </listitem>
+     </varlistentry>
+
+     <varlistentry>
+      <term><option>-w</></term>
+      <term><option>--no-password</></term>
+      <listitem>
+       <para>
+        Never issue a password prompt.  If the server requires
+        password authentication and a password is not available by
+        other means such as a <filename>.pgpass</filename> file, the
+        connection attempt will fail.  This option can be useful in
+        batch jobs and scripts where no user is present to enter a
+        password.
+       </para>
+      </listitem>
+     </varlistentry>
+
+     <varlistentry>
+      <term><option>-W</option></term>
+      <term><option>--password</option></term>
+      <listitem>
+       <para>
+        Force <application>pg_basebackup</application> to prompt for a
+        password before connecting to a database.
+       </para>
+
+       <para>
+        This option is never essential, since
+        <application>pg_bsaebackup</application> will automatically prompt
+        for a password if the server demands password authentication.
+        However, <application>pg_basebackup</application> will waste a
+        connection attempt finding out that the server wants a password.
+        In some cases it is worth typing <option>-W</> to avoid the extra
+        connection attempt.
        </para>
       </listitem>
      </varlistentry>
@@ -235,6 +351,38 @@ $ <userinput>pg_basebackup -c "host=192.168.0.2 user=backup"</userinput>
    The way <productname>PostgreSQL</productname> manages tablespaces, the path
    for all additional tablespaces must be identical whenever a backup is
    restored. The main data directory, however, is relocatable to any location.
+  </para>
+ </refsect1>
+
+ <refsect1>
+  <title>Examples</title>
+
+  <para>
+   To create a base backup of the server at <literal>mydbserver</literal>
+   and store it in the local directory
+   <filename>/usr/local/pgsql/data</filename>:
+   <screen>
+    <prompt>$</prompt> <userinput>pg_basebackup -h mydbserver -D /usr/local/pgsql/data</userinput>
+   </screen>
+  </para>
+
+  <para>
+   To create a backup of the local server with one maximum compressed
+   tar file for each tablespace, and store it in the directory
+   <filename>backup</filename>, showing a progress report while running:
+   <screen>
+    <prompt>$</prompt> <userinput>pg_basebackup -D backup -Ft -Z9 -P</userinput>
+   </screen>
+  </para>
+
+  <para>
+   To create a backup of a single-tablespace local database and compress
+   this with <productname>bzip2</productname>:
+   <screen>
+    <prompt>$</prompt> <userinput>pg_basebackup -D - -Ft | bzip2 > backup.tar.bz2</userinput>
+   </screen>
+   (this command will fail if there are multiple tablespaces in the
+   database)
   </para>
  </refsect1>
 
