@@ -145,14 +145,14 @@ perform_base_backup(basebackup_options *opt, DIR *tblspcdir)
 		 * We've left the last tar file "open", so we can now append the
 		 * required WAL files to it.
 		 */
-		int 	logid;
-		int		logseg;
+		uint32 	logid, logseg;
+		uint32	endlogid, endlogseg;
 
+		XLByteToSeg(startptr, logid, logseg);
+		XLByteToSeg(endptr, endlogid, endlogseg);
 		elog(LOG, "Going to write wal from %i.%i to %i.%i",
-			 startptr.xlogid, startptr.xrecoff / XLogSegSize,
-			 endptr.xlogid, endptr.xrecoff / XLogSegSize);
-		logid = startptr.xlogid;
-		logseg = startptr.xrecoff / XLogSegSize;
+			 logid, logseg,
+			 endlogid, endlogseg);
 
 		while (true)
 		{
