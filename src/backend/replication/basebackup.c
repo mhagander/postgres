@@ -47,7 +47,6 @@ static void _tarWriteHeader(char *filename, char *linktarget,
 				struct stat * statbuf);
 static void send_int8_string(StringInfoData *buf, int64 intval);
 static void SendBackupHeader(List *tablespaces);
-static void SendBackupDirectory(char *location, char *spcoid, bool closetar);
 static void base_backup_cleanup(int code, Datum arg);
 static void perform_base_backup(basebackup_options *opt, DIR *tblspcdir);
 static void parse_basebackup_options(List *options, basebackup_options *opt);
@@ -130,9 +129,30 @@ perform_base_backup(basebackup_options *opt, DIR *tblspcdir)
 		foreach(lc, tablespaces)
 		{
 			tablespaceinfo *ti = (tablespaceinfo *) lfirst(lc);
+			StringInfoData	buf;
 
-			SendBackupDirectory(ti->path, ti->oid,
-								!opt->includewal || ti->path != NULL);
+			/* Send CopyOutResponse message */
+			pq_beginmessage(&buf, 'H');
+			pq_sendbyte(&buf, 0);		/* overall format */
+			pq_sendint(&buf, 0, 2);		/* natts */
+			pq_endmessage(&buf);
+
+			sendDir(ti->path == NULL ? "." : ti->path,
+					ti->path == NULL ? 1 : strlen(ti->path),
+					false);
+
+			/*
+			 * If we're including WAL, and this is the main data directory
+			 * we don't terminate the tar stream here. Instead, we will append
+			 * the xlog files below and terminate it then. This is safe since
+			 * the main data directory is always sent *last*.
+			 */
+			if (opt->includewal && ti->path == NULL)
+			{
+				Assert(lnext(lc) == NULL);
+			}
+			else
+				pq_putemptymessage('c'); /* CopyDone */
 		}
 	}
 	PG_END_ENSURE_ERROR_CLEANUP(base_backup_cleanup, (Datum) 0);
@@ -183,6 +203,7 @@ perform_base_backup(basebackup_options *opt, DIR *tblspcdir)
 				(logid == endptr.xlogid && logseg >= endptr.xrecoff / XLogSegSize))
 				break;
 		}
+
 		/* Send CopyDone message for the last tar file*/
 		pq_putemptymessage('c');
 	}
@@ -375,27 +396,6 @@ SendBackupHeader(List *tablespaces)
 
 	/* Send a CommandComplete message */
 	pq_puttextmessage('C', "SELECT");
-}
-
-static void
-SendBackupDirectory(char *location, char *spcoid, bool closetar)
-{
-	StringInfoData buf;
-
-	/* Send CopyOutResponse message */
-	pq_beginmessage(&buf, 'H');
-	pq_sendbyte(&buf, 0);		/* overall format */
-	pq_sendint(&buf, 0, 2);		/* natts */
-	pq_endmessage(&buf);
-
-	/* tar up the data directory if NULL, otherwise the tablespace */
-	sendDir(location == NULL ? "." : location,
-			location == NULL ? 1 : strlen(location),
-			false);
-
-	/* Send CopyDone message */
-	if (closetar)
-		pq_putemptymessage('c');
 }
 
 
