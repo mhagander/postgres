@@ -648,6 +648,11 @@ WalSndKill(int code, Datum arg)
  *
  * XXX probably this should be improved to suck data directly from the
  * WAL buffers when possible.
+ *
+ * Will open, and keep open, one WAL segment stored in the global file
+ * descriptor sendFile. This means if XLogRead is used once, there will
+ * always be one descriptor left open until the process ends, but never
+ * more than one.
  */
 void
 XLogRead(char *buf, XLogRecPtr recptr, Size nbytes)
