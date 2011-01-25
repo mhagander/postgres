@@ -170,13 +170,13 @@ perform_base_backup(basebackup_options *opt, DIR *tblspcdir)
 
 		XLByteToSeg(startptr, logid, logseg);
 		XLByteToSeg(endptr, endlogid, endlogseg);
-		elog(DEBUG1, "Going to send wal from %i.%i to %i.%i",
+		elog(DEBUG1, "Going to send wal from %u.%u to %u.%u",
 			 logid, logseg,
 			 endlogid, endlogseg);
 
 		while (true)
 		{
-			char	xlogname[64];
+			char	xlogname[MAXFNAMELEN];
 			char	fn[MAXPGPATH];
 			struct stat statbuf;
 
@@ -199,8 +199,8 @@ perform_base_backup(basebackup_options *opt, DIR *tblspcdir)
 			NextLogSeg(logid, logseg);
 
 			/* Have we reached our stop position yet? */
-			if (logid > endptr.xlogid ||
-				(logid == endptr.xlogid && logseg >= endptr.xrecoff / XLogSegSize))
+			if (logid > endlogid ||
+				(logid == endlogid && logseg >= endlogseg))
 				break;
 		}
 

@@ -107,7 +107,7 @@ identify_system:
 			;
 
 /*
- * BASE_BACKUP [LABEL <label>] [PROGRESS] [FAST]
+ * BASE_BACKUP [LABEL '<label>'] [PROGRESS] [FAST] [WAL]
  */
 base_backup:
 			K_BASE_BACKUP base_backup_opt_list
