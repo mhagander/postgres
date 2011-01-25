@@ -2817,6 +2817,7 @@ PLy_spi_prepare(PyObject *self, PyObject *args)
 	char	   *query;
 	void	   *tmpplan;
 	volatile MemoryContext oldcontext;
+	int			nargs;
 
 	if (!PyArg_ParseTuple(args, "s|O", &query, &list))
 	{
@@ -2835,80 +2836,78 @@ PLy_spi_prepare(PyObject *self, PyObject *args)
 	if ((plan = (PLyPlanObject *) PLy_plan_new()) == NULL)
 		return NULL;
 
+	nargs = list ? PySequence_Length(list) : 0;
+
+	plan->nargs = nargs;
+	plan->types = nargs ? PLy_malloc(sizeof(Oid) * nargs) : NULL;
+	plan->values = nargs ? PLy_malloc(sizeof(Datum) * nargs) : NULL;
+	plan->args = nargs ? PLy_malloc(sizeof(PLyTypeInfo) * nargs) : NULL;
+
 	oldcontext = CurrentMemoryContext;
 	PG_TRY();
 	{
-		if (list != NULL)
+		int	i;
+
+		/*
+		 * the other loop might throw an exception, if PLyTypeInfo
+		 * member isn't properly initialized the Py_DECREF(plan) will
+		 * go boom
+		 */
+		for (i = 0; i < nargs; i++)
 		{
-			int			nargs,
-						i;
+			PLy_typeinfo_init(&plan->args[i]);
+			plan->values[i] = PointerGetDatum(NULL);
+		}
 
-			nargs = PySequence_Length(list);
-			if (nargs > 0)
+		for (i = 0; i < nargs; i++)
+		{
+			char	   *sptr;
+			HeapTuple	typeTup;
+			Oid			typeId;
+			int32		typmod;
+			Form_pg_type typeStruct;
+
+			optr = PySequence_GetItem(list, i);
+			if (PyString_Check(optr))
+				sptr = PyString_AsString(optr);
+			else if (PyUnicode_Check(optr))
+				sptr = PLyUnicode_AsString(optr);
+			else
 			{
-				plan->nargs = nargs;
-				plan->types = PLy_malloc(sizeof(Oid) * nargs);
-				plan->values = PLy_malloc(sizeof(Datum) * nargs);
-				plan->args = PLy_malloc(sizeof(PLyTypeInfo) * nargs);
-
-				/*
-				 * the other loop might throw an exception, if PLyTypeInfo
-				 * member isn't properly initialized the Py_DECREF(plan) will
-				 * go boom
-				 */
-				for (i = 0; i < nargs; i++)
-				{
-					PLy_typeinfo_init(&plan->args[i]);
-					plan->values[i] = PointerGetDatum(NULL);
-				}
-
-				for (i = 0; i < nargs; i++)
-				{
-					char	   *sptr;
-					HeapTuple	typeTup;
-					Oid			typeId;
-					int32		typmod;
-					Form_pg_type typeStruct;
-
-					optr = PySequence_GetItem(list, i);
-					if (PyString_Check(optr))
-						sptr = PyString_AsString(optr);
-					else if (PyUnicode_Check(optr))
-						sptr = PLyUnicode_AsString(optr);
-					else
-					{
-						ereport(ERROR,
-								(errmsg("plpy.prepare: type name at ordinal position %d is not a string", i)));
-						sptr = NULL;	/* keep compiler quiet */
-					}
-
-					/********************************************************
-					 * Resolve argument type names and then look them up by
-					 * oid in the system cache, and remember the required
-					 *information for input conversion.
-					 ********************************************************/
-
-					parseTypeString(sptr, &typeId, &typmod);
-
-					typeTup = SearchSysCache1(TYPEOID,
-											  ObjectIdGetDatum(typeId));
-					if (!HeapTupleIsValid(typeTup))
-						elog(ERROR, "cache lookup failed for type %u", typeId);
-
-					Py_DECREF(optr);
-					optr = NULL;	/* this is important */
-
-					plan->types[i] = typeId;
-					typeStruct = (Form_pg_type) GETSTRUCT(typeTup);
-					if (typeStruct->typtype != TYPTYPE_COMPOSITE)
-						PLy_output_datum_func(&plan->args[i], typeTup);
-					else
-						ereport(ERROR,
-								(errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
-								 errmsg("plpy.prepare does not support composite types")));
-					ReleaseSysCache(typeTup);
-				}
+				ereport(ERROR,
+						(errmsg("plpy.prepare: type name at ordinal position %d is not a string", i)));
+				sptr = NULL;	/* keep compiler quiet */
 			}
+
+			/********************************************************
+			 * Resolve argument type names and then look them up by
+			 * oid in the system cache, and remember the required
+			 *information for input conversion.
+			 ********************************************************/
+
+			parseTypeString(sptr, &typeId, &typmod);
+
+			typeTup = SearchSysCache1(TYPEOID,
+									  ObjectIdGetDatum(typeId));
+			if (!HeapTupleIsValid(typeTup))
+				elog(ERROR, "cache lookup failed for type %u", typeId);
+
+			Py_DECREF(optr);
+			/*
+			 * set optr to NULL, so we won't try to unref it again in
+			 * case of an error
+			 */
+			optr = NULL;
+
+			plan->types[i] = typeId;
+			typeStruct = (Form_pg_type) GETSTRUCT(typeTup);
+			if (typeStruct->typtype != TYPTYPE_COMPOSITE)
+				PLy_output_datum_func(&plan->args[i], typeTup);
+			else
+				ereport(ERROR,
+						(errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
+						 errmsg("plpy.prepare does not support composite types")));
+			ReleaseSysCache(typeTup);
 		}
 
 		pg_verifymbstr(query, strlen(query), false);
@@ -2943,6 +2942,7 @@ PLy_spi_prepare(PyObject *self, PyObject *args)
 	}
 	PG_END_TRY();
 
+	Assert(plan->plan != NULL);
 	return (PyObject *) plan;
 }
 
@@ -2978,6 +2978,7 @@ PLy_spi_execute_plan(PyObject *ob, PyObject *list, long limit)
 				rv;
 	PLyPlanObject *plan;
 	volatile MemoryContext oldcontext;
+	PyObject   *ret;
 
 	if (list != NULL)
 	{
@@ -3014,8 +3015,13 @@ PLy_spi_execute_plan(PyObject *ob, PyObject *list, long limit)
 	oldcontext = CurrentMemoryContext;
 	PG_TRY();
 	{
-		char	   *nulls = palloc(nargs * sizeof(char));
+		char	   *nulls;
 		volatile int j;
+
+		if (nargs > 0)
+			nulls = palloc(nargs * sizeof(char));
+		else
+			nulls = NULL;
 
 		for (j = 0; j < nargs; j++)
 		{
@@ -3055,8 +3061,10 @@ PLy_spi_execute_plan(PyObject *ob, PyObject *list, long limit)
 
 		rv = SPI_execute_plan(plan->plan, plan->values, nulls,
 							  PLy_curr_procedure->fn_readonly, limit);
+		ret = PLy_spi_execute_fetch_result(SPI_tuptable, SPI_processed, rv);
 
-		pfree(nulls);
+		if (nargs > 0)
+			pfree(nulls);
 	}
 	PG_CATCH();
 	{
@@ -3099,7 +3107,7 @@ PLy_spi_execute_plan(PyObject *ob, PyObject *list, long limit)
 		}
 	}
 
-	return PLy_spi_execute_fetch_result(SPI_tuptable, SPI_processed, rv);
+	return ret;
 }
 
 static PyObject *
@@ -3107,12 +3115,14 @@ PLy_spi_execute_query(char *query, long limit)
 {
 	int			rv;
 	volatile MemoryContext oldcontext;
+	PyObject   *ret;
 
 	oldcontext = CurrentMemoryContext;
 	PG_TRY();
 	{
 		pg_verifymbstr(query, strlen(query), false);
 		rv = SPI_execute(query, PLy_curr_procedure->fn_readonly, limit);
+		ret = PLy_spi_execute_fetch_result(SPI_tuptable, SPI_processed, rv);
 	}
 	PG_CATCH();
 	{
@@ -3138,7 +3148,7 @@ PLy_spi_execute_query(char *query, long limit)
 		return NULL;
 	}
 
-	return PLy_spi_execute_fetch_result(SPI_tuptable, SPI_processed, rv);
+	return ret;
 }
 
 static PyObject *

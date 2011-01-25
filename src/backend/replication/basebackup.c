@@ -221,7 +221,7 @@ parse_basebackup_options(List *options, basebackup_options *opt)
 	bool		o_fast = false;
 	bool		o_wal = false;
 
-	MemSet(opt, 0, sizeof(opt));
+	MemSet(opt, 0, sizeof(*opt));
 	foreach(lopt, options)
 	{
 		DefElem    *defel = (DefElem *) lfirst(lopt);
