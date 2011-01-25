@@ -202,16 +202,20 @@ verify_dir_is_empty_or_create(char *dirname)
 static void
 progress_report(int tablespacenum, char *fn)
 {
+	int percent = (int) ((totaldone / 1024) * 100 / totalsize);
+	if (percent > 100)
+		percent = 100;
+
 	if (verbose)
 		fprintf(stderr,
 				INT64_FORMAT "/" INT64_FORMAT " kB (%i%%) %i/%i tablespaces (%-30s)\r",
 				totaldone / 1024, totalsize,
-				(int) ((totaldone / 1024) * 100 / totalsize),
+				percent,
 				tablespacenum, tablespacecount, fn);
 	else
 		fprintf(stderr, INT64_FORMAT "/" INT64_FORMAT " kB (%i%%) %i/%i tablespaces\r",
 				totaldone / 1024, totalsize,
-				(int) ((totaldone / 1024) * 100 / totalsize),
+				percent,
 				tablespacenum, tablespacecount);
 }
 
