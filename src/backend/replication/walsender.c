@@ -105,7 +105,6 @@ static int	WalSndLoop(void);
 static void InitWalSnd(void);
 static void WalSndHandshake(void);
 static void WalSndKill(int code, Datum arg);
-static void XLogRead(char *buf, XLogRecPtr recptr, Size nbytes);
 static bool XLogSend(char *msgbuf, bool *caughtup);
 static void CheckClosedConnection(void);
 static void IdentifySystem(void);
@@ -650,7 +649,7 @@ WalSndKill(int code, Datum arg)
  * XXX probably this should be improved to suck data directly from the
  * WAL buffers when possible.
  */
-static void
+void
 XLogRead(char *buf, XLogRecPtr recptr, Size nbytes)
 {
 	XLogRecPtr	startRecPtr = recptr;

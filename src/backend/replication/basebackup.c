@@ -51,6 +51,13 @@ static void base_backup_cleanup(int code, Datum arg);
 static void perform_base_backup(basebackup_options *opt, DIR *tblspcdir);
 static void parse_basebackup_options(List *options, basebackup_options *opt);
 
+/*
+ * Size of each block sent into the tar stream for larger files.
+ *
+ * XLogSegSize *MUST* be evenly dividable by this
+ */
+#define TAR_SEND_SIZE 32768
+
 typedef struct
 {
 	char	   *oid;
@@ -167,33 +174,55 @@ perform_base_backup(basebackup_options *opt, DIR *tblspcdir)
 		 */
 		uint32 	logid, logseg;
 		uint32	endlogid, endlogseg;
+		struct stat statbuf;
+
+		MemSet(&statbuf, 0, sizeof(statbuf));
+		statbuf.st_mode=S_IRUSR | S_IWUSR;
+#ifndef WIN32
+		statbuf.st_uid=getuid();
+		statbuf.st_gid=getgid();
+#endif
+		statbuf.st_size=XLogSegSize;
+		statbuf.st_mtime=time(NULL);
 
 		XLByteToSeg(startptr, logid, logseg);
 		XLByteToSeg(endptr, endlogid, endlogseg);
-		elog(DEBUG1, "Going to send wal from %u.%u to %u.%u",
+		elog(LOG, "Going to send wal from %u.%u to %u.%u",
 			 logid, logseg,
 			 endlogid, endlogseg);
 
 		while (true)
 		{
+			/* Send another xlog segment */
 			char	xlogname[MAXFNAMELEN];
 			char	fn[MAXPGPATH];
-			struct stat statbuf;
+			int		i;
 
 			/* Send the current WAL file */
 			XLogFileName(xlogname, ThisTimeLineID, logid, logseg);
-			sprintf(fn, "./pg_xlog/%s", xlogname);
-			if (lstat(fn, &statbuf) != 0)
-				ereport(ERROR,
-						(errcode(errcode_for_file_access()),
-						 errmsg("could not stat file \"%s\": %m",
-								fn)));
 
-			if (!S_ISREG(statbuf.st_mode))
-				ereport(ERROR,
-						(errmsg("\"%s\" is not a file",
-								fn)));
-			sendFile(fn, 1, &statbuf);
+			sprintf(fn, "./pg_xlog/%s", xlogname);
+			_tarWriteHeader(fn, NULL, &statbuf);
+
+			/* Send the actual WAL file contents, by reading block-by-block */
+			for (i = 0; i < XLogSegSize / TAR_SEND_SIZE; i++)
+			{
+				char		buf[TAR_SEND_SIZE];
+				XLogRecPtr	ptr;
+
+				ptr.xlogid = logid;
+				ptr.xrecoff = logseg * XLogSegSize + TAR_SEND_SIZE * i;
+
+				XLogRead(buf, ptr, TAR_SEND_SIZE);
+				if (pq_putmessage('d', buf, TAR_SEND_SIZE))
+					ereport(ERROR,
+							(errmsg("base backup could not send data, aborting backup")));
+			}
+			/*
+			 * Files are always fixed size, and always end on a 512 byte
+			 * boundary, so padding is never necessary.
+			 */
+
 
 			/* Advance to the next WAL file */
 			NextLogSeg(logid, logseg);
@@ -568,7 +597,7 @@ static void
 sendFile(char *filename, int basepathlen, struct stat * statbuf)
 {
 	FILE	   *fp;
-	char		buf[32768];
+	char		buf[TAR_SEND_SIZE];
 	size_t		cnt;
 	pgoff_t		len = 0;
 	size_t		pad;
