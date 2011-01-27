@@ -179,8 +179,8 @@ perform_base_backup(basebackup_options *opt, DIR *tblspcdir)
 		MemSet(&statbuf, 0, sizeof(statbuf));
 		statbuf.st_mode=S_IRUSR | S_IWUSR;
 #ifndef WIN32
-		statbuf.st_uid=getuid();
-		statbuf.st_gid=getgid();
+		statbuf.st_uid=geteuid();
+		statbuf.st_gid=getegid();
 #endif
 		statbuf.st_size=XLogSegSize;
 		statbuf.st_mtime=time(NULL);
