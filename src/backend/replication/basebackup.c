@@ -186,7 +186,7 @@ perform_base_backup(basebackup_options *opt, DIR *tblspcdir)
 		statbuf.st_mtime=time(NULL);
 
 		XLByteToSeg(startptr, logid, logseg);
-		XLByteToSeg(endptr, endlogid, endlogseg);
+		XLByteToPrevSeg(endptr, endlogid, endlogseg);
 		elog(LOG, "Going to send wal from %u.%u to %u.%u",
 			 logid, logseg,
 			 endlogid, endlogseg);
