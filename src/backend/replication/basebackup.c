@@ -196,12 +196,10 @@ perform_base_backup(basebackup_options *opt, DIR *tblspcdir)
 			char		fn[MAXPGPATH];
 			int			i;
 
-			/* Send the current WAL file */
 			XLogFilePath(fn, ThisTimeLineID, logid, logseg);
-
 			_tarWriteHeader(fn, NULL, &statbuf);
 
-			/* Send the actual WAL file contents, by reading block-by-block */
+			/* Send the actual WAL file contents, block-by-block */
 			for (i = 0; i < XLogSegSize / TAR_SEND_SIZE; i++)
 			{
 				char		buf[TAR_SEND_SIZE];
