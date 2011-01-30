@@ -229,7 +229,7 @@ perform_base_backup(basebackup_options *opt, DIR *tblspcdir)
 
 			/* Have we reached our stop position yet? */
 			if (logid > endlogid ||
-				(logid == endlogid && logseg >= endlogseg))
+				(logid == endlogid && logseg > endlogseg))
 				break;
 		}
 
