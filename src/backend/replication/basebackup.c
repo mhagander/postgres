@@ -189,9 +189,6 @@ perform_base_backup(basebackup_options *opt, DIR *tblspcdir)
 
 		XLByteToSeg(startptr, logid, logseg);
 		XLByteToPrevSeg(endptr, endlogid, endlogseg);
-		elog(LOG, "Going to send wal from %u.%u to %u.%u",
-			 logid, logseg,
-			 endlogid, endlogseg);
 
 		while (true)
 		{
