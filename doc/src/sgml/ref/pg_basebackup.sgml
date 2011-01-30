@@ -189,7 +189,7 @@ PostgreSQL documentation
     <variablelist>
      <varlistentry>
       <term><option>-c <replaceable class="parameter">fast|spread</replaceable></option></term>
-      <term><option>--checkpoint <replaceable class="parameter">fast|spread</replaceable></option></term>
+      <term><option>--checkpoint=<replaceable class="parameter">fast|spread</replaceable></option></term>
       <listitem>
        <para>
         Sets checkpoint mode to fast or spread (default).
