@@ -216,7 +216,10 @@ PostgreSQL documentation
         Enables progress reporting. Turning this on will deliver an approximate
         progress report during the backup. Since the database may change during
         the backup, this is only an approximation and may not end at exactly
-        <literal>100%</literal>.
+        <literal>100%</literal>. In particular, when WAL log is included in the
+        backup, the total amount of data cannot be estimated in advance, and
+        in this case the progress report will only count towards the total
+        amount of data without WAL.
        </para>
        <para>
         When this is enabled, the backup will start by enumerating the size of
