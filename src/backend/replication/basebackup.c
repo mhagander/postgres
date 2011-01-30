@@ -193,14 +193,12 @@ perform_base_backup(basebackup_options *opt, DIR *tblspcdir)
 		while (true)
 		{
 			/* Send another xlog segment */
-			char		xlogname[MAXFNAMELEN];
 			char		fn[MAXPGPATH];
 			int			i;
 
 			/* Send the current WAL file */
-			XLogFileName(xlogname, ThisTimeLineID, logid, logseg);
+			XLogFilePath(fn, ThisTimeLineID, logid, logseg);
 
-			sprintf(fn, "./pg_xlog/%s", xlogname);
 			_tarWriteHeader(fn, NULL, &statbuf);
 
 			/* Send the actual WAL file contents, by reading block-by-block */
