@@ -136,7 +136,7 @@ perform_base_backup(basebackup_options *opt, DIR *tblspcdir)
 		foreach(lc, tablespaces)
 		{
 			tablespaceinfo *ti = (tablespaceinfo *) lfirst(lc);
-			StringInfoData	buf;
+			StringInfoData buf;
 
 			/* Send CopyOutResponse message */
 			pq_beginmessage(&buf, 'H');
@@ -149,8 +149,8 @@ perform_base_backup(basebackup_options *opt, DIR *tblspcdir)
 					false);
 
 			/*
-			 * If we're including WAL, and this is the main data directory
-			 * we don't terminate the tar stream here. Instead, we will append
+			 * If we're including WAL, and this is the main data directory we
+			 * don't terminate the tar stream here. Instead, we will append
 			 * the xlog files below and terminate it then. This is safe since
 			 * the main data directory is always sent *last*.
 			 */
@@ -159,7 +159,7 @@ perform_base_backup(basebackup_options *opt, DIR *tblspcdir)
 				Assert(lnext(lc) == NULL);
 			}
 			else
-				pq_putemptymessage('c'); /* CopyDone */
+				pq_putemptymessage('c');		/* CopyDone */
 		}
 	}
 	PG_END_ENSURE_ERROR_CLEANUP(base_backup_cleanup, (Datum) 0);
@@ -172,18 +172,20 @@ perform_base_backup(basebackup_options *opt, DIR *tblspcdir)
 		 * We've left the last tar file "open", so we can now append the
 		 * required WAL files to it.
 		 */
-		uint32 	logid, logseg;
-		uint32	endlogid, endlogseg;
+		uint32		logid,
+					logseg;
+		uint32		endlogid,
+					endlogseg;
 		struct stat statbuf;
 
 		MemSet(&statbuf, 0, sizeof(statbuf));
-		statbuf.st_mode=S_IRUSR | S_IWUSR;
+		statbuf.st_mode = S_IRUSR | S_IWUSR;
 #ifndef WIN32
-		statbuf.st_uid=geteuid();
-		statbuf.st_gid=getegid();
+		statbuf.st_uid = geteuid();
+		statbuf.st_gid = getegid();
 #endif
-		statbuf.st_size=XLogSegSize;
-		statbuf.st_mtime=time(NULL);
+		statbuf.st_size = XLogSegSize;
+		statbuf.st_mtime = time(NULL);
 
 		XLByteToSeg(startptr, logid, logseg);
 		XLByteToPrevSeg(endptr, endlogid, endlogseg);
@@ -194,9 +196,9 @@ perform_base_backup(basebackup_options *opt, DIR *tblspcdir)
 		while (true)
 		{
 			/* Send another xlog segment */
-			char	xlogname[MAXFNAMELEN];
-			char	fn[MAXPGPATH];
-			int		i;
+			char		xlogname[MAXFNAMELEN];
+			char		fn[MAXPGPATH];
+			int			i;
 
 			/* Send the current WAL file */
 			XLogFileName(xlogname, ThisTimeLineID, logid, logseg);
@@ -218,6 +220,7 @@ perform_base_backup(basebackup_options *opt, DIR *tblspcdir)
 					ereport(ERROR,
 							(errmsg("base backup could not send data, aborting backup")));
 			}
+
 			/*
 			 * Files are always fixed size, and always end on a 512 byte
 			 * boundary, so padding is never necessary.
@@ -233,7 +236,7 @@ perform_base_backup(basebackup_options *opt, DIR *tblspcdir)
 				break;
 		}
 
-		/* Send CopyDone message for the last tar file*/
+		/* Send CopyDone message for the last tar file */
 		pq_putemptymessage('c');
 	}
 }
