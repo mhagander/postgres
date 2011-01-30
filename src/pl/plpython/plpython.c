@@ -294,7 +294,7 @@ static char *PLy_procedure_name(PLyProcedure *);
 static void
 PLy_elog(int, const char *,...)
 __attribute__((format(printf, 2, 3)));
-static void PLy_get_spi_error_data(PyObject *exc, char **hint, char **query, int *position);
+static void PLy_get_spi_error_data(PyObject *exc, char **detail, char **hint, char **query, int *position);
 static char *PLy_traceback(int *);
 
 static void *PLy_malloc(size_t);
@@ -2820,15 +2820,11 @@ PLy_spi_prepare(PyObject *self, PyObject *args)
 	int			nargs;
 
 	if (!PyArg_ParseTuple(args, "s|O", &query, &list))
-	{
-		PLy_exception_set(PLy_exc_spi_error,
-						  "invalid arguments for plpy.prepare");
 		return NULL;
-	}
 
 	if (list && (!PySequence_Check(list)))
 	{
-		PLy_exception_set(PLy_exc_spi_error,
+		PLy_exception_set(PyExc_TypeError,
 					   "second argument of plpy.prepare must be a sequence");
 		return NULL;
 	}
@@ -2984,7 +2980,7 @@ PLy_spi_execute_plan(PyObject *ob, PyObject *list, long limit)
 	{
 		if (!PySequence_Check(list) || PyString_Check(list) || PyUnicode_Check(list))
 		{
-			PLy_exception_set(PLy_exc_spi_error, "plpy.execute takes a sequence as its second argument");
+			PLy_exception_set(PyExc_TypeError, "plpy.execute takes a sequence as its second argument");
 			return NULL;
 		}
 		nargs = PySequence_Length(list);
@@ -3002,7 +2998,7 @@ PLy_spi_execute_plan(PyObject *ob, PyObject *list, long limit)
 		if (!so)
 			PLy_elog(ERROR, "could not execute plan");
 		sv = PyString_AsString(so);
-		PLy_exception_set_plural(PLy_exc_spi_error,
+		PLy_exception_set_plural(PyExc_TypeError,
 							  "Expected sequence of %d argument, got %d: %s",
 							 "Expected sequence of %d arguments, got %d: %s",
 								 plan->nargs,
@@ -3089,7 +3085,7 @@ PLy_spi_execute_plan(PyObject *ob, PyObject *list, long limit)
 		}
 
 		if (!PyErr_Occurred())
-			PLy_exception_set(PLy_exc_error,
+			PLy_exception_set(PLy_exc_spi_error,
 							  "unrecognized error in PLy_spi_execute_plan");
 		PLy_elog(WARNING, NULL);
 		PLy_spi_exception_set(edata);
@@ -3465,7 +3461,7 @@ PLy_output(volatile int level, PyObject *self, PyObject *args)
 		Py_XDECREF(so);
 
 		/* Make Python raise the exception */
-		PLy_exception_set(PLy_exc_error, edata->message);
+		PLy_exception_set(PLy_exc_error, "%s", edata->message);
 		return NULL;
 	}
 	PG_END_TRY();
@@ -3551,7 +3547,7 @@ PLy_spi_exception_set(ErrorData *edata)
 	if (!spierror)
 		goto failure;
 
-	spidata = Py_BuildValue("(zzi)", edata->hint,
+	spidata = Py_BuildValue("(zzzi)", edata->detail, edata->hint,
 							edata->internalquery, edata->internalpos);
 	if (!spidata)
 		goto failure;
@@ -3586,13 +3582,14 @@ PLy_elog(int elevel, const char *fmt,...)
 	int			xlevel;
 	StringInfoData emsg;
 	PyObject	*exc, *val, *tb;
+	char		*detail = NULL;
 	char		*hint = NULL;
 	char		*query = NULL;
 	int			position = 0;
 
 	PyErr_Fetch(&exc, &val, &tb);
 	if (exc != NULL && PyErr_GivenExceptionMatches(val, PLy_exc_spi_error))
-		PLy_get_spi_error_data(val, &hint, &query, &position);
+		PLy_get_spi_error_data(val, &detail, &hint, &query, &position);
 	PyErr_Restore(exc, val, tb);
 
 	xmsg = PLy_traceback(&xlevel);
@@ -3618,15 +3615,16 @@ PLy_elog(int elevel, const char *fmt,...)
 	{
 		if (fmt)
 			ereport(elevel,
-					(errmsg("PL/Python: %s", emsg.data),
+					(errmsg("%s", emsg.data),
 					 (xmsg) ? errdetail("%s", xmsg) : 0,
-					 (hint) ? errhint(hint) : 0,
+					 (hint) ? errhint("%s", hint) : 0,
 					 (query) ? internalerrquery(query) : 0,
 					 (position) ? internalerrposition(position) : 0));
 		else
 			ereport(elevel,
-					(errmsg("PL/Python: %s", xmsg),
-					 (hint) ? errhint(hint) : 0,
+					(errmsg("%s", xmsg),
+					 (detail) ? errdetail("%s", detail) : 0,
+					 (hint) ? errhint("%s", hint) : 0,
 					 (query) ? internalerrquery(query) : 0,
 					 (position) ? internalerrposition(position) : 0));
 	}
@@ -3650,7 +3648,7 @@ PLy_elog(int elevel, const char *fmt,...)
  * Extract the error data from a SPIError
  */
 static void
-PLy_get_spi_error_data(PyObject *exc, char **hint, char **query, int *position)
+PLy_get_spi_error_data(PyObject *exc, char **detail, char **hint, char **query, int *position)
 {
 	PyObject	*spidata = NULL;
 
@@ -3658,7 +3656,7 @@ PLy_get_spi_error_data(PyObject *exc, char **hint, char **query, int *position)
 	if (!spidata)
 		goto cleanup;
 
-	if (!PyArg_ParseTuple(spidata, "zzi", hint, query, position))
+	if (!PyArg_ParseTuple(spidata, "zzzi", detail, hint, query, position))
 		goto cleanup;
 
 cleanup:
