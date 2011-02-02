@@ -232,7 +232,7 @@ segment_callback(XLogRecPtr segendpos)
  * stream the logfile in parallel with the backups.
  */
 static void
-StartLogStreamer(char *startpos, uint32 timeline)
+StartLogStreamer(char *startpos, int timeline)
 {
 	PGconn *bgconn;
 	XLogRecPtr startptr;
@@ -901,7 +901,6 @@ BaseBackup()
 	int			i;
 	char		xlogstart[64];
 	char		xlogend[64];
-	uint32		timeline;
 
 	/*
 	 * Connect in replication mode to the server
@@ -939,9 +938,8 @@ BaseBackup()
 		disconnect_and_exit(1);
 	}
 	strcpy(xlogstart, PQgetvalue(res, 0, 0));
-	timeline = atoi(PQgetvalue(res, 0, 1));
 	if (verbose && includewal)
-		fprintf(stderr, "xlog start point: %s, timeline %u\n", xlogstart, timeline);
+		fprintf(stderr, "xlog start point: %s\n", xlogstart);
 	PQclear(res);
 	MemSet(xlogend, 0, sizeof(xlogend));
 
@@ -951,7 +949,7 @@ BaseBackup()
 		if (verbose)
 			fprintf(stderr, _("%s: starting background WAL receiver\n"),
 					progname);
-		StartLogStreamer(xlogstart, timeline);
+		StartLogStreamer(xlogstart, 1); /* XXX: timelineid */
 	}
 
 	/*
