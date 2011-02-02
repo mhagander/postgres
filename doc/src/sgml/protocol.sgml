@@ -1315,7 +1315,7 @@ The commands accepted in walsender mode are:
     <listitem>
      <para>
       Requests the server to identify itself. Server replies with a result
-      set of a single row, containing two fields:
+      set of a single row, containing three fields:
      </para>
 
      <para>
@@ -1344,6 +1344,19 @@ The commands accepted in walsender mode are:
       </para>
       </listitem>
       </varlistentry>
+
+      <varlistentry>
+      <term>
+       xlogpos
+      </term>
+      <listitem>
+      <para>
+       Current xlog write location. Useful to get a known location in the
+       transaction log where streaming can start.
+      </para>
+      </listitem>
+      </varlistentry>
+
       </variablelist>
      </para>
     </listitem>
