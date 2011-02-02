@@ -38,7 +38,7 @@
  * enough room in this buffer...
  */
 static int
-open_walfile(XLogRecPtr startpoint, int timeline, char *basedir, char *namebuf)
+open_walfile(XLogRecPtr startpoint, uint32 timeline, char *basedir, char *namebuf)
 {
 	int f;
 	char fn[MAXPGPATH];
@@ -60,7 +60,7 @@ open_walfile(XLogRecPtr startpoint, int timeline, char *basedir, char *namebuf)
  * Note: The log position *must* be at a log segment change, or we will
  * end up streaming an incomplete file.
  */
-bool ReceiveXlogStream(PGconn *conn, XLogRecPtr startpos, int timeline, char *basedir, segment_finish_callback segment_finish)
+bool ReceiveXlogStream(PGconn *conn, XLogRecPtr startpos, uint32 timeline, char *basedir, segment_finish_callback segment_finish)
 {
 	char query[128];
 	char current_walfile_name[MAXPGPATH];

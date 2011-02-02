@@ -6,6 +6,6 @@ typedef bool (*segment_finish_callback)(XLogRecPtr segendpos);
 
 bool ReceiveXlogStream(PGconn *conn,
 					   XLogRecPtr startpos,
-					   int timeline,
+					   uint32 timeline,
 					   char *basedir,
 					   segment_finish_callback segment_finish);

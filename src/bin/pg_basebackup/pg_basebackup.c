@@ -232,7 +232,7 @@ segment_callback(XLogRecPtr segendpos)
  * stream the logfile in parallel with the backups.
  */
 static void
-StartLogStreamer(char *startpos, int timeline)
+StartLogStreamer(char *startpos, uint32 timeline)
 {
 	PGconn *bgconn;
 	XLogRecPtr startptr;
@@ -896,6 +896,7 @@ static void
 BaseBackup()
 {
 	PGresult   *res;
+	uint32		timeline;
 	char		current_path[MAXPGPATH];
 	char		escaped_label[MAXPGPATH];
 	int			i;
@@ -907,6 +908,28 @@ BaseBackup()
 	 */
 	conn = GetConnection();
 
+	/*
+	 * Run IDENFITY_SYSTEM so we can get the timeline
+	 */
+	res = PQexec(conn, "IDENTIFY_SYSTEM");
+	if (PQresultStatus(res) != PGRES_TUPLES_OK)
+	{
+		fprintf(stderr, _("%s: could not identify system: %s\n"),
+				progname, PQerrorMessage(conn));
+		disconnect_and_exit(1);
+	}
+	if (PQntuples(res) != 1)
+	{
+		fprintf(stderr, _("%s: could not identify system, got %i rows\n"),
+				progname, PQntuples(res));
+		disconnect_and_exit(1);
+	}
+	timeline = atoi(PQgetvalue(res, 0, 1));
+	PQclear(res);
+
+	/*
+	 * Start the actual backup
+	 */
 	PQescapeStringConn(conn, escaped_label, label, sizeof(escaped_label), &i);
 	snprintf(current_path, sizeof(current_path), "BASE_BACKUP LABEL '%s' %s %s %s",
 			 escaped_label,
@@ -949,7 +972,7 @@ BaseBackup()
 		if (verbose)
 			fprintf(stderr, _("%s: starting background WAL receiver\n"),
 					progname);
-		StartLogStreamer(xlogstart, 1); /* XXX: timelineid */
+		StartLogStreamer(xlogstart, timeline);
 	}
 
 	/*
@@ -1051,7 +1074,6 @@ BaseBackup()
 
 		if (verbose)
 			fprintf(stderr, _("%s: waiting for background process to finish streaming...\n"), progname);
-		printf("Writing to %i\n", bgpipe[1]);
 		if (pipewrite(bgpipe[1], xlogend, strlen(xlogend)) != strlen(xlogend))
 		{
 			fprintf(stderr, _("%s: could not send command to background pipe: %s\n"),
