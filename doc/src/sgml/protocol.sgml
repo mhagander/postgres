@@ -1575,7 +1575,7 @@ The commands accepted in walsender mode are:
       </variablelist>
      </para>
      <para>
-      After the two regular result set, one or more CopyResponse results
+      After the second regular result set, one or more CopyResponse results
       will be sent, one for PGDATA and one for each additional tablespace other
       than <literal>pg_default</> and <literal>pg_global</>. The data in
       the CopyResponse results will be a tar format (using ustar00
