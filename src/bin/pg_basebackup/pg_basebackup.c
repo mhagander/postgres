@@ -11,18 +11,31 @@
  *-------------------------------------------------------------------------
  */
 
-#include "postgres_fe.h"
+/*
+ * We have to use postgres.h not postgres_fe.h here, because there's so much
+ * backend-only stuff in the XLOG include files we need.  But we need a
+ * frontend-ish environment otherwise.  Hence this ugly hack.
+ */
+#define FRONTEND 1
+#include "postgres.h"
+
 #include "libpq-fe.h"
+
+#include "access/xlog_internal.h"
 
 #include <unistd.h>
 #include <dirent.h>
 #include <sys/stat.h>
+#include <sys/types.h>
+#include <sys/wait.h>
 
 #ifdef HAVE_LIBZ
 #include <zlib.h>
 #endif
 
 #include "getopt_long.h"
+
+#include "receivelog.h"
 
 
 /* Global options */
@@ -45,6 +58,14 @@ static uint64 totalsize;
 static uint64 totaldone;
 static int	tablespacecount;
 
+/* Pipe to communicate with background wal receiver process */
+static int bgpipe[2] = {-1, -1};
+/* Handle to child process */
+static pid_t bgchild = -1;
+/* End position for xlog streaming, empty string if unknown yet */
+static XLogRecPtr xlogendptr;
+static bool has_xlogendptr = false;
+
 /* Connection kept global so we can disconnect easily */
 static PGconn *conn = NULL;
 
@@ -65,6 +86,8 @@ static PGconn *GetConnection(void);
 static void ReceiveTarFile(PGconn *conn, PGresult *res, int rownum);
 static void ReceiveAndUnpackTarFile(PGconn *conn, PGresult *res, int rownum);
 static void BaseBackup();
+
+static bool segment_callback(XLogRecPtr segendpos);
 
 #ifdef HAVE_LIBZ
 static const char *
@@ -146,6 +169,132 @@ usage(void)
 
 
 /*
+ * Called in the background process whenever a complete segment of WAL
+ * has been received. Check to see if there is any data on our pipe
+ * (which would mean we have a stop position), and if it is, check if
+ * it is time to stop.
+ */
+static bool
+segment_callback(XLogRecPtr segendpos)
+{
+	fd_set fds;
+	struct timeval tv;
+	int r;
+
+	if (has_xlogendptr)
+	{
+		/* Already know when to stop, compare to the position we got */
+		if (segendpos.xlogid > xlogendptr.xlogid ||
+			(segendpos.xlogid == xlogendptr.xlogid &&
+			 segendpos.xrecoff >= xlogendptr.xrecoff))
+			return true;
+	}
+
+	/* Nothing yet, see if there is data on our pipe */
+	FD_ZERO(&fds);
+	FD_SET(bgpipe[0], &fds);
+
+	MemSet(&tv, 0, sizeof(tv));
+
+	r = select(bgpipe[0] + 1, &fds, NULL, NULL, &tv);
+	if (r == 1)
+	{
+		char xlogend[64];
+
+		MemSet(xlogend, 0, sizeof(xlogend));
+		r = piperead(bgpipe[0], xlogend, sizeof(xlogend));
+		if (r < 0)
+		{
+			fprintf(stderr, _("%s: could not read from ready pipe: %s\n"),
+					progname, strerror(errno));
+			exit(1);
+		}
+
+		if (sscanf(xlogend, "%X/%X", &xlogendptr.xlogid, &xlogendptr.xrecoff) != 2)
+		{
+			fprintf(stderr, _("%s: could not parse xlog end position \"%s\"\n"),
+					progname, xlogend);
+			exit(1);
+		}
+		has_xlogendptr = true;
+
+		/* since we have a value now, call ourselves to make the comparison */
+		return segment_callback(segendpos);
+	}
+
+	/* Else nothing happened, so don't exit */
+	return false;
+}
+
+/*
+ * Initiate background process for receiving xlog during the backup.
+ * The background stream will use it's own database connection so we can
+ * stream the logfile in parallel with the backups.
+ */
+static void
+StartLogStreamer(char *startpos, int timeline)
+{
+	PGconn *bgconn;
+	XLogRecPtr startptr;
+
+	/* Convert the starting position */
+	if (sscanf(startpos, "%X/%X", &startptr.xlogid, &startptr.xrecoff) != 2)
+	{
+		fprintf(stderr, _("%s: invalid format of xlog location: %s\n"),
+				progname, startpos);
+		disconnect_and_exit(1);
+	}
+	/* Round off to even segment position */
+	startptr.xrecoff -= startptr.xrecoff % XLogSegSize;
+
+	/* Create our background pipe */
+	if (pgpipe(bgpipe) < 0)
+	{
+		fprintf(stderr, _("%s: could not create pipe for background process: %s\n"),
+				progname, strerror(errno));
+		disconnect_and_exit(1);
+	}
+
+	/* Get a second connection */
+	/* XXX: how do we deal with a password based one if we have already
+	   prompted? store the pwd? */
+	bgconn = GetConnection();
+
+	/* XXX: create the directory to store things in? */
+
+	/* Fork off the child process and tell it to go about it's business */
+	/* XXX: win32 */
+	bgchild = fork();
+	if (bgchild == 0)
+	{
+		/* in child process */
+
+		/* XXX: basedir */
+		if (!ReceiveXlogStream(bgconn, startptr, timeline, "/tmp/", segment_callback))
+			/*
+			 * Any errors will already have been reported in the function
+			 * process, but we need to tell the parent that we didn't
+			 * shutdown in a nice way. Do this by exiting with an error
+			 * code and expect it to be picked up.
+			 */
+			exit(1);
+
+		PQfinish(bgconn);
+		exit(0);
+	}
+	else if (bgchild < 0)
+	{
+		fprintf(stderr, _("%s: could not create background process: %s\n"),
+						  progname, strerror(errno));
+		disconnect_and_exit(1);
+	}
+
+	/*
+	 * Else we are in the parent process and all is well.
+	 */
+}
+
+/*
  * Verify that the given directory exists and is empty. If it does not
  * exist, it is created. If it exists but is not empty, an error will
  * be give and the process ended.
@@ -206,9 +355,14 @@ progress_report(int tablespacenum, char *fn)
 	if (percent > 100)
 		percent = 100;
 
-	if (verbose)
+	if (!fn)
 		fprintf(stderr,
-				INT64_FORMAT "/" INT64_FORMAT " kB (%i%%) %i/%i tablespaces (%-30s)\r",
+				INT64_FORMAT "/" INT64_FORMAT " kb g(100%%) %i/%i tablespaces %35s\r",
+				totaldone / 1024, totalsize,
+				tablespacenum, tablespacecount, "");
+	else if (verbose)
+		fprintf(stderr,
+				INT64_FORMAT "/" INT64_FORMAT " kB (%i%%) %i/%i tablespaces (%-30.30s)\r",
 				totaldone / 1024, totalsize,
 				percent,
 				tablespacenum, tablespacecount, fn);
@@ -745,6 +899,8 @@ BaseBackup()
 	char		current_path[MAXPGPATH];
 	char		escaped_label[MAXPGPATH];
 	int			i;
+	char		xlogstart[64];
+	char		xlogend[64];
 
 	/*
 	 * Connect in replication mode to the server
@@ -766,12 +922,43 @@ BaseBackup()
 	}
 
 	/*
-	 * Get the header
+	 * Get the starting xlog position
 	 */
 	res = PQgetResult(conn);
 	if (PQresultStatus(res) != PGRES_TUPLES_OK)
 	{
 		fprintf(stderr, _("%s: could not initiate base backup: %s\n"),
+				progname, PQerrorMessage(conn));
+		disconnect_and_exit(1);
+	}
+	if (PQntuples(res) != 1)
+	{
+		fprintf(stderr, _("%s: no start point returned from server.\n"),
+				progname);
+		disconnect_and_exit(1);
+	}
+	strcpy(xlogstart, PQgetvalue(res, 0, 0));
+	if (verbose && includewal)
+		fprintf(stderr, "xlog start point: %s\n", xlogstart);
+	PQclear(res);
+	MemSet(xlogend, 0, sizeof(xlogend));
+
+	if (includewal)
+	{
+		/* XXX: use another parameter to control when logstreamer is used */
+		if (verbose)
+			fprintf(stderr, _("%s: starting background WAL receiver\n"),
+					progname);
+		StartLogStreamer(xlogstart, 1); /* XXX: timelineid */
+	}
+
+	/*
+	 * Get the header
+	 */
+	res = PQgetResult(conn);
+	if (PQresultStatus(res) != PGRES_TUPLES_OK)
+	{
+		fprintf(stderr, _("%s: could not get backup header: %s\n"),
 				progname, PQerrorMessage(conn));
 		disconnect_and_exit(1);
 	}
@@ -823,9 +1010,30 @@ BaseBackup()
 
 	if (showprogress)
 	{
-		progress_report(PQntuples(res), "");
+		progress_report(PQntuples(res), NULL);
 		fprintf(stderr, "\n");	/* Need to move to next line */
 	}
+	PQclear(res);
+
+	/*
+	 * Get the stop position
+	 */
+	res = PQgetResult(conn);
+	if (PQresultStatus(res) != PGRES_TUPLES_OK)
+	{
+		fprintf(stderr, _("%s: could not get end xlog position from server.\n"),
+						  progname);
+		disconnect_and_exit(1);
+	}
+	if (PQntuples(res) != 1)
+	{
+		fprintf(stderr, _("%s: no end point returned from server.\n"),
+				progname);
+		disconnect_and_exit(1);
+	}
+	strcpy(xlogend, PQgetvalue(res, 0, 0));
+	if (verbose && includewal)
+		fprintf(stderr, "xlog end point: %s\n", xlogend);
 	PQclear(res);
 
 	res = PQgetResult(conn);
@@ -834,6 +1042,50 @@ BaseBackup()
 		fprintf(stderr, _("%s: final receive failed: %s\n"),
 				progname, PQerrorMessage(conn));
 		disconnect_and_exit(1);
+	}
+
+	if (bgchild != -1)
+	{
+		int status;
+		int r;
+
+		if (verbose)
+			fprintf(stderr, _("%s: waiting for background process to finish streaming...\n"), progname);
+		printf("Writing to %i\n", bgpipe[1]);
+		if (pipewrite(bgpipe[1], xlogend, strlen(xlogend)) != strlen(xlogend))
+		{
+			fprintf(stderr, _("%s: could not send command to background pipe: %s\n"),
+					progname, strerror(errno));
+			disconnect_and_exit(1);
+		}
+
+		/* Just wait for the background process to exit */
+		r = waitpid(bgchild, &status, 0);
+		if (r == -1)
+		{
+			fprintf(stderr, _("%s: could not wait for child process: %s\n"),
+					progname, strerror(errno));
+			disconnect_and_exit(1);
+		}
+		if (r != bgchild)
+		{
+			fprintf(stderr, "%s: child %i died, expected %i\n",
+					progname, r, bgchild);
+			disconnect_and_exit(1);
+		}
+		if (!WIFEXITED(status))
+		{
+			fprintf(stderr, "%s: child process did not exit normally\n",
+					progname);
+			disconnect_and_exit(1);
+		}
+		if (WEXITSTATUS(status) != 0)
+		{
+			fprintf(stderr, "%s: child process exited with error %i\n",
+					progname, WEXITSTATUS(status));
+			disconnect_and_exit(1);
+		}
+		/* Exited normally, we're happy! */
 	}
 
 	/*
