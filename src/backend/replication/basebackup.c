@@ -52,7 +52,7 @@ static void SendBackupHeader(List *tablespaces);
 static void base_backup_cleanup(int code, Datum arg);
 static void perform_base_backup(basebackup_options *opt, DIR *tblspcdir);
 static void parse_basebackup_options(List *options, basebackup_options *opt);
-static void SendXlogRecPtrResult(XLogRecPtr ptr);
+static void SendXlogPositionResult(XLogRecPtr ptr, TimeLineID timeline);
 
 /*
  * Size of each block sent into the tar stream for larger files.
@@ -93,7 +93,7 @@ perform_base_backup(basebackup_options *opt, DIR *tblspcdir)
 	char	   *labelfile;
 
 	startptr = do_pg_start_backup(opt->label, opt->fastcheckpoint, &labelfile);
-	SendXlogRecPtrResult(startptr);
+	SendXlogPositionResult(startptr, ThisTimeLineID);
 
 	PG_ENSURE_ERROR_CLEANUP(base_backup_cleanup, (Datum) 0);
 	{
@@ -241,7 +241,7 @@ perform_base_backup(basebackup_options *opt, DIR *tblspcdir)
 		/* Send CopyDone message for the last tar file */
 		pq_putemptymessage('c');
 	}
-	SendXlogRecPtrResult(endptr);
+	SendXlogPositionResult(endptr, ThisTimeLineID);
 }
 
 /*
@@ -435,11 +435,12 @@ SendBackupHeader(List *tablespaces)
 }
 
 /*
- * Send a single resultset containing just a single
- * XlogRecPtr record (in text format)
+ * Send a resultset containing a single row with a xlog
+ * position, one field with a XLogRecPtr and one with the
+ * timeline.
  */
 static void
-SendXlogRecPtrResult(XLogRecPtr ptr)
+SendXlogPositionResult(XLogRecPtr ptr, TimeLineID timeline)
 {
 	StringInfoData buf;
 	char		   str[MAXFNAMELEN];
@@ -459,10 +460,23 @@ SendXlogRecPtrResult(XLogRecPtr ptr)
 	pq_sendint(&buf, 0, 2);
 	pq_endmessage(&buf);
 
+	pq_sendstring(&buf, "timeline");
+	pq_sendint(&buf, 0, 4);
+	pq_sendint(&buf, 0, 2);
+	pq_sendint(&buf, INT4OID, 4);
+	pq_sendint(&buf, 4, 2);
+	pq_sendint(&buf, 0, 4);
+	pq_sendint(&buf, 0, 2);
+	pq_endmessage(&buf);
+
 	/* Data row */
 	pq_beginmessage(&buf, 'D');
 	pq_sendint(&buf, 1, 2); /* number of columns */
 	pq_sendint(&buf, strlen(str), 4); /* length */
+	pq_sendbytes(&buf, str, strlen(str));
+
+	snprintf(str, sizeof(str), "%u", timeline);
+	pq_sendint(&buf, strlen(str), 4); /* length of timelineid */
 	pq_sendbytes(&buf, str, strlen(str));
 	pq_endmessage(&buf);
 
