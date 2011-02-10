@@ -241,6 +241,7 @@ StartLogStreamer(char *startpos, uint32 timeline)
 {
 	PGconn *bgconn;
 	XLogRecPtr startptr;
+	char	xlogdir[MAXPGPATH];
 
 	/* Convert the starting position */
 	if (sscanf(startpos, "%X/%X", &startptr.xlogid, &startptr.xrecoff) != 2)
@@ -263,7 +264,13 @@ StartLogStreamer(char *startpos, uint32 timeline)
 	/* Get a second connection */
 	bgconn = GetConnection();
 
-	/* XXX: create the directory to store things in? */
+	/*
+	 * Always in plain format, so we can write to basedir/pg_xlog.
+	 * But the directory entry in the tar file may arrive later,
+	 * so make sure it's created before we start.
+	 */
+	snprintf(xlogdir, sizeof(xlogdir), "%s/pg_xlog", basedir);
+	verify_dir_is_empty_or_create(xlogdir);
 
 	/* Fork off the child process and tell it to go about it's business */
 	/* XXX: win32 */
@@ -272,8 +279,7 @@ StartLogStreamer(char *startpos, uint32 timeline)
 	{
 		/* in child process */
 
-		/* XXX: basedir */
-		if (!ReceiveXlogStream(bgconn, startptr, timeline, "/tmp/", segment_callback))
+		if (!ReceiveXlogStream(bgconn, startptr, timeline, xlogdir, segment_callback))
 			/*
 			 * Any errors will already have been reported in the function
 			 * process, but we need to tell the parent that we didn't
@@ -600,11 +606,6 @@ ReceiveAndUnpackTarFile(PGconn *conn, PGresult *res, int rownum)
 		strcpy(current_path, PQgetvalue(res, rownum, 1));
 
 	/*
-	 * Make sure we're unpacking into an empty directory
-	 */
-	verify_dir_is_empty_or_create(current_path);
-
-	/*
 	 * Get the COPY data
 	 */
 	res = PQgetResult(conn);
@@ -697,10 +698,18 @@ ReceiveAndUnpackTarFile(PGconn *conn, PGresult *res, int rownum)
 					fn[strlen(fn) - 1] = '\0';	/* Remove trailing slash */
 					if (mkdir(fn, S_IRWXU) != 0)
 					{
-						fprintf(stderr,
-							_("%s: could not create directory \"%s\": %s\n"),
-								progname, fn, strerror(errno));
-						disconnect_and_exit(1);
+						/*
+						 * When streaming WAL, pg_xlog will have been created
+						 * by the wal receiver process, so just ignore failure
+						 * on that.
+						 */
+						if (!streamwal || strcmp(fn + strlen(fn) - 8, "/pg_xlog") != 0)
+						{
+							fprintf(stderr,
+									_("%s: could not create directory \"%s\": %s\n"),
+									progname, fn, strerror(errno));
+							disconnect_and_exit(1);
+						}
 					}
 #ifndef WIN32
 					if (chmod(fn, (mode_t) filemode))
@@ -985,14 +994,6 @@ BaseBackup()
 	PQclear(res);
 	MemSet(xlogend, 0, sizeof(xlogend));
 
-	if (streamwal)
-	{
-		if (verbose)
-			fprintf(stderr, _("%s: starting background WAL receiver\n"),
-					progname);
-		StartLogStreamer(xlogstart, timeline);
-	}
-
 	/*
 	 * Get the header
 	 */
@@ -1036,6 +1037,18 @@ BaseBackup()
 		fprintf(stderr, _("%s: can only write single tablespace to stdout, database has %i.\n"),
 				progname, PQntuples(res));
 		disconnect_and_exit(1);
+	}
+
+	/*
+	 * If we're streaming WAL, start the streaming session before we start
+	 * receiving the actual data chunks.
+	 */
+	if (streamwal)
+	{
+		if (verbose)
+			fprintf(stderr, _("%s: starting background WAL receiver\n"),
+					progname);
+		StartLogStreamer(xlogstart, timeline);
 	}
 
 	/*
@@ -1309,6 +1322,16 @@ main(int argc, char **argv)
 	{
 		fprintf(stderr,
 				_("%s: only tar mode backups can be compressed\n"),
+				progname);
+		fprintf(stderr, _("Try \"%s --help\" for more information.\n"),
+				progname);
+		exit(1);
+	}
+
+	if (format != 'p' && streamwal)
+	{
+		fprintf(stderr,
+				_("%s: wal streaming can only be used in plain mode\n"),
 				progname);
 		fprintf(stderr, _("Try \"%s --help\" for more information.\n"),
 				progname);
