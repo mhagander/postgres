@@ -68,6 +68,7 @@ static bool has_xlogendptr = false;
 
 /* Connection kept global so we can disconnect easily */
 static PGconn *conn = NULL;
+static char *dbpassword = NULL;
 
 #define disconnect_and_exit(code)				\
 	{											\
@@ -259,8 +260,6 @@ StartLogStreamer(char *startpos, uint32 timeline)
 	}
 
 	/* Get a second connection */
-	/* XXX: how do we deal with a password based one if we have already
-	   prompted? store the pwd? */
 	bgconn = GetConnection();
 
 	/* XXX: create the directory to store things in? */
@@ -860,17 +859,28 @@ GetConnection(void)
 
 	while (true)
 	{
-		if (dbgetpassword == 1)
+		if (password)
+			free(password);
+
+		if (dbpassword)
 		{
-			/* Prompt for a password */
+			/*
+			 * We've saved a password when a previous connection succeeded,
+			 * meaning this is the call for a second session to the same
+			 * database, so just forcibly reuse that password.
+			 */
+			keywords[argcount - 1] = "password";
+			values[argcount -1] = dbpassword;
+			dbgetpassword = -1; /* Don't try again if this fails */
+		}
+		else if (dbgetpassword == 1)
+		{
 			password = simple_prompt(_("Password: "), 100, false);
 			keywords[argcount - 1] = "password";
 			values[argcount - 1] = password;
 		}
 
 		tmpconn = PQconnectdbParams(keywords, values, true);
-		if (password)
-			free(password);
 
 		if (PQstatus(tmpconn) == CONNECTION_BAD &&
 			PQconnectionNeedsPassword(tmpconn) &&
@@ -891,6 +901,10 @@ GetConnection(void)
 		/* Connection ok! */
 		free(values);
 		free(keywords);
+
+		/* Store the password for next run */
+		if (password)
+			dbpassword = password;
 		return tmpconn;
 	}
 }
