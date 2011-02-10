@@ -169,14 +169,14 @@ bool ReceiveXlogStream(PGconn *conn, XLogRecPtr startpos, uint32 timeline, char 
 
 			if (segment_finish != NULL)
 			{
-				/* 
+				/*
 				 * Callback when the segment finished, and return if it told
 				 * us to.
 				 *
 				 * A block in the wal stream can never cross a segment
 				 * boundary, so we can safely just add the current block size
 				 * to the offset, so the xlog pointer points to what we have
-				 * actually sent.
+				 * actually written.
 				 */
 				blockstart.xrecoff += r - STREAMING_HEADER_SIZE;
 				if (segment_finish(blockstart))

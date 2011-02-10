@@ -190,7 +190,10 @@ segment_callback(XLogRecPtr segendpos)
 			return true;
 	}
 
-	/* Nothing yet, see if there is data on our pipe */
+	/*
+	 * Don't have the end pointer yet - check our pipe to see if it
+	 * has been sent now.
+	 */
 	FD_ZERO(&fds);
 	FD_SET(bgpipe[0], &fds);
 
