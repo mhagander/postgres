@@ -64,7 +64,7 @@ static void ReceiveTarFile(PGconn *conn, PGresult *res, int rownum);
 static void ReceiveAndUnpackTarFile(PGconn *conn, PGresult *res, int rownum);
 static void BaseBackup();
 
-static bool segment_callback(XLogRecPtr segendpos);
+static bool segment_callback(XLogRecPtr segendpos, uint32 timeline);
 
 #ifdef HAVE_LIBZ
 static const char *
@@ -119,7 +119,7 @@ usage(void)
  * it is time to stop.
  */
 static bool
-segment_callback(XLogRecPtr segendpos)
+segment_callback(XLogRecPtr segendpos, uint32 timeline)
 {
 	fd_set fds;
 	struct timeval tv;
@@ -166,7 +166,7 @@ segment_callback(XLogRecPtr segendpos)
 		has_xlogendptr = true;
 
 		/* since we have a value now, call ourselves to make the comparison */
-		return segment_callback(segendpos);
+		return segment_callback(segendpos, timeline);
 	}
 
 	/* Else nothing happened, so don't exit */

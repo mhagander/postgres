@@ -181,7 +181,7 @@ bool ReceiveXlogStream(PGconn *conn, XLogRecPtr startpos, uint32 timeline, char 
 				 * actually written.
 				 */
 				blockstart.xrecoff += r - STREAMING_HEADER_SIZE;
-				if (segment_finish(blockstart))
+				if (segment_finish(blockstart, timeline))
 					return true;
 			}
 		}

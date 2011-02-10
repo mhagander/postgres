@@ -17,6 +17,9 @@
 
 #include "libpq-fe.h"
 
+#include <dirent.h>
+#include <sys/stat.h>
+#include <sys/types.h>
 #include <unistd.h>
 
 #include "getopt_long.h"
@@ -31,8 +34,24 @@ int			verbose = 0;
 
 
 static void usage(void);
+static XLogRecPtr FindStreamingStart(XLogRecPtr currentpos, uint32 currenttimeline);
 static void StreamLog();
-static bool segment_callback(XLogRecPtr segendpos);
+static bool segment_callback(XLogRecPtr segendpos, uint32 timeline);
+
+/*
+ * XXX: from xlog_internal.h
+ */
+#define XLogSegsPerFile (((uint32) 0xffffffff) / XLOG_SEG_SIZE)
+#define PrevLogSeg(logId, logSeg)       \
+        do { \
+                if (logSeg) \
+                        (logSeg)--; \
+                else \
+                { \
+                        (logId)--; \
+                        (logSeg) = XLogSegsPerFile-1; \
+                } \
+        } while (0)
 
 
 static void
@@ -58,16 +77,166 @@ usage(void)
 }
 
 static bool
-segment_callback(XLogRecPtr segendpos)
+segment_callback(XLogRecPtr segendpos, uint32 timeline)
 {
+	char fn[MAXPGPATH];
+	struct stat statbuf;
+
 	if (verbose)
-		fprintf(stderr, _("%s: finished segment at %X/%X\n"),
-				progname, segendpos.xlogid, segendpos.xrecoff);
+		fprintf(stderr, _("%s: finished segment at %X/%X (timeline %u)\n"),
+				progname, segendpos.xlogid, segendpos.xrecoff, timeline);
+
+	/*
+	 * Check if there is a partial file for the name we just finished,
+	 * and if there is, remove it under the assumption that we have now
+	 * got all the data we need.
+	 */
+	PrevLogSeg(segendpos.xlogid, segendpos.xrecoff);
+	snprintf(fn, sizeof(fn), "%s/%08X%08X%08X.partial",
+			 basedir, timeline,
+			 segendpos.xlogid,
+			 segendpos.xrecoff / XLOG_SEG_SIZE);
+	if (stat(fn, &statbuf) == 0)
+	{
+		/* File existed, get rid of it */
+		if (verbose)
+			fprintf(stderr, _("%s: removing file \"%s\"\n"),
+					progname, fn);
+		unlink(fn);
+	}
 
 	/* Never abort */
 	return false;
 }
 
+/*
+ * Determine starting location for streaming, based on:
+ * 1. If there are existing xlog segments, start at the end of the last one
+ * 2. If the last one is a partial segment, rename it and start over, since
+ *    we don't sync after every write.
+ * 3. If no existing xlog exists, start from the beginning of the current
+ *    WAL segment.
+ */
+static XLogRecPtr
+FindStreamingStart(XLogRecPtr currentpos, uint32 currenttimeline)
+{
+	DIR	   *dir;
+	struct dirent *dirent;
+	int		i;
+	bool	b;
+	XLogRecPtr high = {0,0};
+
+	dir = opendir(basedir);
+	if (dir == NULL)
+	{
+		fprintf(stderr, _("%s: could not open directory \"%s\": %s\n"),
+				progname, basedir, strerror(errno));
+		disconnect_and_exit(1);
+	}
+
+	while ((dirent = readdir(dir)) != NULL)
+	{
+		char fullpath[MAXPGPATH];
+		struct stat statbuf;
+		uint32	tli, log, seg;
+
+		if (!strcmp(dirent->d_name, ".") || !strcmp(dirent->d_name, ".."))
+			continue;
+
+		/* xlog files are always 24 characters */
+		if (strlen(dirent->d_name) != 24)
+			continue;
+
+		/* Filenames are always made out of 0-9 and A-F */
+		b = false;
+		for (i = 0; i < 24; i++)
+		{
+			if (!(dirent->d_name[i] >= '0' && dirent->d_name[i] <= '9') &&
+				!(dirent->d_name[i] >= 'A' && dirent->d_name[i] <= 'F'))
+			{
+				b = true;
+				break;
+			}
+		}
+		if (b)
+			continue;
+
+		/*
+		 * Looks like an xlog file. Parse it's position.
+		 */
+		if (sscanf(dirent->d_name, "%08X%08X%08X", &tli, &log, &seg) != 3)
+		{
+			fprintf(stderr, _("%s: could not parse xlog filename \"%s\"\n"),
+					progname, dirent->d_name);
+			disconnect_and_exit(1);
+		}
+		log *= XLOG_SEG_SIZE;
+
+		/* Ignore any files that are for another timeline */
+		if (tli != currenttimeline)
+			continue;
+
+		/* Check if this is a completed segment or not */
+		snprintf(fullpath, sizeof(fullpath),  "%s/%s", basedir, dirent->d_name);
+		if (stat(fullpath, &statbuf) != 0)
+		{
+			fprintf(stderr, _("%s: could not stat file \"%s\": %s\n"),
+					progname, fullpath, strerror(errno));
+			disconnect_and_exit(1);
+		}
+
+		if (statbuf.st_size == 16 * 1024 * 1024)
+		{
+			/* Completed segment */
+			if (log > high.xlogid ||
+				(log == high.xlogid && seg > high.xrecoff))
+			{
+				high.xlogid = log;
+				high.xrecoff = seg;
+				continue;
+			}
+		}
+		else
+		{
+			/*
+			 * This is a partial file. Rename it out of the way.
+			 */
+			char newfn[MAXPGPATH];
+
+			fprintf(stderr, _("%s: renaming partial file \"%s\" to \"%s.partial\"\n"),
+					progname, dirent->d_name, dirent->d_name);
+
+			snprintf(newfn, sizeof(newfn), "%s/%s.partial",
+					 basedir, dirent->d_name);
+
+			if (stat(newfn, &statbuf) == 0)
+			{
+				fprintf(stderr, _("%s: file \"%s\" already exists. Check and clean up manually.\n"),
+						progname, newfn);
+				disconnect_and_exit(1);
+			}
+			if (rename(fullpath, newfn) != 0)
+			{
+				fprintf(stderr, _("%s: could not rename \"%s\" to \"%s\": %s\n"),
+						progname, fullpath, newfn, strerror(errno));
+				disconnect_and_exit(1);
+			}
+
+			/* Don't continue looking for more, we assume this is the last */
+			break;
+		}
+	}
+
+	closedir(dir);
+
+	if (high.xlogid > 0 && high.xrecoff > 0)
+		return high;
+	return currentpos;
+}
+
+/*
+ * Start the log streaming
+ */
 static void
 StreamLog(void)
 {
@@ -105,7 +274,10 @@ StreamLog(void)
 	}
 	PQclear(res);
 
-	/* XXX: check existing logs */
+	/*
+	 * Figure out where to start streaming.
+	 */
+	startpos = FindStreamingStart(startpos, timeline);
 
 	/*
 	 * Always start streaming at the beginning of a segment
@@ -116,8 +288,8 @@ StreamLog(void)
 	 * Start the replication
 	 */
 	if (verbose)
-		fprintf(stderr, _("%s: starting log streaming at %X/%X\n"),
-				progname, startpos.xlogid, startpos.xrecoff);
+		fprintf(stderr, _("%s: starting log streaming at %X/%X (timeline %u)\n"),
+				progname, startpos.xlogid, startpos.xrecoff, timeline);
 
 	ReceiveXlogStream(conn, startpos, timeline, basedir, segment_callback);
 }
