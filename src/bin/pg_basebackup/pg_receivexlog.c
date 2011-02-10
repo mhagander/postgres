@@ -1,7 +1,7 @@
 /*-------------------------------------------------------------------------
  *
  * pg_receivexlog.c - receive streaming transaction log data and write it
- *                    to a local file.
+ *					  to a local file.
  *
  * Author: Magnus Hagander <magnus@hagander.net>
  *

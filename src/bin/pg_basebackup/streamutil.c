@@ -24,7 +24,7 @@ char	   *dbuser = NULL;
 char	   *dbport = NULL;
 int			dbgetpassword = 0;	/* 0=auto, -1=never, 1=always */
 static char *dbpassword = NULL;
-PGconn *conn = NULL;
+PGconn	   *conn = NULL;
 
 /*
  * strdup() and malloc() replacements that prints an error and exits
@@ -120,7 +120,7 @@ GetConnection(void)
 			 * database, so just forcibly reuse that password.
 			 */
 			keywords[argcount - 1] = "password";
-			values[argcount -1] = dbpassword;
+			values[argcount - 1] = dbpassword;
 			dbgetpassword = -1; /* Don't try again if this fails */
 		}
 		else if (dbgetpassword == 1)
@@ -158,4 +158,3 @@ GetConnection(void)
 		return tmpconn;
 	}
 }
-
