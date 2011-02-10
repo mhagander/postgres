@@ -47,6 +47,7 @@ bool		showprogress = false;
 int			verbose = 0;
 int			compresslevel = 0;
 bool		includewal = false;
+bool		streamwal = false;
 bool		fastcheckpoint = false;
 char	   *dbhost = NULL;
 char	   *dbuser = NULL;
@@ -149,7 +150,7 @@ usage(void)
 	printf(_("\nOptions controlling the output:\n"));
 	printf(_("  -D, --pgdata=directory    receive base backup into directory\n"));
 	printf(_("  -F, --format=p|t          output format (plain, tar)\n"));
-	printf(_("  -x, --xlog                include required WAL files in backup\n"));
+	printf(_("  -x, --xlog[=stream]       include required WAL files in backup\n"));
 	printf(_("  -Z, --compress=0-9        compress tar output\n"));
 	printf(_("\nGeneral options:\n"));
 	printf(_("  -c, --checkpoint=fast|spread\n"
@@ -951,7 +952,7 @@ BaseBackup()
 	snprintf(current_path, sizeof(current_path), "BASE_BACKUP LABEL '%s' %s %s %s %s",
 			 escaped_label,
 			 showprogress ? "PROGRESS" : "",
-			 includewal ? "WAL" : "",
+			 includewal && !streamwal ? "WAL" : "",
 			 fastcheckpoint ? "FAST" : "",
 	         includewal ? "NOWAIT" : "");
 
@@ -984,9 +985,8 @@ BaseBackup()
 	PQclear(res);
 	MemSet(xlogend, 0, sizeof(xlogend));
 
-	if (includewal)
+	if (streamwal)
 	{
-		/* XXX: use another parameter to control when logstreamer is used */
 		if (verbose)
 			fprintf(stderr, _("%s: starting background WAL receiver\n"),
 					progname);
@@ -1147,7 +1147,7 @@ main(int argc, char **argv)
 		{"pgdata", required_argument, NULL, 'D'},
 		{"format", required_argument, NULL, 'F'},
 		{"checkpoint", required_argument, NULL, 'c'},
-		{"xlog", no_argument, NULL, 'x'},
+		{"xlog", optional_argument, NULL, 'x'},
 		{"compress", required_argument, NULL, 'Z'},
 		{"label", required_argument, NULL, 'l'},
 		{"host", required_argument, NULL, 'h'},
@@ -1203,6 +1203,18 @@ main(int argc, char **argv)
 				break;
 			case 'x':
 				includewal = true;
+				if (optarg)
+				{
+					if (strcmp(optarg, "s") == 0 ||
+						strcmp(optarg, "stream") == 0)
+						streamwal = true;
+					else
+					{
+						fprintf(stderr, _("%s: invalid xlog option \"%s\", must be empty or \"stream\"\n"),
+								progname, optarg);
+						exit(1);
+					}
+				}
 				break;
 			case 'l':
 				label = xstrdup(optarg);
