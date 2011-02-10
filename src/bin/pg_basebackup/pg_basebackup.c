@@ -11,17 +11,11 @@
  *-------------------------------------------------------------------------
  */
 
-/*
- * We have to use postgres.h not postgres_fe.h here, because there's so much
- * backend-only stuff in the XLOG include files we need.  But we need a
- * frontend-ish environment otherwise.  Hence this ugly hack.
- */
-#define FRONTEND 1
-#include "postgres.h"
+#include "postgres_fe.h"
 
 #include "libpq-fe.h"
 
-#include "access/xlog_internal.h"
+#include "access/xlogdefs.h"
 
 #include <unistd.h>
 #include <dirent.h>
@@ -251,7 +245,7 @@ StartLogStreamer(char *startpos, uint32 timeline)
 		disconnect_and_exit(1);
 	}
 	/* Round off to even segment position */
-	startptr.xrecoff -= startptr.xrecoff % XLogSegSize;
+	startptr.xrecoff -= startptr.xrecoff % XLOG_SEG_SIZE;
 
 	/* Create our background pipe */
 	if (pgpipe(bgpipe) < 0)

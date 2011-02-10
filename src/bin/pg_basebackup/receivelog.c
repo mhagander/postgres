@@ -12,22 +12,21 @@
  *-------------------------------------------------------------------------
  */
 
-/*
- * We have to use postgres.h not postgres_fe.h here, because there's so much
- * backend-only stuff in the XLOG include files we need.  But we need a
- * frontend-ish environment otherwise.  Hence this ugly hack.
- */
-#define FRONTEND 1
-#include "postgres.h"
+#include "postgres_fe.h"
 
 #include "libpq-fe.h"
 
 #include <sys/types.h>
 #include <unistd.h>
 
-#include "access/xlog_internal.h"
+#include "access/xlogdefs.h"
 
 #include "receivelog.h"
+
+/* XXX: from xlog_internal.h */
+#define MAXFNAMELEN		64
+#define XLogFileName(fname, tli, log, seg)	\
+	snprintf(fname, MAXFNAMELEN, "%08X%08X%08X", tli, log, seg)
 
 /* Size of the streaming replication protocol header */
 #define STREAMING_HEADER_SIZE (1+8+8+8)
@@ -44,7 +43,7 @@ open_walfile(XLogRecPtr startpoint, uint32 timeline, char *basedir, char *namebu
 	char fn[MAXPGPATH];
 
 	XLogFileName(namebuf, timeline, startpoint.xlogid,
-				 startpoint.xrecoff / XLogSegSize);
+				 startpoint.xrecoff / XLOG_SEG_SIZE);
 
 	snprintf(fn, sizeof(fn), "%s/%s", basedir, namebuf);
 	f = open(fn, O_WRONLY | O_CREAT | O_EXCL, 0666);
@@ -118,7 +117,7 @@ bool ReceiveXlogStream(PGconn *conn, XLogRecPtr startpos, uint32 timeline, char 
 		/* Extract WAL location for this block */
 		memcpy(&blockstart, copybuf + 1, 8);
 
-		xlogoff = blockstart.xrecoff % XLogSegSize;
+		xlogoff = blockstart.xrecoff % XLOG_SEG_SIZE;
 
 		if (walfile == -1)
 		{
@@ -160,7 +159,7 @@ bool ReceiveXlogStream(PGconn *conn, XLogRecPtr startpos, uint32 timeline, char 
 		/* XXX: callback after each write */
 
 		/* Check if we are at the end of a segment */
-		if (lseek(walfile, 0, SEEK_CUR) == XLogSegSize)
+		if (lseek(walfile, 0, SEEK_CUR) == XLOG_SEG_SIZE)
 		{
 			/* Offset zero in new file, close and sync the old one */
 			fsync(walfile);
