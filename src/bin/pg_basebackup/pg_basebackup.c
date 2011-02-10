@@ -15,8 +15,6 @@
 
 #include "libpq-fe.h"
 
-#include "access/xlogdefs.h"
-
 #include <unistd.h>
 #include <dirent.h>
 #include <sys/stat.h>
@@ -30,10 +28,10 @@
 #include "getopt_long.h"
 
 #include "receivelog.h"
+#include "streamutil.h"
 
 
 /* Global options */
-static const char *progname;
 char	   *basedir = NULL;
 char		format = 'p';		/* p(lain)/t(ar) */
 char	   *label = "pg_basebackup base backup";
@@ -43,10 +41,6 @@ int			compresslevel = 0;
 bool		includewal = false;
 bool		streamwal = false;
 bool		fastcheckpoint = false;
-char	   *dbhost = NULL;
-char	   *dbuser = NULL;
-char	   *dbport = NULL;
-int			dbgetpassword = 0;	/* 0=auto, -1=never, 1=always */
 
 /* Progress counters */
 static uint64 totalsize;
@@ -61,23 +55,10 @@ static pid_t bgchild = -1;
 static XLogRecPtr xlogendptr;
 static bool has_xlogendptr = false;
 
-/* Connection kept global so we can disconnect easily */
-static PGconn *conn = NULL;
-static char *dbpassword = NULL;
-
-#define disconnect_and_exit(code)				\
-	{											\
-	if (conn != NULL) PQfinish(conn);			\
-	exit(code);									\
-	}
-
 /* Function headers */
-static char *xstrdup(const char *s);
-static void *xmalloc0(int size);
 static void usage(void);
 static void verify_dir_is_empty_or_create(char *dirname);
 static void progress_report(int tablespacenum, char *fn);
-static PGconn *GetConnection(void);
 
 static void ReceiveTarFile(PGconn *conn, PGresult *res, int rownum);
 static void ReceiveAndUnpackTarFile(PGconn *conn, PGresult *res, int rownum);
@@ -99,39 +80,6 @@ get_gz_error(gzFile *gzf)
 		return errmsg;
 }
 #endif
-
-/*
- * strdup() and malloc() replacements that prints an error and exits
- * if something goes wrong. Can never return NULL.
- */
-static char *
-xstrdup(const char *s)
-{
-	char	   *result;
-
-	result = strdup(s);
-	if (!result)
-	{
-		fprintf(stderr, _("%s: out of memory\n"), progname);
-		exit(1);
-	}
-	return result;
-}
-
-static void *
-xmalloc0(int size)
-{
-	void	   *result;
-
-	result = malloc(size);
-	if (!result)
-	{
-		fprintf(stderr, _("%s: out of memory\n"), progname);
-		exit(1);
-	}
-	MemSet(result, 0, size);
-	return result;
-}
 
 
 static void
@@ -813,105 +761,6 @@ ReceiveAndUnpackTarFile(PGconn *conn, PGresult *res, int rownum)
 		PQfreemem(copybuf);
 }
 
-
-static PGconn *
-GetConnection(void)
-{
-	PGconn	   *tmpconn;
-	int			argcount = 4;	/* dbname, replication, fallback_app_name,
-								 * password */
-	int			i;
-	const char **keywords;
-	const char **values;
-	char	   *password = NULL;
-
-	if (dbhost)
-		argcount++;
-	if (dbuser)
-		argcount++;
-	if (dbport)
-		argcount++;
-
-	keywords = xmalloc0((argcount + 1) * sizeof(*keywords));
-	values = xmalloc0((argcount + 1) * sizeof(*values));
-
-	keywords[0] = "dbname";
-	values[0] = "replication";
-	keywords[1] = "replication";
-	values[1] = "true";
-	keywords[2] = "fallback_application_name";
-	values[2] = progname;
-	i = 3;
-	if (dbhost)
-	{
-		keywords[i] = "host";
-		values[i] = dbhost;
-		i++;
-	}
-	if (dbuser)
-	{
-		keywords[i] = "user";
-		values[i] = dbuser;
-		i++;
-	}
-	if (dbport)
-	{
-		keywords[i] = "port";
-		values[i] = dbport;
-		i++;
-	}
-
-	while (true)
-	{
-		if (password)
-			free(password);
-
-		if (dbpassword)
-		{
-			/*
-			 * We've saved a password when a previous connection succeeded,
-			 * meaning this is the call for a second session to the same
-			 * database, so just forcibly reuse that password.
-			 */
-			keywords[argcount - 1] = "password";
-			values[argcount -1] = dbpassword;
-			dbgetpassword = -1; /* Don't try again if this fails */
-		}
-		else if (dbgetpassword == 1)
-		{
-			password = simple_prompt(_("Password: "), 100, false);
-			keywords[argcount - 1] = "password";
-			values[argcount - 1] = password;
-		}
-
-		tmpconn = PQconnectdbParams(keywords, values, true);
-
-		if (PQstatus(tmpconn) == CONNECTION_BAD &&
-			PQconnectionNeedsPassword(tmpconn) &&
-			dbgetpassword != -1)
-		{
-			dbgetpassword = 1;	/* ask for password next time */
-			PQfinish(tmpconn);
-			continue;
-		}
-
-		if (PQstatus(tmpconn) != CONNECTION_OK)
-		{
-			fprintf(stderr, _("%s: could not connect to server: %s\n"),
-					progname, PQerrorMessage(tmpconn));
-			exit(1);
-		}
-
-		/* Connection ok! */
-		free(values);
-		free(keywords);
-
-		/* Store the password for next run */
-		if (password)
-			dbpassword = password;
-		return tmpconn;
-	}
-}
 
 static void
 BaseBackup()

@@ -1,3 +1,5 @@
+#include "access/xlogdefs.h"
+
 /*
  * Called whenever a segment is finished, return true to stop
  * the streaming at this point.

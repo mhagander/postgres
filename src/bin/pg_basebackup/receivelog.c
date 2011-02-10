@@ -19,9 +19,8 @@
 #include <sys/types.h>
 #include <unistd.h>
 
-#include "access/xlogdefs.h"
-
 #include "receivelog.h"
+#include "streamutil.h"
 
 /* XXX: from xlog_internal.h */
 #define MAXFNAMELEN		64
@@ -48,8 +47,8 @@ open_walfile(XLogRecPtr startpoint, uint32 timeline, char *basedir, char *namebu
 	snprintf(fn, sizeof(fn), "%s/%s", basedir, namebuf);
 	f = open(fn, O_WRONLY | O_CREAT | O_EXCL, 0666);
 	if (f == -1)
-		fprintf(stderr, "Could not open WAL segment %s: %s\n",
-				namebuf, strerror(errno));
+		fprintf(stderr, _("%s: Could not open WAL segment %s: %s\n"),
+				progname, namebuf, strerror(errno));
 	return f;
 }
 
@@ -72,8 +71,8 @@ bool ReceiveXlogStream(PGconn *conn, XLogRecPtr startpos, uint32 timeline, char 
 	res = PQexec(conn, query);
 	if (PQresultStatus(res) != PGRES_COPY_BOTH)
 	{
-		fprintf(stderr, _("could not start replication: %s\n"),
-				PQresultErrorMessage(res));
+		fprintf(stderr, _("%s: could not start replication: %s\n"),
+				progname, PQresultErrorMessage(res));
 		return false;
 	}
 	PQclear(res);
@@ -99,18 +98,20 @@ bool ReceiveXlogStream(PGconn *conn, XLogRecPtr startpos, uint32 timeline, char 
 			break;
 		if (r == -2)
 		{
-			fprintf(stderr, "Error reading copy data: %s\n",
-					PQerrorMessage(conn));
+			fprintf(stderr, _("%s: could not read copy data: %s\n"),
+					progname, PQerrorMessage(conn));
 			return false;
 		}
 		if (r < STREAMING_HEADER_SIZE + 1)
 		{
-			fprintf(stderr, "Streaming header too small: %i\n", r);
+			fprintf(stderr, _("%s: streaming header too small: %i\n"),
+					progname, r);
 			return false;
 		}
 		if (copybuf[0] != 'w')
 		{
-			fprintf(stderr, "Streaming header corrupt: '%c'\n", copybuf[0]);
+			fprintf(stderr, _("%s: streaming header corrupt: \"%c\"\n"),
+					progname, copybuf[0]);
 			return false;
 		}
 
@@ -124,7 +125,8 @@ bool ReceiveXlogStream(PGconn *conn, XLogRecPtr startpos, uint32 timeline, char 
 			/* No file open yet */
 			if (xlogoff != 0)
 			{
-				fprintf(stderr, "Received xlog record for offset %u with no file open\n", xlogoff);
+				fprintf(stderr, _("%s: received xlog record for offset %u with no file open\n"),
+						progname, xlogoff);
 				return false;
 			}
 			walfile = open_walfile(blockstart, timeline,
@@ -138,8 +140,8 @@ bool ReceiveXlogStream(PGconn *conn, XLogRecPtr startpos, uint32 timeline, char 
 			/* XXX: store seek value don't reseek all the time */
 			if (lseek(walfile, 0, SEEK_CUR) != xlogoff)
 			{
-				fprintf(stderr, "WAL data offset error, got %i, expected %i\n",
-						xlogoff, (int) lseek(walfile, 0, SEEK_CUR));
+				fprintf(stderr, _("%s: got WAL data offset %i, expected %i\n"),
+						progname, xlogoff, (int) lseek(walfile, 0, SEEK_CUR));
 				return false;
 			}
 			/* Position matches, write happens lower down */
@@ -149,7 +151,8 @@ bool ReceiveXlogStream(PGconn *conn, XLogRecPtr startpos, uint32 timeline, char 
 		if (write(walfile, copybuf + STREAMING_HEADER_SIZE,
 				  r - STREAMING_HEADER_SIZE) != r - STREAMING_HEADER_SIZE)
 		{
-			fprintf(stderr, "could not write %u bytes to WAL file %s: %s\n",
+			fprintf(stderr, _("%s: could not write %u bytes to WAL file %s: %s\n"),
+					progname,
 					r - STREAMING_HEADER_SIZE,
 					current_walfile_name,
 					strerror(errno));
@@ -194,8 +197,8 @@ bool ReceiveXlogStream(PGconn *conn, XLogRecPtr startpos, uint32 timeline, char 
 	res = PQgetResult(conn);
 	if (PQresultStatus(res) != PGRES_COMMAND_OK)
 	{
-		fprintf(stderr, "unexpected termination of replication stream: %s\n",
-				PQresultErrorMessage(res));
+		fprintf(stderr, _("%s: unexpected termination of replication stream: %s\n"),
+				progname, PQresultErrorMessage(res));
 		return false;
 	}
 	PQclear(res);
