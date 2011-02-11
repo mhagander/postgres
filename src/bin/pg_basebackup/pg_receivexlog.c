@@ -231,6 +231,7 @@ FindStreamingStart(XLogRecPtr currentpos, uint32 currenttimeline)
 
 	if (high.xlogid > 0 && high.xrecoff > 0)
 		return high;
+
 	return currentpos;
 }
 
@@ -250,7 +251,8 @@ StreamLog(void)
 	conn = GetConnection();
 
 	/*
-	 * Run IDENFITY_SYSTEM so we can get the timeline
+	 * Run IDENFITY_SYSTEM so we can get the timeline and current
+	 * xlog position.
 	 */
 	res = PQexec(conn, "IDENTIFY_SYSTEM");
 	if (PQresultStatus(res) != PGRES_TUPLES_OK)
