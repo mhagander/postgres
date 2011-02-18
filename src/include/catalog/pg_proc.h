@@ -3073,9 +3073,9 @@ DATA(insert OID = 3057 ( pg_stat_get_autoanalyze_count PGNSP PGUID 12 1 0 0 f f 
 DESCR("statistics: number of auto analyzes for a table");
 DATA(insert OID = 1936 (  pg_stat_get_backend_idset		PGNSP PGUID 12 1 100 0 f f f t t s 0 0 23 "" _null_ _null_ _null_ _null_ pg_stat_get_backend_idset _null_ _null_ _null_ ));
 DESCR("statistics: currently active backend IDs");
-DATA(insert OID = 2022 (  pg_stat_get_activity			PGNSP PGUID 12 1 100 0 f f f f t s 1 0 2249 "23" "{23,26,23,26,25,25,16,1184,1184,1184,869,23}" "{i,o,o,o,o,o,o,o,o,o,o,o}" "{pid,datid,procpid,usesysid,application_name,current_query,waiting,xact_start,query_start,backend_start,client_addr,client_port}" _null_ pg_stat_get_activity _null_ _null_ _null_ ));
+DATA(insert OID = 2022 (  pg_stat_get_activity			PGNSP PGUID 12 1 100 0 f f f f t s 1 0 2249 "23" "{23,26,23,26,25,25,16,1184,1184,1184,869,25,23}" "{i,o,o,o,o,o,o,o,o,o,o,o,o}" "{pid,datid,procpid,usesysid,application_name,current_query,waiting,xact_start,query_start,backend_start,client_addr,client_hostname,client_port}" _null_ pg_stat_get_activity _null_ _null_ _null_ ));
 DESCR("statistics: information about currently active backends");
-DATA(insert OID = 3099 (  pg_stat_get_wal_senders	PGNSP PGUID 12 1 10 0 f f f f t s 0 0 2249 "" "{23,25,25}" "{o,o,o}" "{procpid,state,sent_location}" _null_ pg_stat_get_wal_senders _null_ _null_ _null_ ));
+DATA(insert OID = 3099 (  pg_stat_get_wal_senders	PGNSP PGUID 12 1 10 0 f f f f t s 0 0 2249 "" "{23,25,25,25,25,25}" "{o,o,o,o,o,o}" "{procpid,state,sent_location,write_location,flush_location,apply_location}" _null_ pg_stat_get_wal_senders _null_ _null_ _null_ ));
 DESCR("statistics: information about currently active replication");
 DATA(insert OID = 2026 (  pg_backend_pid				PGNSP PGUID 12 1 0 0 f f f t f s 0 0 23 "" _null_ _null_ _null_ _null_ pg_backend_pid _null_ _null_ _null_ ));
 DESCR("statistics: current backend PID");
@@ -4407,6 +4407,8 @@ DATA(insert OID = 2774 (  ginqueryarrayextract	PGNSP PGUID 12 1 0 0 f f f t f i 
 DESCR("GIN array support");
 DATA(insert OID = 2744 (  ginarrayconsistent	PGNSP PGUID 12 1 0 0 f f f t f i 8 0 16 "2281 21 2277 23 2281 2281 2281 2281" _null_ _null_ _null_ _null_ ginarrayconsistent _null_ _null_ _null_ ));
 DESCR("GIN array support");
+DATA(insert OID = 3076 (  ginarrayextract	 PGNSP PGUID 12 1 0 0 f f f t f i 2 0 2281 "2277 2281" _null_ _null_ _null_ _null_	ginarrayextract_2args _null_ _null_ _null_ ));
+DESCR("GIN array support (obsolete)");
 
 /* overlap/contains/contained */
 DATA(insert OID = 2747 (  arrayoverlap		   PGNSP PGUID 12 1 0 0 f f f t f i 2 0 16 "2277 2277" _null_ _null_ _null_ _null_ arrayoverlap _null_ _null_ _null_ ));
@@ -4418,12 +4420,20 @@ DESCR("is contained by");
 
 /* userlock replacements */
 DATA(insert OID = 2880 (  pg_advisory_lock				PGNSP PGUID 12 1 0 0 f f f t f v 1 0 2278 "20" _null_ _null_ _null_ _null_ pg_advisory_lock_int8 _null_ _null_ _null_ ));
+DESCR("obtain exclusive a4dvisory lock");
+DATA(insert OID = 3089 (  pg_advisory_xact_lock				PGNSP PGUID 12 1 0 0 f f f t f v 1 0 2278 "20" _null_ _null_ _null_ _null_ pg_advisory_xact_lock_int8 _null_ _null_ _null_ ));
 DESCR("obtain exclusive advisory lock");
 DATA(insert OID = 2881 (  pg_advisory_lock_shared		PGNSP PGUID 12 1 0 0 f f f t f v 1 0 2278 "20" _null_ _null_ _null_ _null_ pg_advisory_lock_shared_int8 _null_ _null_ _null_ ));
 DESCR("obtain shared advisory lock");
+DATA(insert OID = 3090 (  pg_advisory_xact_lock_shared		PGNSP PGUID 12 1 0 0 f f f t f v 1 0 2278 "20" _null_ _null_ _null_ _null_ pg_advisory_xact_lock_shared_int8 _null_ _null_ _null_ ));
+DESCR("obtain shared advisory lock");
 DATA(insert OID = 2882 (  pg_try_advisory_lock			PGNSP PGUID 12 1 0 0 f f f t f v 1 0 16 "20" _null_ _null_ _null_ _null_ pg_try_advisory_lock_int8 _null_ _null_ _null_ ));
 DESCR("obtain exclusive advisory lock if available");
+DATA(insert OID = 3091 (  pg_try_advisory_xact_lock			PGNSP PGUID 12 1 0 0 f f f t f v 1 0 16 "20" _null_ _null_ _null_ _null_ pg_try_advisory_xact_lock_int8 _null_ _null_ _null_ ));
+DESCR("obtain exclusive advisory lock if available");
 DATA(insert OID = 2883 (  pg_try_advisory_lock_shared	PGNSP PGUID 12 1 0 0 f f f t f v 1 0 16 "20" _null_ _null_ _null_ _null_ pg_try_advisory_lock_shared_int8 _null_ _null_ _null_ ));
+DESCR("obtain shared advisory lock if available");
+DATA(insert OID = 3092 (  pg_try_advisory_xact_lock_shared	PGNSP PGUID 12 1 0 0 f f f t f v 1 0 16 "20" _null_ _null_ _null_ _null_ pg_try_advisory_xact_lock_shared_int8 _null_ _null_ _null_ ));
 DESCR("obtain shared advisory lock if available");
 DATA(insert OID = 2884 (  pg_advisory_unlock			PGNSP PGUID 12 1 0 0 f f f t f v 1 0 16 "20" _null_ _null_ _null_ _null_ pg_advisory_unlock_int8 _null_ _null_ _null_ ));
 DESCR("release exclusive advisory lock");
@@ -4431,11 +4441,19 @@ DATA(insert OID = 2885 (  pg_advisory_unlock_shared		PGNSP PGUID 12 1 0 0 f f f 
 DESCR("release shared advisory lock");
 DATA(insert OID = 2886 (  pg_advisory_lock				PGNSP PGUID 12 1 0 0 f f f t f v 2 0 2278 "23 23" _null_ _null_ _null_ _null_ pg_advisory_lock_int4 _null_ _null_ _null_ ));
 DESCR("obtain exclusive advisory lock");
+DATA(insert OID = 3093 (  pg_advisory_xact_lock				PGNSP PGUID 12 1 0 0 f f f t f v 2 0 2278 "23 23" _null_ _null_ _null_ _null_ pg_advisory_xact_lock_int4 _null_ _null_ _null_ ));
+DESCR("obtain exclusive advisory lock");
 DATA(insert OID = 2887 (  pg_advisory_lock_shared		PGNSP PGUID 12 1 0 0 f f f t f v 2 0 2278 "23 23" _null_ _null_ _null_ _null_ pg_advisory_lock_shared_int4 _null_ _null_ _null_ ));
+DESCR("obtain shared advisory lock");
+DATA(insert OID = 3094 (  pg_advisory_xact_lock_shared		PGNSP PGUID 12 1 0 0 f f f t f v 2 0 2278 "23 23" _null_ _null_ _null_ _null_ pg_advisory_xact_lock_shared_int4 _null_ _null_ _null_ ));
 DESCR("obtain shared advisory lock");
 DATA(insert OID = 2888 (  pg_try_advisory_lock			PGNSP PGUID 12 1 0 0 f f f t f v 2 0 16 "23 23" _null_ _null_ _null_ _null_ pg_try_advisory_lock_int4 _null_ _null_ _null_ ));
 DESCR("obtain exclusive advisory lock if available");
+DATA(insert OID = 3095 (  pg_try_advisory_xact_lock			PGNSP PGUID 12 1 0 0 f f f t f v 2 0 16 "23 23" _null_ _null_ _null_ _null_ pg_try_advisory_xact_lock_int4 _null_ _null_ _null_ ));
+DESCR("obtain exclusive advisory lock if available");
 DATA(insert OID = 2889 (  pg_try_advisory_lock_shared	PGNSP PGUID 12 1 0 0 f f f t f v 2 0 16 "23 23" _null_ _null_ _null_ _null_ pg_try_advisory_lock_shared_int4 _null_ _null_ _null_ ));
+DESCR("obtain shared advisory lock if available");
+DATA(insert OID = 3096 (  pg_try_advisory_xact_lock_shared	PGNSP PGUID 12 1 0 0 f f f t f v 2 0 16 "23 23" _null_ _null_ _null_ _null_ pg_try_advisory_xact_lock_shared_int4 _null_ _null_ _null_ ));
 DESCR("obtain shared advisory lock if available");
 DATA(insert OID = 2890 (  pg_advisory_unlock			PGNSP PGUID 12 1 0 0 f f f t f v 2 0 16 "23 23" _null_ _null_ _null_ _null_ pg_advisory_unlock_int4 _null_ _null_ _null_ ));
 DESCR("release exclusive advisory lock");
@@ -4666,6 +4684,12 @@ DATA(insert OID = 3724 (  gin_cmp_tslexeme		PGNSP PGUID 12 1 0 0 f f f t f i 2 0
 DESCR("GIN tsvector support");
 DATA(insert OID = 2700 (  gin_cmp_prefix		PGNSP PGUID 12 1 0 0 f f f t f i 4 0 23 "25 25 21 2281" _null_ _null_ _null_ _null_ gin_cmp_prefix _null_ _null_ _null_ ));
 DESCR("GIN tsvector support");
+DATA(insert OID = 3077 (  gin_extract_tsvector	PGNSP PGUID 12 1 0 0 f f f t f i 2 0 2281 "3614 2281" _null_ _null_ _null_ _null_	gin_extract_tsvector_2args _null_ _null_ _null_ ));
+DESCR("GIN tsvector support (obsolete)");
+DATA(insert OID = 3087 (  gin_extract_tsquery	PGNSP PGUID 12 1 0 0 f f f t f i 5 0 2281 "3615 2281 21 2281 2281" _null_ _null_ _null_ _null_ gin_extract_tsquery_5args _null_ _null_ _null_ ));
+DESCR("GIN tsvector support (obsolete)");
+DATA(insert OID = 3088 (  gin_tsquery_consistent PGNSP PGUID 12 1 0 0 f f f t f i 6 0 16 "2281 21 3615 23 2281 2281" _null_ _null_ _null_ _null_	gin_tsquery_consistent_6args _null_ _null_ _null_ ));
+DESCR("GIN tsvector support (obsolete)");
 
 DATA(insert OID = 3662 (  tsquery_lt			PGNSP PGUID 12 1 0 0 f f f t f i 2 0 16 "3615 3615" _null_ _null_ _null_ _null_ tsquery_lt _null_ _null_ _null_ ));
 DESCR("less-than");
@@ -4878,9 +4902,13 @@ DATA(insert OID = 2987 (  btrecordcmp	   PGNSP PGUID 12 1 0 0 f f f t f i 2 0 23
 DESCR("btree less-equal-greater");
 
 /* Extensions */
-DATA(insert OID = 3082 (  pg_available_extensions		PGNSP PGUID 12 10 100 0 f f f t t s 0 0 2249 "" "{19,25,16,25}" "{o,o,o,o}" "{name,version,relocatable,comment}" _null_ pg_available_extensions _null_ _null_ _null_ ));
+DATA(insert OID = 3082 (  pg_available_extensions		PGNSP PGUID 12 10 100 0 f f f t t s 0 0 2249 "" "{19,25,25}" "{o,o,o}" "{name,default_version,comment}" _null_ pg_available_extensions _null_ _null_ _null_ ));
 DESCR("list available extensions");
-DATA(insert OID = 3083 (  pg_extension_config_dump		PGNSP PGUID 12 1 0 0 f f f t f v 2 0 2278 "2205 25" _null_ _null_ _null_ _null_ pg_extension_config_dump _null_ _null_ _null_ ));
+DATA(insert OID = 3083 (  pg_available_extension_versions	PGNSP PGUID 12 10 100 0 f f f t t s 0 0 2249 "" "{19,25,16,19,1003,25}" "{o,o,o,o,o,o}" "{name,version,relocatable,schema,requires,comment}" _null_ pg_available_extension_versions _null_ _null_ _null_ ));
+DESCR("list available extension versions");
+DATA(insert OID = 3084 (  pg_extension_update_paths		PGNSP PGUID 12 10 100 0 f f f t t s 1 0 2249 "19" "{19,25,25,25}" "{i,o,o,o}" "{name,source,target,path}" _null_ pg_extension_update_paths _null_ _null_ _null_ ));
+DESCR("list an extension's version update paths");
+DATA(insert OID = 3086 (  pg_extension_config_dump		PGNSP PGUID 12 1 0 0 f f f t f v 2 0 2278 "2205 25" _null_ _null_ _null_ _null_ pg_extension_config_dump _null_ _null_ _null_ ));
 DESCR("flag an extension's table contents to be emitted by pg_dump");
 
 /* SQL-spec window functions */

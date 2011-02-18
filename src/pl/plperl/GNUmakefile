@@ -41,7 +41,7 @@ PERLCHUNKS = plc_perlboot.pl plc_trusted.pl
 SHLIB_LINK = $(perl_embed_ldflags)
 
 REGRESS_OPTS = --dbname=$(PL_TESTDB) --load-language=plperl  --load-language=plperlu
-REGRESS = plperl plperl_trigger plperl_shared plperl_elog plperl_util plperl_init plperlu
+REGRESS = plperl plperl_trigger plperl_shared plperl_elog plperl_util plperl_init plperlu plperl_array
 # if Perl can support two interpreters in one backend,
 # test plperl-and-plperlu cases
 ifneq ($(PERL),)
@@ -76,8 +76,11 @@ installdirs: installdirs-lib
 
 uninstall: uninstall-lib
 
+check: submake
+	$(pg_regress_check) $(REGRESS_OPTS) $(REGRESS)
+
 installcheck: submake
-	$(top_builddir)/src/test/regress/pg_regress --inputdir=$(srcdir) --psqldir=$(PSQLDIR) $(REGRESS_OPTS) $(REGRESS)
+	$(pg_regress_installcheck) $(REGRESS_OPTS) $(REGRESS)
 
 .PHONY: submake
 submake:
@@ -85,8 +88,7 @@ submake:
 
 clean distclean maintainer-clean: clean-lib
 	rm -f SPI.c Util.c $(OBJS) perlchunks.h plperl_opmask.h
-	rm -rf results
-	rm -f regression.diffs regression.out
+	rm -rf $(pg_regress_clean_files)
 
 else # can't build
 

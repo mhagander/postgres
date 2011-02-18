@@ -175,6 +175,7 @@ static void dumpCast(Archive *fout, CastInfo *cast);
 static void dumpOpr(Archive *fout, OprInfo *oprinfo);
 static void dumpOpclass(Archive *fout, OpclassInfo *opcinfo);
 static void dumpOpfamily(Archive *fout, OpfamilyInfo *opfinfo);
+static void dumpCollation(Archive *fout, CollInfo *convinfo);
 static void dumpConversion(Archive *fout, ConvInfo *convinfo);
 static void dumpRule(Archive *fout, RuleInfo *rinfo);
 static void dumpAgg(Archive *fout, AggInfo *agginfo);
@@ -2725,10 +2726,7 @@ getExtensions(int *numExtensions)
 		extinfo[i].dobj.name = strdup(PQgetvalue(res, i, i_extname));
 		extinfo[i].namespace = strdup(PQgetvalue(res, i, i_nspname));
 		extinfo[i].relocatable = *(PQgetvalue(res, i, i_extrelocatable)) == 't';
-		if (PQgetisnull(res, i, i_extversion))
-			extinfo[i].extversion = NULL;
-		else
-			extinfo[i].extversion = strdup(PQgetvalue(res, i, i_extversion));
+		extinfo[i].extversion = strdup(PQgetvalue(res, i, i_extversion));
 		extinfo[i].extconfig = strdup(PQgetvalue(res, i, i_extconfig));
 		extinfo[i].extcondition = strdup(PQgetvalue(res, i, i_extcondition));
 	}
@@ -3098,6 +3096,84 @@ getOperators(int *numOprs)
 }
 
 /*
+ * getCollations:
+ *	  read all collations in the system catalogs and return them in the
+ * CollInfo* structure
+ *
+ *	numCollations is set to the number of collations read in
+ */
+CollInfo *
+getCollations(int *numCollations)
+{
+	PGresult   *res;
+	int			ntups;
+	int			i;
+	PQExpBuffer query = createPQExpBuffer();
+	CollInfo   *collinfo;
+	int			i_tableoid;
+	int			i_oid;
+	int			i_collname;
+	int			i_collnamespace;
+	int			i_rolname;
+
+	/* Collations didn't exist pre-9.1 */
+	if (g_fout->remoteVersion < 90100)
+	{
+		*numCollations = 0;
+		return NULL;
+	}
+
+	/*
+	 * find all collations, including builtin collations; we filter out
+	 * system-defined collations at dump-out time.
+	 */
+
+	/* Make sure we are in proper schema */
+	selectSourceSchema("pg_catalog");
+
+	appendPQExpBuffer(query, "SELECT tableoid, oid, collname, "
+					  "collnamespace, "
+					  "(%s collowner) AS rolname "
+					  "FROM pg_collation",
+					  username_subquery);
+
+	res = PQexec(g_conn, query->data);
+	check_sql_result(res, g_conn, query->data, PGRES_TUPLES_OK);
+
+	ntups = PQntuples(res);
+	*numCollations = ntups;
+
+	collinfo = (CollInfo *) malloc(ntups * sizeof(CollInfo));
+
+	i_tableoid = PQfnumber(res, "tableoid");
+	i_oid = PQfnumber(res, "oid");
+	i_collname = PQfnumber(res, "collname");
+	i_collnamespace = PQfnumber(res, "collnamespace");
+	i_rolname = PQfnumber(res, "rolname");
+
+	for (i = 0; i < ntups; i++)
+	{
+		collinfo[i].dobj.objType = DO_COLLATION;
+		collinfo[i].dobj.catId.tableoid = atooid(PQgetvalue(res, i, i_tableoid));
+		collinfo[i].dobj.catId.oid = atooid(PQgetvalue(res, i, i_oid));
+		AssignDumpId(&collinfo[i].dobj);
+		collinfo[i].dobj.name = strdup(PQgetvalue(res, i, i_collname));
+		collinfo[i].dobj.namespace = findNamespace(atooid(PQgetvalue(res, i, i_collnamespace)),
+												 collinfo[i].dobj.catId.oid);
+		collinfo[i].rolname = strdup(PQgetvalue(res, i, i_rolname));
+
+		/* Decide whether we want to dump it */
+		selectDumpableObject(&(collinfo[i].dobj));
+	}
+
+	PQclear(res);
+
+	destroyPQExpBuffer(query);
+
+	return collinfo;
+}
+
+/*
  * getConversions:
  *	  read all conversions in the system catalogs and return them in the
  * ConvInfo* structure
@@ -3386,7 +3462,10 @@ getAggregates(int *numAggs)
 	/* Make sure we are in proper schema */
 	selectSourceSchema("pg_catalog");
 
-	/* find all user-defined aggregates */
+	/*
+	 * Find all user-defined aggregates.  See comment in getFuncs() for the
+	 * rationale behind the filtering logic.
+	 */
 
 	if (g_fout->remoteVersion >= 80200)
 	{
@@ -3395,11 +3474,20 @@ getAggregates(int *numAggs)
 						  "pronargs, proargtypes, "
 						  "(%s proowner) AS rolname, "
 						  "proacl AS aggacl "
-						  "FROM pg_proc "
-						  "WHERE proisagg "
-						  "AND pronamespace != "
-			   "(SELECT oid FROM pg_namespace WHERE nspname = 'pg_catalog')",
+						  "FROM pg_proc p "
+						  "WHERE proisagg AND ("
+						  "pronamespace != "
+						  "(SELECT oid FROM pg_namespace "
+						  "WHERE nspname = 'pg_catalog')",
 						  username_subquery);
+		if (binary_upgrade && g_fout->remoteVersion >= 90100)
+			appendPQExpBuffer(query,
+							  " OR EXISTS(SELECT 1 FROM pg_depend WHERE "
+							  "classid = 'pg_proc'::regclass AND "
+							  "objid = p.oid AND "
+							  "refclassid = 'pg_extension'::regclass AND "
+							  "deptype = 'e')");
+		appendPQExpBuffer(query, ")");
 	}
 	else if (g_fout->remoteVersion >= 70300)
 	{
@@ -3532,7 +3620,14 @@ getFuncs(int *numFuncs)
 	/* Make sure we are in proper schema */
 	selectSourceSchema("pg_catalog");
 
-	/* find all user-defined funcs */
+	/*
+	 * Find all user-defined functions.  Normally we can exclude functions
+	 * in pg_catalog, which is worth doing since there are several thousand
+	 * of 'em.  However, there are some extensions that create functions in
+	 * pg_catalog.  In normal dumps we can still ignore those --- but in
+	 * binary-upgrade mode, we must dump the member objects of the extension,
+	 * so be sure to fetch any such functions.
+	 */
 
 	if (g_fout->remoteVersion >= 70300)
 	{
@@ -3541,12 +3636,20 @@ getFuncs(int *numFuncs)
 						  "pronargs, proargtypes, prorettype, proacl, "
 						  "pronamespace, "
 						  "(%s proowner) AS rolname "
-						  "FROM pg_proc "
-						  "WHERE NOT proisagg "
-						  "AND pronamespace != "
+						  "FROM pg_proc p "
+						  "WHERE NOT proisagg AND ("
+						  "pronamespace != "
 						  "(SELECT oid FROM pg_namespace "
 						  "WHERE nspname = 'pg_catalog')",
 						  username_subquery);
+		if (binary_upgrade && g_fout->remoteVersion >= 90100)
+			appendPQExpBuffer(query,
+							  " OR EXISTS(SELECT 1 FROM pg_depend WHERE "
+							  "classid = 'pg_proc'::regclass AND "
+							  "objid = p.oid AND "
+							  "refclassid = 'pg_extension'::regclass AND "
+							  "deptype = 'e')");
+		appendPQExpBuffer(query, ")");
 	}
 	else if (g_fout->remoteVersion >= 70100)
 	{
@@ -6766,6 +6869,9 @@ dumpDumpableObject(Archive *fout, DumpableObject *dobj)
 		case DO_OPFAMILY:
 			dumpOpfamily(fout, (OpfamilyInfo *) dobj);
 			break;
+		case DO_COLLATION:
+			dumpCollation(fout, (CollInfo *) dobj);
+			break;
 		case DO_CONVERSION:
 			dumpConversion(fout, (ConvInfo *) dobj);
 			break;
@@ -6942,10 +7048,7 @@ dumpExtension(Archive *fout, ExtensionInfo *extinfo)
 		appendStringLiteralAH(q, extinfo->namespace, fout);
 		appendPQExpBuffer(q, ", ");
 		appendPQExpBuffer(q, "%s, ", extinfo->relocatable ? "true" : "false");
-		if (extinfo->extversion)
-			appendStringLiteralAH(q, extinfo->extversion, fout);
-		else
-			appendPQExpBuffer(q, "NULL");
+		appendStringLiteralAH(q, extinfo->extversion, fout);
 		appendPQExpBuffer(q, ", ");
 		/*
 		 * Note that we're pushing extconfig (an OID array) back into
@@ -9926,6 +10029,111 @@ dumpOpfamily(Archive *fout, OpfamilyInfo *opfinfo)
 	free(amname);
 	PQclear(res_ops);
 	PQclear(res_procs);
+	destroyPQExpBuffer(query);
+	destroyPQExpBuffer(q);
+	destroyPQExpBuffer(delq);
+	destroyPQExpBuffer(labelq);
+}
+
+/*
+ * dumpCollation
+ *	  write out a single collation definition
+ */
+static void
+dumpCollation(Archive *fout, CollInfo *collinfo)
+{
+	PQExpBuffer query;
+	PQExpBuffer q;
+	PQExpBuffer delq;
+	PQExpBuffer labelq;
+	PGresult   *res;
+	int			ntups;
+	int			i_collname;
+	int			i_collcollate;
+	int			i_collctype;
+	const char *collname;
+	const char *collcollate;
+	const char *collctype;
+
+	/* Skip if not to be dumped */
+	if (!collinfo->dobj.dump || dataOnly)
+		return;
+
+	query = createPQExpBuffer();
+	q = createPQExpBuffer();
+	delq = createPQExpBuffer();
+	labelq = createPQExpBuffer();
+
+	/* Make sure we are in proper schema */
+	selectSourceSchema(collinfo->dobj.namespace->dobj.name);
+
+	/* Get conversion-specific details */
+	appendPQExpBuffer(query, "SELECT collname, "
+					  "collcollate, "
+					  "collctype "
+					  "FROM pg_catalog.pg_collation c "
+					  "WHERE c.oid = '%u'::pg_catalog.oid",
+					  collinfo->dobj.catId.oid);
+
+	res = PQexec(g_conn, query->data);
+	check_sql_result(res, g_conn, query->data, PGRES_TUPLES_OK);
+
+	/* Expecting a single result only */
+	ntups = PQntuples(res);
+	if (ntups != 1)
+	{
+		write_msg(NULL, ngettext("query returned %d row instead of one: %s\n",
+							   "query returned %d rows instead of one: %s\n",
+								 ntups),
+				  ntups, query->data);
+		exit_nicely();
+	}
+
+	i_collname = PQfnumber(res, "collname");
+	i_collcollate = PQfnumber(res, "collcollate");
+	i_collctype = PQfnumber(res, "collctype");
+
+	collname = PQgetvalue(res, 0, i_collname);
+	collcollate = PQgetvalue(res, 0, i_collcollate);
+	collctype = PQgetvalue(res, 0, i_collctype);
+
+	/*
+	 * DROP must be fully qualified in case same name appears in pg_catalog
+	 */
+	appendPQExpBuffer(delq, "DROP COLLATION %s",
+					  fmtId(collinfo->dobj.namespace->dobj.name));
+	appendPQExpBuffer(delq, ".%s;\n",
+					  fmtId(collinfo->dobj.name));
+
+	appendPQExpBuffer(q, "CREATE COLLATION %s (lc_collate = ",
+					  fmtId(collinfo->dobj.name));
+	appendStringLiteralAH(q, collcollate, fout);
+	appendPQExpBuffer(q, ", lc_ctype = ");
+	appendStringLiteralAH(q, collctype, fout);
+	appendPQExpBuffer(q, ");\n");
+
+	appendPQExpBuffer(labelq, "COLLATION %s", fmtId(collinfo->dobj.name));
+
+	if (binary_upgrade)
+		binary_upgrade_extension_member(q, &collinfo->dobj, labelq->data);
+
+	ArchiveEntry(fout, collinfo->dobj.catId, collinfo->dobj.dumpId,
+				 collinfo->dobj.name,
+				 collinfo->dobj.namespace->dobj.name,
+				 NULL,
+				 collinfo->rolname,
+				 false, "COLLATION", SECTION_PRE_DATA,
+				 q->data, delq->data, NULL,
+				 collinfo->dobj.dependencies, collinfo->dobj.nDeps,
+				 NULL, NULL);
+
+	/* Dump Collation Comments */
+	dumpComment(fout, labelq->data,
+				collinfo->dobj.namespace->dobj.name, collinfo->rolname,
+				collinfo->dobj.catId, 0, collinfo->dobj.dumpId);
+
+	PQclear(res);
+
 	destroyPQExpBuffer(query);
 	destroyPQExpBuffer(q);
 	destroyPQExpBuffer(delq);
@@ -13138,6 +13346,8 @@ getExtensionMembership(ExtensionInfo extinfo[], int numExtensions)
 		 */
 		if (!binary_upgrade)
 			dobj->dump = false;
+		else
+			dobj->dump = refdobj->dump;
 	}
 
 	PQclear(res);

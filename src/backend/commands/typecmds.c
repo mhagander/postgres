@@ -1736,6 +1736,7 @@ AlterDomainDefault(List *names, Node *defaultRaw)
 							 InvalidOid,
 							 false,		/* a domain isn't an implicit array */
 							 typTup->typbasetype,
+							 typTup->typcollation,
 							 defaultExpr,
 							 true);		/* Rebuild is true */
 
@@ -2196,7 +2197,7 @@ get_rels_with_domain(Oid domainOid, LOCKMODE lockmode)
 			 */
 			if (OidIsValid(rel->rd_rel->reltype))
 				find_composite_type_dependencies(rel->rd_rel->reltype,
-												 RELKIND_COMPOSITE_TYPE,
+												 NULL,
 												 format_type_be(domainOid));
 
 			/* Otherwise we can ignore views, composite types, etc */

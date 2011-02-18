@@ -26,6 +26,7 @@
 #include "commands/async.h"
 #include "commands/cluster.h"
 #include "commands/comment.h"
+#include "commands/collationcmds.h"
 #include "commands/conversioncmds.h"
 #include "commands/copy.h"
 #include "commands/dbcommands.h"
@@ -212,7 +213,8 @@ check_xact_readonly(Node *parsetree)
 		case T_AlterTSDictionaryStmt:
 		case T_AlterTSConfigurationStmt:
 		case T_CreateExtensionStmt:
-		case T_AlterExtensionAddStmt:
+		case T_AlterExtensionStmt:
+		case T_AlterExtensionContentsStmt:
 		case T_CreateFdwStmt:
 		case T_AlterFdwStmt:
 		case T_DropFdwStmt:
@@ -601,8 +603,12 @@ standard_ProcessUtility(Node *parsetree,
 			CreateExtension((CreateExtensionStmt *) parsetree);
 			break;
 
-		case T_AlterExtensionAddStmt:
-			ExecAlterExtensionAddStmt((AlterExtensionAddStmt *) parsetree);
+		case T_AlterExtensionStmt:
+			ExecAlterExtensionStmt((AlterExtensionStmt *) parsetree);
+			break;
+
+		case T_AlterExtensionContentsStmt:
+			ExecAlterExtensionContentsStmt((AlterExtensionContentsStmt *) parsetree);
 			break;
 
 		case T_CreateFdwStmt:
@@ -658,6 +664,10 @@ standard_ProcessUtility(Node *parsetree,
 					case OBJECT_TYPE:
 					case OBJECT_DOMAIN:
 						RemoveTypes(stmt);
+						break;
+
+					case OBJECT_COLLATION:
+						DropCollationsCommand(stmt);
 						break;
 
 					case OBJECT_CONVERSION:
@@ -878,6 +888,10 @@ standard_ProcessUtility(Node *parsetree,
 					case OBJECT_TSCONFIGURATION:
 						Assert(stmt->args == NIL);
 						DefineTSConfiguration(stmt->defnames, stmt->definition);
+						break;
+					case OBJECT_COLLATION:
+						Assert(stmt->args == NIL);
+						DefineCollation(stmt->defnames, stmt->definition);
 						break;
 					default:
 						elog(ERROR, "unrecognized define stmt type: %d",
@@ -1448,6 +1462,9 @@ AlterObjectTypeCommandTag(ObjectType objtype)
 		case OBJECT_CAST:
 			tag = "ALTER CAST";
 			break;
+		case OBJECT_COLLATION:
+			tag = "ALTER COLLATION";
+			break;
 		case OBJECT_COLUMN:
 			tag = "ALTER TABLE";
 			break;
@@ -1680,7 +1697,11 @@ CreateCommandTag(Node *parsetree)
 			tag = "CREATE EXTENSION";
 			break;
 
-		case T_AlterExtensionAddStmt:
+		case T_AlterExtensionStmt:
+			tag = "ALTER EXTENSION";
+			break;
+
+		case T_AlterExtensionContentsStmt:
 			tag = "ALTER EXTENSION";
 			break;
 
@@ -1744,6 +1765,9 @@ CreateCommandTag(Node *parsetree)
 					break;
 				case OBJECT_DOMAIN:
 					tag = "DROP DOMAIN";
+					break;
+				case OBJECT_COLLATION:
+					tag = "DROP COLLATION";
 					break;
 				case OBJECT_CONVERSION:
 					tag = "DROP CONVERSION";
@@ -1857,6 +1881,9 @@ CreateCommandTag(Node *parsetree)
 					break;
 				case OBJECT_TSCONFIGURATION:
 					tag = "CREATE TEXT SEARCH CONFIGURATION";
+					break;
+				case OBJECT_COLLATION:
+					tag = "CREATE COLLATION";
 					break;
 				default:
 					tag = "???";
@@ -2307,7 +2334,8 @@ GetCommandLogLevel(Node *parsetree)
 			break;
 
 		case T_CreateExtensionStmt:
-		case T_AlterExtensionAddStmt:
+		case T_AlterExtensionStmt:
+		case T_AlterExtensionContentsStmt:
 			lev = LOGSTMT_DDL;
 			break;
 

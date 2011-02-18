@@ -12,7 +12,7 @@
  * in the primary server), and then keeps receiving XLOG records and
  * writing them to the disk as long as the connection is alive. As XLOG
  * records are received and flushed to disk, it updates the
- * WalRcv->receivedUpTo variable in shared memory, to inform the startup
+ * WalRcv->receivedUpto variable in shared memory, to inform the startup
  * process of how far it can proceed with XLOG replay.
  *
  * Normal termination is by SIGTERM, which instructs the walreceiver to
@@ -38,6 +38,7 @@
 #include <signal.h>
 #include <unistd.h>
 
+#include "access/transam.h"
 #include "access/xlog_internal.h"
 #include "libpq/pqsignal.h"
 #include "miscadmin.h"
@@ -45,6 +46,7 @@
 #include "replication/walreceiver.h"
 #include "storage/ipc.h"
 #include "storage/pmsignal.h"
+#include "storage/procarray.h"
 #include "utils/builtins.h"
 #include "utils/guc.h"
 #include "utils/memutils.h"
@@ -53,6 +55,10 @@
 
 /* Global variable to indicate if this process is a walreceiver process */
 bool		am_walreceiver;
+
+/* GUC variable */
+int			wal_receiver_status_interval;
+bool		hot_standby_feedback;
 
 /* libpqreceiver hooks to these when loaded */
 walrcv_connect_type walrcv_connect = NULL;
@@ -88,6 +94,8 @@ static struct
 	XLogRecPtr	Flush;			/* last byte + 1 flushed in the standby */
 }	LogstreamResult;
 
+static StandbyReplyMessage	reply_message;
+
 /*
  * About SIGTERM handling:
  *
@@ -113,7 +121,8 @@ static void DisableWalRcvImmediateExit(void);
 static void WalRcvDie(int code, Datum arg);
 static void XLogWalRcvProcessMsg(unsigned char type, char *buf, Size len);
 static void XLogWalRcvWrite(char *buf, Size nbytes, XLogRecPtr recptr);
-static void XLogWalRcvFlush(void);
+static void XLogWalRcvFlush(bool dying);
+static void XLogWalRcvSendReply(void);
 
 /* Signal handlers */
 static void WalRcvSigHupHandler(SIGNAL_ARGS);
@@ -306,11 +315,22 @@ WalReceiverMain(void)
 			while (walrcv_receive(0, &type, &buf, &len))
 				XLogWalRcvProcessMsg(type, buf, len);
 
+			/* Let the master know that we received some data. */
+			XLogWalRcvSendReply();
+
 			/*
 			 * If we've written some records, flush them to disk and let the
 			 * startup process know about them.
 			 */
-			XLogWalRcvFlush();
+			XLogWalRcvFlush(false);
+		}
+		else
+		{
+			/*
+			 * We didn't receive anything new, but send a status update to
+			 * the master anyway, to report any progress in applying WAL.
+			 */
+			XLogWalRcvSendReply();
 		}
 	}
 }
@@ -325,7 +345,7 @@ WalRcvDie(int code, Datum arg)
 	volatile WalRcvData *walrcv = WalRcv;
 
 	/* Ensure that all WAL records received are flushed to disk */
-	XLogWalRcvFlush();
+	XLogWalRcvFlush(true);
 
 	SpinLockAcquire(&walrcv->mutex);
 	Assert(walrcv->walRcvState == WALRCV_RUNNING ||
@@ -444,7 +464,7 @@ XLogWalRcvWrite(char *buf, Size nbytes, XLogRecPtr recptr)
 			 */
 			if (recvFile >= 0)
 			{
-				XLogWalRcvFlush();
+				XLogWalRcvFlush(false);
 
 				/*
 				 * XLOG segment files will be re-read by recovery in startup
@@ -514,9 +534,14 @@ XLogWalRcvWrite(char *buf, Size nbytes, XLogRecPtr recptr)
 	}
 }
 
-/* Flush the log to disk */
+/*
+ * Flush the log to disk.
+ *
+ * If we're in the midst of dying, it's unwise to do anything that might throw
+ * an error, so we skip sending a reply in that case.
+ */
 static void
-XLogWalRcvFlush(void)
+XLogWalRcvFlush(bool dying)
 {
 	if (XLByteLT(LogstreamResult.Flush, LogstreamResult.Write))
 	{
@@ -546,5 +571,88 @@ XLogWalRcvFlush(void)
 					 LogstreamResult.Write.xrecoff);
 			set_ps_display(activitymsg, false);
 		}
+
+		/* Also let the master know that we made some progress */
+		if (!dying)
+			XLogWalRcvSendReply();
 	}
+}
+
+/*
+ * Send reply message to primary, indicating our current XLOG positions and
+ * the current time.
+ */
+static void
+XLogWalRcvSendReply(void)
+{
+	char		buf[sizeof(StandbyReplyMessage) + 1];
+	TimestampTz	now;
+
+	/*
+	 * If the user doesn't want status to be reported to the master, be sure
+	 * to exit before doing anything at all.
+	 */
+	if (wal_receiver_status_interval <= 0)
+		return;
+
+	/* Get current timestamp. */
+	now = GetCurrentTimestamp();
+
+	/*
+	 * We can compare the write and flush positions to the last message we
+	 * sent without taking any lock, but the apply position requires a spin
+	 * lock, so we don't check that unless something else has changed or 10
+	 * seconds have passed.  This means that the apply log position will
+	 * appear, from the master's point of view, to lag slightly, but since
+	 * this is only for reporting purposes and only on idle systems, that's
+	 * probably OK.
+	 */
+	if (XLByteEQ(reply_message.write, LogstreamResult.Write)
+		&& XLByteEQ(reply_message.flush, LogstreamResult.Flush)
+		&& !TimestampDifferenceExceeds(reply_message.sendTime, now,
+			wal_receiver_status_interval * 1000))
+		return;
+
+	/* Construct a new message */
+	reply_message.write = LogstreamResult.Write;
+	reply_message.flush = LogstreamResult.Flush;
+	reply_message.apply = GetXLogReplayRecPtr();
+	reply_message.sendTime = now;
+
+	/*
+	 * Get the OldestXmin and its associated epoch
+	 */
+	if (hot_standby_feedback && HotStandbyActive())
+	{
+		TransactionId	nextXid;
+		uint32			nextEpoch;
+
+		reply_message.xmin = GetOldestXmin(true, false);
+
+		/*
+		 * Get epoch and adjust if nextXid and oldestXmin are different
+		 * sides of the epoch boundary.
+		 */
+		GetNextXidAndEpoch(&nextXid, &nextEpoch);
+		if (nextXid < reply_message.xmin)
+			nextEpoch--;
+		reply_message.epoch = nextEpoch;
+	}
+	else
+	{
+		reply_message.xmin = InvalidTransactionId;
+		reply_message.epoch = 0;
+	}
+
+	elog(DEBUG2, "sending write %X/%X flush %X/%X apply %X/%X xmin %u epoch %u",
+				 reply_message.write.xlogid, reply_message.write.xrecoff,
+				 reply_message.flush.xlogid, reply_message.flush.xrecoff,
+				 reply_message.apply.xlogid, reply_message.apply.xrecoff,
+				 reply_message.xmin,
+				 reply_message.epoch);
+
+	/* Prepend with the message type and send it. */
+	buf[0] = 'r';
+	memcpy(&buf[1], &reply_message, sizeof(StandbyReplyMessage));
+	walrcv_send(buf, sizeof(StandbyReplyMessage) + 1);
 }

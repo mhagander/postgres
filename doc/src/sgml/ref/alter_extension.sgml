@@ -23,13 +23,16 @@ PostgreSQL documentation
 
  <refsynopsisdiv>
 <synopsis>
+ALTER EXTENSION <replaceable class="PARAMETER">extension_name</replaceable> UPDATE [ TO <replaceable class="PARAMETER">new_version</replaceable> ]
 ALTER EXTENSION <replaceable class="PARAMETER">extension_name</replaceable> SET SCHEMA <replaceable class="PARAMETER">new_schema</replaceable>
 ALTER EXTENSION <replaceable class="PARAMETER">extension_name</replaceable> ADD <replaceable class="PARAMETER">member_object</replaceable>
+ALTER EXTENSION <replaceable class="PARAMETER">extension_name</replaceable> DROP <replaceable class="PARAMETER">member_object</replaceable>
 
 <phrase>where <replaceable class="PARAMETER">member_object</replaceable> is:</phrase>
 
   AGGREGATE <replaceable class="PARAMETER">agg_name</replaceable> (<replaceable class="PARAMETER">agg_type</replaceable> [, ...] ) |
   CAST (<replaceable>source_type</replaceable> AS <replaceable>target_type</replaceable>) |
+  COLLATION <replaceable class="PARAMETER">object_name</replaceable> |
   CONVERSION <replaceable class="PARAMETER">object_name</replaceable> |
   DOMAIN <replaceable class="PARAMETER">object_name</replaceable> |
   FOREIGN DATA WRAPPER <replaceable class="PARAMETER">object_name</replaceable> |
@@ -61,6 +64,17 @@ ALTER EXTENSION <replaceable class="PARAMETER">extension_name</replaceable> ADD 
 
    <variablelist>
    <varlistentry>
+    <term><literal>UPDATE</literal></term>
+    <listitem>
+     <para>
+      This form updates the extension to a newer version.  The extension
+      must supply a suitable update script (or series of scripts) that can
+      modify the currently-installed version into the requested version.
+     </para>
+    </listitem>
+   </varlistentry>
+
+   <varlistentry>
     <term><literal>SET SCHEMA</literal></term>
     <listitem>
      <para>
@@ -76,9 +90,20 @@ ALTER EXTENSION <replaceable class="PARAMETER">extension_name</replaceable> ADD 
     <listitem>
      <para>
       This form adds an existing object to the extension.  This is mainly
-      useful in extension upgrade scripts.  The object will subsequently
+      useful in extension update scripts.  The object will subsequently
       be treated as a member of the extension; notably, it can only be
       dropped by dropping the extension.
+     </para>
+    </listitem>
+   </varlistentry>
+
+   <varlistentry>
+    <term><literal>DROP <replaceable class="PARAMETER">member_object</replaceable></literal></term>
+    <listitem>
+     <para>
+      This form removes a member object from the extension.  This is mainly
+      useful in extension update scripts.  The object is not dropped, only
+      disassociated from the extension.
      </para>
     </listitem>
    </varlistentry>
@@ -108,6 +133,18 @@ ALTER EXTENSION <replaceable class="PARAMETER">extension_name</replaceable> ADD 
     </varlistentry>
 
     <varlistentry>
+     <term><replaceable class="PARAMETER">new_version</replaceable></term>
+     <listitem>
+      <para>
+       The desired new version of the extension.  This can be written as
+       either an identifier or a string literal.  If not specified,
+       <command>ALTER EXTENSION UPDATE</> attempts to update to whatever is
+       shown as the default version in the extension's control file.
+      </para>
+     </listitem>
+    </varlistentry>
+
+    <varlistentry>
      <term><replaceable class="PARAMETER">new_schema</replaceable></term>
      <listitem>
       <para>
@@ -123,7 +160,8 @@ ALTER EXTENSION <replaceable class="PARAMETER">extension_name</replaceable> ADD 
      <term><replaceable class="parameter">operator_name</replaceable></term>
      <listitem>
       <para>
-       The name of an object to be added to the extension.  Names of tables,
+       The name of an object to be added to or removed from the extension.
+       Names of tables,
        aggregates, domains, foreign tables, functions, operators,
        operator classes, operator families, sequences, text search objects,
        types, and views can be schema-qualified.
@@ -218,7 +256,14 @@ ALTER EXTENSION <replaceable class="PARAMETER">extension_name</replaceable> ADD 
   <title>Examples</title>
 
   <para>
-   To change the schema of the extension <literal>hstore</literal>
+   To update the <literal>hstore</literal> extension to version 2.0:
+<programlisting>
+ALTER EXTENSION hstore UPDATE TO '2.0';
+</programlisting>
+  </para>
+
+  <para>
+   To change the schema of the <literal>hstore</literal> extension
    to <literal>utils</literal>:
 <programlisting>
 ALTER EXTENSION hstore SET SCHEMA utils;
