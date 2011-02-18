@@ -1,7 +1,7 @@
 /*-------------------------------------------------------------------------
  *
  * receivelog.c - receive transaction log files using the streaming
- *                replication protocol.
+ *				  replication protocol.
  *
  * Author: Magnus Hagander <magnus@hagander.net>
  *
@@ -38,8 +38,8 @@
 static int
 open_walfile(XLogRecPtr startpoint, uint32 timeline, char *basedir, char *namebuf)
 {
-	int f;
-	char fn[MAXPGPATH];
+	int			f;
+	char		fn[MAXPGPATH];
 
 	XLogFileName(namebuf, timeline, startpoint.xlogid,
 				 startpoint.xrecoff / XLOG_SEG_SIZE);
@@ -58,13 +58,14 @@ open_walfile(XLogRecPtr startpoint, uint32 timeline, char *basedir, char *namebu
  * Note: The log position *must* be at a log segment change, or we will
  * end up streaming an incomplete file.
  */
-bool ReceiveXlogStream(PGconn *conn, XLogRecPtr startpos, uint32 timeline, char *basedir, segment_finish_callback segment_finish)
+bool
+ReceiveXlogStream(PGconn *conn, XLogRecPtr startpos, uint32 timeline, char *basedir, segment_finish_callback segment_finish)
 {
-	char query[128];
-	char current_walfile_name[MAXPGPATH];
-	PGresult *res;
-	char *copybuf = NULL;
-	int walfile = -1;
+	char		query[128];
+	char		current_walfile_name[MAXPGPATH];
+	PGresult   *res;
+	char	   *copybuf = NULL;
+	int			walfile = -1;
 
 	/* Initiate the replication stream at specified location */
 	snprintf(query, sizeof(query), "START_REPLICATION %X/%X", startpos.xlogid, startpos.xrecoff);
@@ -83,8 +84,8 @@ bool ReceiveXlogStream(PGconn *conn, XLogRecPtr startpos, uint32 timeline, char 
 	while (1)
 	{
 		XLogRecPtr	blockstart;
-		int r;
-		int xlogoff;
+		int			r;
+		int			xlogoff;
 
 		if (copybuf != NULL)
 		{
@@ -189,9 +190,9 @@ bool ReceiveXlogStream(PGconn *conn, XLogRecPtr startpos, uint32 timeline, char 
 
 	/*
 	 * The only way to get out of the loop is if the server shut down the
-	 * replication stream. If it's a controlled shutdown, the server will
-	 * send a shutdown message, and we'll return the latest xlog location
-	 * that has been streamed.
+	 * replication stream. If it's a controlled shutdown, the server will send
+	 * a shutdown message, and we'll return the latest xlog location that has
+	 * been streamed.
 	 */
 
 	res = PQgetResult(conn);

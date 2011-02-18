@@ -47,9 +47,11 @@ static uint64 totaldone;
 static int	tablespacecount;
 
 /* Pipe to communicate with background wal receiver process */
-static int bgpipe[2] = {-1, -1};
+static int	bgpipe[2] = {-1, -1};
+
 /* Handle to child process */
 static pid_t bgchild = -1;
+
 /* End position for xlog streaming, empty string if unknown yet */
 static XLogRecPtr xlogendptr;
 static bool has_xlogendptr = false;
@@ -120,9 +122,9 @@ usage(void)
 static bool
 segment_callback(XLogRecPtr segendpos, uint32 timeline)
 {
-	fd_set fds;
+	fd_set		fds;
 	struct timeval tv;
-	int r;
+	int			r;
 
 	if (has_xlogendptr)
 	{
@@ -134,8 +136,8 @@ segment_callback(XLogRecPtr segendpos, uint32 timeline)
 	}
 
 	/*
-	 * Don't have the end pointer yet - check our pipe to see if it
-	 * has been sent now.
+	 * Don't have the end pointer yet - check our pipe to see if it has been
+	 * sent now.
 	 */
 	FD_ZERO(&fds);
 	FD_SET(bgpipe[0], &fds);
@@ -145,7 +147,7 @@ segment_callback(XLogRecPtr segendpos, uint32 timeline)
 	r = select(bgpipe[0] + 1, &fds, NULL, NULL, &tv);
 	if (r == 1)
 	{
-		char xlogend[64];
+		char		xlogend[64];
 
 		MemSet(xlogend, 0, sizeof(xlogend));
 		r = piperead(bgpipe[0], xlogend, sizeof(xlogend));
@@ -180,9 +182,9 @@ segment_callback(XLogRecPtr segendpos, uint32 timeline)
 static void
 StartLogStreamer(char *startpos, uint32 timeline)
 {
-	PGconn *bgconn;
-	XLogRecPtr startptr;
-	char	xlogdir[MAXPGPATH];
+	PGconn	   *bgconn;
+	XLogRecPtr	startptr;
+	char		xlogdir[MAXPGPATH];
 
 	/* Convert the starting position */
 	if (sscanf(startpos, "%X/%X", &startptr.xlogid, &startptr.xrecoff) != 2)
@@ -206,9 +208,9 @@ StartLogStreamer(char *startpos, uint32 timeline)
 	bgconn = GetConnection();
 
 	/*
-	 * Always in plain format, so we can write to basedir/pg_xlog.
-	 * But the directory entry in the tar file may arrive later,
-	 * so make sure it's created before we start.
+	 * Always in plain format, so we can write to basedir/pg_xlog. But the
+	 * directory entry in the tar file may arrive later, so make sure it's
+	 * created before we start.
 	 */
 	snprintf(xlogdir, sizeof(xlogdir), "%s/pg_xlog", basedir);
 	verify_dir_is_empty_or_create(xlogdir);
@@ -221,11 +223,12 @@ StartLogStreamer(char *startpos, uint32 timeline)
 		/* in child process */
 
 		if (!ReceiveXlogStream(bgconn, startptr, timeline, xlogdir, segment_callback))
+
 			/*
 			 * Any errors will already have been reported in the function
-			 * process, but we need to tell the parent that we didn't
-			 * shutdown in a nice way. Do this by exiting with an error
-			 * code and expect it to be picked up.
+			 * process, but we need to tell the parent that we didn't shutdown
+			 * in a nice way. Do this by exiting with an error code and expect
+			 * it to be picked up.
 			 */
 			exit(1);
 
@@ -235,7 +238,7 @@ StartLogStreamer(char *startpos, uint32 timeline)
 	else if (bgchild < 0)
 	{
 		fprintf(stderr, _("%s: could not create background process: %s\n"),
-						  progname, strerror(errno));
+				progname, strerror(errno));
 		disconnect_and_exit(1);
 	}
 
@@ -301,13 +304,14 @@ verify_dir_is_empty_or_create(char *dirname)
 static void
 progress_report(int tablespacenum, char *fn)
 {
-	int percent = (int) ((totaldone / 1024) * 100 / totalsize);
+	int			percent = (int) ((totaldone / 1024) * 100 / totalsize);
+
 	if (percent > 100)
 		percent = 100;
 
 	if (!fn)
 		fprintf(stderr,
-				INT64_FORMAT "/" INT64_FORMAT " kb g(100%%) %i/%i tablespaces %35s\r",
+		INT64_FORMAT "/" INT64_FORMAT " kb g(100%%) %i/%i tablespaces %35s\r",
 				totaldone / 1024, totalsize,
 				tablespacenum, tablespacecount, "");
 	else if (verbose)
@@ -942,8 +946,8 @@ BaseBackup()
 
 	if (bgchild != -1)
 	{
-		int status;
-		int r;
+		int			status;
+		int			r;
 
 		if (verbose)
 			fprintf(stderr, _("%s: waiting for background process to finish streaming...\n"), progname);

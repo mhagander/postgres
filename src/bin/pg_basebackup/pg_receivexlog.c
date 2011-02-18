@@ -78,7 +78,7 @@ usage(void)
 static bool
 segment_callback(XLogRecPtr segendpos, uint32 timeline)
 {
-	char fn[MAXPGPATH];
+	char		fn[MAXPGPATH];
 	struct stat statbuf;
 
 	if (verbose)
@@ -86,9 +86,9 @@ segment_callback(XLogRecPtr segendpos, uint32 timeline)
 				progname, segendpos.xlogid, segendpos.xrecoff, timeline);
 
 	/*
-	 * Check if there is a partial file for the name we just finished,
-	 * and if there is, remove it under the assumption that we have now
-	 * got all the data we need.
+	 * Check if there is a partial file for the name we just finished, and if
+	 * there is, remove it under the assumption that we have now got all the
+	 * data we need.
 	 */
 	PrevLogSeg(segendpos.xlogid, segendpos.xrecoff);
 	snprintf(fn, sizeof(fn), "%s/%08X%08X%08X.partial",
@@ -112,18 +112,18 @@ segment_callback(XLogRecPtr segendpos, uint32 timeline)
  * Determine starting location for streaming, based on:
  * 1. If there are existing xlog segments, start at the end of the last one
  * 2. If the last one is a partial segment, rename it and start over, since
- *    we don't sync after every write.
+ *	  we don't sync after every write.
  * 3. If no existing xlog exists, start from the beginning of the current
- *    WAL segment.
+ *	  WAL segment.
  */
 static XLogRecPtr
 FindStreamingStart(XLogRecPtr currentpos, uint32 currenttimeline)
 {
-	DIR	   *dir;
+	DIR		   *dir;
 	struct dirent *dirent;
-	int		i;
-	bool	b;
-	XLogRecPtr high = {0,0};
+	int			i;
+	bool		b;
+	XLogRecPtr	high = {0, 0};
 
 	dir = opendir(basedir);
 	if (dir == NULL)
@@ -135,9 +135,11 @@ FindStreamingStart(XLogRecPtr currentpos, uint32 currenttimeline)
 
 	while ((dirent = readdir(dir)) != NULL)
 	{
-		char fullpath[MAXPGPATH];
+		char		fullpath[MAXPGPATH];
 		struct stat statbuf;
-		uint32	tli, log, seg;
+		uint32		tli,
+					log,
+					seg;
 
 		if (!strcmp(dirent->d_name, ".") || !strcmp(dirent->d_name, ".."))
 			continue;
@@ -176,7 +178,7 @@ FindStreamingStart(XLogRecPtr currentpos, uint32 currenttimeline)
 			continue;
 
 		/* Check if this is a completed segment or not */
-		snprintf(fullpath, sizeof(fullpath),  "%s/%s", basedir, dirent->d_name);
+		snprintf(fullpath, sizeof(fullpath), "%s/%s", basedir, dirent->d_name);
 		if (stat(fullpath, &statbuf) != 0)
 		{
 			fprintf(stderr, _("%s: could not stat file \"%s\": %s\n"),
@@ -200,7 +202,7 @@ FindStreamingStart(XLogRecPtr currentpos, uint32 currenttimeline)
 			/*
 			 * This is a partial file. Rename it out of the way.
 			 */
-			char newfn[MAXPGPATH];
+			char		newfn[MAXPGPATH];
 
 			fprintf(stderr, _("%s: renaming partial file \"%s\" to \"%s.partial\"\n"),
 					progname, dirent->d_name, dirent->d_name);
@@ -250,8 +252,8 @@ StreamLog(void)
 	conn = GetConnection();
 
 	/*
-	 * Run IDENFITY_SYSTEM so we can get the timeline and current
-	 * xlog position.
+	 * Run IDENFITY_SYSTEM so we can get the timeline and current xlog
+	 * position.
 	 */
 	res = PQexec(conn, "IDENTIFY_SYSTEM");
 	if (PQresultStatus(res) != PGRES_TUPLES_OK)
