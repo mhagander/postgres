@@ -37,7 +37,7 @@ installdirs:
 
 uninstall:
 	rm -f '$(DESTDIR)$(bindir)/pg_basebackup$(X)'
-	rm -f '$(DESTDIR)$(bindir)/pg_receivexlog(X)'
+	rm -f '$(DESTDIR)$(bindir)/pg_receivexlog$(X)'
 
 clean distclean maintainer-clean:
 	rm -f pg_basebackup$(X) pg_receivexlog$(X) $(OBJS) pg_basebackup.o pg_receivexlog.o
