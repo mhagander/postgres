@@ -172,6 +172,7 @@ Complete list of usable sgml source files in this directory.
 <!entity pgCtl              system "pg_ctl-ref.sgml">
 <!entity pgDump             system "pg_dump.sgml">
 <!entity pgDumpall          system "pg_dumpall.sgml">
+<!entity pgReceivexlog      system "pg_receivexlog.sgml">
 <!entity pgResetxlog        system "pg_resetxlog.sgml">
 <!entity pgRestore          system "pg_restore.sgml">
 <!entity postgres           system "postgres-ref.sgml">
