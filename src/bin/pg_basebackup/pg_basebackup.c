@@ -93,7 +93,7 @@ usage(void)
 	printf(_("\nOptions controlling the output:\n"));
 	printf(_("  -D, --pgdata=directory    receive base backup into directory\n"));
 	printf(_("  -F, --format=p|t          output format (plain, tar)\n"));
-	printf(_("  -x, --xlog[=stream]       include required WAL files in backup\n"));
+	printf(_("  -x, --xlog=fetch|stream   include required WAL files in backup\n"));
 	printf(_("  -Z, --compress=0-9        compress tar output\n"));
 	printf(_("\nGeneral options:\n"));
 	printf(_("  -c, --checkpoint=fast|spread\n"
@@ -1021,7 +1021,7 @@ main(int argc, char **argv)
 		{"pgdata", required_argument, NULL, 'D'},
 		{"format", required_argument, NULL, 'F'},
 		{"checkpoint", required_argument, NULL, 'c'},
-		{"xlog", optional_argument, NULL, 'x'},
+		{"xlog", required_argument, NULL, 'x'},
 		{"compress", required_argument, NULL, 'Z'},
 		{"label", required_argument, NULL, 'l'},
 		{"host", required_argument, NULL, 'h'},
@@ -1055,7 +1055,7 @@ main(int argc, char **argv)
 		}
 	}
 
-	while ((c = getopt_long(argc, argv, "D:F:l:Z:c:h:p:U:xwWvP",
+	while ((c = getopt_long(argc, argv, "D:F:l:Z:c:h:p:U:x:wWvP",
 							long_options, &option_index)) != -1)
 	{
 		switch (c)
@@ -1077,17 +1077,17 @@ main(int argc, char **argv)
 				break;
 			case 'x':
 				includewal = true;
-				if (optarg)
+				if (strcmp(optarg, "f") == 0 ||
+					strcmp(optarg, "fetch") == 0)
+					streamwal = false;
+				else if (strcmp(optarg, "s") == 0 ||
+						 strcmp(optarg, "stream") == 0)
+					streamwal = true;
+				else
 				{
-					if (strcmp(optarg, "s") == 0 ||
-						strcmp(optarg, "stream") == 0)
-						streamwal = true;
-					else
-					{
-						fprintf(stderr, _("%s: invalid xlog option \"%s\", must be empty or \"stream\"\n"),
-								progname, optarg);
-						exit(1);
-					}
+					fprintf(stderr, _("%s: invalid xlog option \"%s\", must be empty or \"stream\"\n"),
+							progname, optarg);
+					exit(1);
 				}
 				break;
 			case 'l':
