@@ -56,7 +56,7 @@ static pid_t bgchild = -1;
 
 /* End position for xlog streaming, empty string if unknown yet */
 static XLogRecPtr xlogendptr;
-static int has_xlogendptr = 0;
+static int	has_xlogendptr = 0;
 
 /* Function headers */
 static void usage(void);
@@ -135,8 +135,8 @@ segment_callback(XLogRecPtr segendpos, uint32 timeline)
 		int			r;
 
 		/*
-		 * Don't have the end pointer yet - check our pipe to see if it
-		 * has been sent yet.
+		 * Don't have the end pointer yet - check our pipe to see if it has
+		 * been sent yet.
 		 */
 		FD_ZERO(&fds);
 		FD_SET(bgpipe[0], &fds);
@@ -164,6 +164,7 @@ segment_callback(XLogRecPtr segendpos, uint32 timeline)
 				exit(1);
 			}
 			has_xlogendptr = 1;
+
 			/*
 			 * Fall through to check if we've reached the point further
 			 * already.
@@ -178,9 +179,10 @@ segment_callback(XLogRecPtr segendpos, uint32 timeline)
 			return false;
 		}
 #else
+
 		/*
-		 * On win32, has_xlogendptr is set by the main thread, so if it's
-		 * not set here, we just go back and wait until it shows up.
+		 * On win32, has_xlogendptr is set by the main thread, so if it's not
+		 * set here, we just go back and wait until it shows up.
 		 */
 		return false;
 #endif
@@ -196,28 +198,29 @@ segment_callback(XLogRecPtr segendpos, uint32 timeline)
 		return true;
 
 	/*
-	 * Have end pointer, but haven't reached it yet - so tell the caller
-	 * to keep streaming.
+	 * Have end pointer, but haven't reached it yet - so tell the caller to
+	 * keep streaming.
 	 */
 	return false;
 }
 
 typedef struct
 {
-	PGconn *bgconn;
-	XLogRecPtr startptr;
-	char	xlogdir[MAXPGPATH];
-	int timeline;
-} logstreamer_param;
+	PGconn	   *bgconn;
+	XLogRecPtr	startptr;
+	char		xlogdir[MAXPGPATH];
+	int			timeline;
+}	logstreamer_param;
 
 static int
-LogStreamerMain(logstreamer_param *param)
+LogStreamerMain(logstreamer_param * param)
 {
-	if (!ReceiveXlogStream(param->bgconn, param->startptr, param->timeline, param-> xlogdir, segment_callback))
+	if (!ReceiveXlogStream(param->bgconn, param->startptr, param->timeline, param->xlogdir, segment_callback))
+
 		/*
-		 * Any errors will already have been reported in the function
-		 * process, but we need to tell the parent that we didn't shutdown
-		 * in a nice way.
+		 * Any errors will already have been reported in the function process,
+		 * but we need to tell the parent that we didn't shutdown in a nice
+		 * way.
 		 */
 		return 1;
 
@@ -270,8 +273,8 @@ StartLogStreamer(char *startpos, uint32 timeline)
 	verify_dir_is_empty_or_create(param->xlogdir);
 
 	/*
-	 * Start a child process and tell it to start streaming. On Unix, this
-	 * is a fork(). On Windows, we create a thread.
+	 * Start a child process and tell it to start streaming. On Unix, this is
+	 * a fork(). On Windows, we create a thread.
 	 */
 #ifndef WIN32
 	bgchild = fork();
@@ -290,8 +293,8 @@ StartLogStreamer(char *startpos, uint32 timeline)
 	/*
 	 * Else we are in the parent process and all is well.
 	 */
-#else /* WIN32 */
-	bgchild = _beginthreadex(NULL, 0, (void *)LogStreamerMain, param, 0, NULL);
+#else							/* WIN32 */
+	bgchild = _beginthreadex(NULL, 0, (void *) LogStreamerMain, param, 0, NULL);
 	if (bgchild == 0)
 	{
 		fprintf(stderr, _("%s: could not create background thread: %s\n"),
@@ -1041,11 +1044,12 @@ BaseBackup()
 			disconnect_and_exit(1);
 		}
 		/* Exited normally, we're happy! */
-#else /* WIN32 */
+#else							/* WIN32 */
+
 		/*
-		 * On Windows, since we are in the same thread, we can just store
-		 * the value directly in the variable, and then set the flag that
-		 * says it's there.
+		 * On Windows, since we are in the same thread, we can just store the
+		 * value directly in the variable, and then set the flag that says
+		 * it's there.
 		 */
 		if (sscanf(xlogend, "%X/%X", &xlogendptr.xlogid, &xlogendptr.xrecoff) != 2)
 		{
