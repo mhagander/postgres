@@ -983,19 +983,19 @@ BaseBackup()
 		}
 		if (r != bgchild)
 		{
-			fprintf(stderr, "%s: child %i died, expected %i\n",
+			fprintf(stderr, _("%s: child %i died, expected %i\n"),
 					progname, r, bgchild);
 			disconnect_and_exit(1);
 		}
 		if (!WIFEXITED(status))
 		{
-			fprintf(stderr, "%s: child process did not exit normally\n",
+			fprintf(stderr, _("%s: child process did not exit normally\n"),
 					progname);
 			disconnect_and_exit(1);
 		}
 		if (WEXITSTATUS(status) != 0)
 		{
-			fprintf(stderr, "%s: child process exited with error %i\n",
+			fprintf(stderr, _("%s: child process exited with error %i\n"),
 					progname, WEXITSTATUS(status));
 			disconnect_and_exit(1);
 		}
