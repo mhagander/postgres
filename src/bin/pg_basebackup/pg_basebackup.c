@@ -50,11 +50,7 @@ static int	tablespacecount;
 static int	bgpipe[2] = {-1, -1};
 
 /* Handle to child process */
-#ifndef WIN32
 static pid_t bgchild = -1;
-#else
-static HANDLE bgchild = -1;
-#endif
 
 /* End position for xlog streaming, empty string if unknown yet */
 static XLogRecPtr xlogendptr;
@@ -281,7 +277,7 @@ StartLogStreamer(char *startpos, uint32 timeline)
 	 */
 #else /* WIN32 */
 	bgchild = _beginthreadex(NULL, 0, (void *)LogStreamerMain, param, 0, NULL);
-	if (bgchild == -1)
+	if (bgchild == 0)
 	{
 		fprintf(stderr, _("%s: could not create background thread: %s\n"),
 				progname, strerror(errno));
@@ -987,7 +983,7 @@ BaseBackup()
 		disconnect_and_exit(1);
 	}
 
-	if (bgchild != -1)
+	if (bgchild > 0)
 	{
 		int			status;
 		int			r;
@@ -1031,14 +1027,14 @@ BaseBackup()
 		/* Exited normally, we're happy! */
 #else /* WIN32 */
 		/* First wait for the thread to exit */
-		if (WaitForSingleObjectEx(bgchild, INFINITE, FALSE) != WAIT_OBJECT_0)
+		if (WaitForSingleObjectEx((HANDLE) bgchild, INFINITE, FALSE) != WAIT_OBJECT_0)
 		{
 			_dosmaperr();
 			fprintf(stderr, _("%s: could not wait for child thread: %s\n"),
 					progname, strerror(errno));
 			disconnect_and_exit(1);
 		}
-		if (GetExitCodeThread(bgchild, &status) == 0)
+		if (GetExitCodeThread((HANDLE) bgchild, &status) == 0)
 		{
 			_dosmaperr();
 			fprintf(stderr, _("%s: could not get child thread exit status: %s\n"),
