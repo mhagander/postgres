@@ -116,7 +116,9 @@ static void WalSndKill(int code, Datum arg);
 static bool XLogSend(char *msgbuf, bool *caughtup);
 static void IdentifySystem(void);
 static void StartReplication(StartReplicationCmd * cmd);
+static void ProcessStandbyMessage(void);
 static void ProcessStandbyReplyMessage(void);
+static void ProcessStandbyHSFeedbackMessage(void);
 static void ProcessRepliesIfAny(void);
 
 
@@ -367,6 +369,16 @@ StartReplication(StartReplicationCmd * cmd)
 				(errcode(ERRCODE_CANNOT_CONNECT_NOW),
 		errmsg("standby connections not allowed because wal_level=minimal")));
 
+	/*
+	 * When we first start replication the standby will be behind the primary.
+	 * For some applications, for example, synchronous replication, it is
+	 * important to have a clear state for this initial catchup mode, so we
+	 * can trigger actions when we change streaming state later. We may stay
+	 * in this state for a long time, which is exactly why we want to be
+	 * able to monitor whether or not we are still here.
+	 */
+	WalSndSetState(WALSNDSTATE_CATCHUP);
+
 	/* Send a CopyBothResponse message, and start streaming */
 	pq_beginmessage(&buf, 'W');
 	pq_sendbyte(&buf, 0);
@@ -456,42 +468,45 @@ ProcessRepliesIfAny(void)
 	unsigned char firstchar;
 	int			r;
 
-	r = pq_getbyte_if_available(&firstchar);
-	if (r < 0)
+	for (;;)
 	{
-		/* unexpected error or EOF */
-		ereport(COMMERROR,
-				(errcode(ERRCODE_PROTOCOL_VIOLATION),
-				 errmsg("unexpected EOF on standby connection")));
-		proc_exit(0);
-	}
-	if (r == 0)
-	{
-		/* no data available without blocking */
-		return;
-	}
-
-	/* Handle the very limited subset of commands expected in this phase */
-	switch (firstchar)
-	{
-			/*
-			 * 'd' means a standby reply wrapped in a CopyData packet.
-			 */
-		case 'd':
-			ProcessStandbyReplyMessage();
-			break;
-
-			/*
-			 * 'X' means that the standby is closing down the socket.
-			 */
-		case 'X':
-			proc_exit(0);
-
-		default:
-			ereport(FATAL,
+		r = pq_getbyte_if_available(&firstchar);
+		if (r < 0)
+		{
+			/* unexpected error or EOF */
+			ereport(COMMERROR,
 					(errcode(ERRCODE_PROTOCOL_VIOLATION),
-					 errmsg("invalid standby closing message type %d",
-							firstchar)));
+					 errmsg("unexpected EOF on standby connection")));
+			proc_exit(0);
+		}
+		if (r == 0)
+		{
+			/* no data available without blocking */
+			return;
+		}
+
+		/* Handle the very limited subset of commands expected in this phase */
+		switch (firstchar)
+		{
+				/*
+				 * 'd' means a standby reply wrapped in a CopyData packet.
+				 */
+			case 'd':
+				ProcessStandbyMessage();
+				break;
+
+				/*
+				 * 'X' means that the standby is closing down the socket.
+				 */
+			case 'X':
+				proc_exit(0);
+
+			default:
+				ereport(FATAL,
+						(errcode(ERRCODE_PROTOCOL_VIOLATION),
+						 errmsg("invalid standby closing message type %d",
+								firstchar)));
+		}
 	}
 }
 
@@ -499,11 +514,9 @@ ProcessRepliesIfAny(void)
  * Process a status update message received from standby.
  */
 static void
-ProcessStandbyReplyMessage(void)
+ProcessStandbyMessage(void)
 {
-	StandbyReplyMessage	reply;
 	char msgtype;
-	TransactionId newxmin = InvalidTransactionId;
 
 	resetStringInfo(&reply_message);
 
@@ -523,22 +536,39 @@ ProcessStandbyReplyMessage(void)
 	 * one type.
 	 */
 	msgtype = pq_getmsgbyte(&reply_message);
-	if (msgtype != 'r')
+
+	switch (msgtype)
 	{
-		ereport(COMMERROR,
-				(errcode(ERRCODE_PROTOCOL_VIOLATION),
-				 errmsg("unexpected message type %c", msgtype)));
-		proc_exit(0);
+		case 'r':
+			ProcessStandbyReplyMessage();
+			break;
+
+		case 'h':
+			ProcessStandbyHSFeedbackMessage();
+			break;
+
+		default:
+			ereport(COMMERROR,
+					(errcode(ERRCODE_PROTOCOL_VIOLATION),
+					 errmsg("unexpected message type %c", msgtype)));
+			proc_exit(0);
 	}
+}
+
+/*
+ * Regular reply from standby advising of WAL positions on standby server.
+ */
+static void
+ProcessStandbyReplyMessage(void)
+{
+	StandbyReplyMessage	reply;
 
 	pq_copymsgbytes(&reply_message, (char *) &reply, sizeof(StandbyReplyMessage));
 
-	elog(DEBUG2, "write %X/%X flush %X/%X apply %X/%X xmin %u epoch %u",
+	elog(DEBUG2, "write %X/%X flush %X/%X apply %X/%X",
 		 reply.write.xlogid, reply.write.xrecoff,
 		 reply.flush.xlogid, reply.flush.xrecoff,
-		 reply.apply.xlogid, reply.apply.xrecoff,
-		 reply.xmin,
-		 reply.epoch);
+		 reply.apply.xlogid, reply.apply.xrecoff);
 
 	/*
 	 * Update shared state for this WalSender process
@@ -554,6 +584,22 @@ ProcessStandbyReplyMessage(void)
 		walsnd->apply = reply.apply;
 		SpinLockRelease(&walsnd->mutex);
 	}
+}
+
+/*
+ * Hot Standby feedback
+ */
+static void
+ProcessStandbyHSFeedbackMessage(void)
+{
+	StandbyHSFeedbackMessage	reply;
+	TransactionId newxmin = InvalidTransactionId;
+
+	pq_copymsgbytes(&reply_message, (char *) &reply, sizeof(StandbyHSFeedbackMessage));
+
+	elog(DEBUG2, "hot standby feedback xmin %u epoch %u",
+		 reply.xmin,
+		 reply.epoch);
 
 	/*
 	 * Update the WalSender's proc xmin to allow it to be visible
@@ -716,8 +762,17 @@ WalSndLoop(void)
 				break;
 		}
 
-		/* Update our state to indicate if we're behind or not */
-		WalSndSetState(caughtup ? WALSNDSTATE_STREAMING : WALSNDSTATE_CATCHUP);
+		/*
+		 * If we're in catchup state, see if its time to move to streaming.
+		 * This is an important state change for users, since before this
+		 * point data loss might occur if the primary dies and we need to
+		 * failover to the standby. The state change is also important for
+		 * synchronous replication, since commits that started to wait at
+		 * that point might wait for some time.
+		 */
+		if (MyWalSnd->state == WALSNDSTATE_CATCHUP && caughtup)
+			WalSndSetState(WALSNDSTATE_STREAMING);
+
 		ProcessRepliesIfAny();
 	}
 

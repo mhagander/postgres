@@ -3913,6 +3913,10 @@ DATA(insert OID = 2777 (  anynonarray_in	PGNSP PGUID 12 1 0 0 f f f t f i 1 0 27
 DESCR("I/O");
 DATA(insert OID = 2778 (  anynonarray_out	PGNSP PGUID 12 1 0 0 f f f t f i 1 0 2275 "2776" _null_ _null_ _null_ _null_ anynonarray_out _null_ _null_ _null_ ));
 DESCR("I/O");
+DATA(insert OID = 3116 (  fdw_handler_in	PGNSP PGUID 12 1 0 0 f f f f f i 1 0 3115 "2275" _null_ _null_ _null_ _null_ fdw_handler_in _null_ _null_ _null_ ));
+DESCR("I/O");
+DATA(insert OID = 3117 (  fdw_handler_out	PGNSP PGUID 12 1 0 0 f f f t f i 1 0 2275 "3115" _null_ _null_ _null_ _null_ fdw_handler_out _null_ _null_ _null_ ));
+DESCR("I/O");
 
 /* cryptographic */
 DATA(insert OID =  2311 (  md5	   PGNSP PGUID 12 1 0 0 f f f t f i 1 0 25 "25" _null_ _null_ _null_ _null_ md5_text _null_ _null_ _null_ ));
@@ -4221,6 +4225,10 @@ DESCR("I/O");
 DATA(insert OID = 2502 (  anyarray_recv		   PGNSP PGUID 12 1 0 0 f f f t f s 1 0 2277 "2281" _null_ _null_ _null_ _null_ anyarray_recv _null_ _null_ _null_ ));
 DESCR("I/O");
 DATA(insert OID = 2503 (  anyarray_send		   PGNSP PGUID 12 1 0 0 f f f t f s 1 0 17 "2277" _null_ _null_ _null_ _null_	anyarray_send _null_ _null_ _null_ ));
+DESCR("I/O");
+DATA(insert OID = 3120 (  void_recv			   PGNSP PGUID 12 1 0 0 f f f t f i 1 0 2278 "2281" _null_ _null_ _null_ _null_ void_recv _null_ _null_ _null_ ));
+DESCR("I/O");
+DATA(insert OID = 3121 (  void_send			   PGNSP PGUID 12 1 0 0 f f f t f i 1 0 17 "2278" _null_ _null_ _null_ _null_	void_send _null_ _null_ _null_ ));
 DESCR("I/O");
 
 /* System-view support functions with pretty-print option */

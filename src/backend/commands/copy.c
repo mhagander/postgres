@@ -95,8 +95,8 @@ typedef struct CopyStateData
 								 * dest == COPY_NEW_FE in COPY FROM */
 	bool		fe_eof;			/* true if detected end of copy data */
 	EolType		eol_type;		/* EOL type of input */
-	int			client_encoding;	/* remote side's character encoding */
-	bool		need_transcoding;		/* client encoding diff from server? */
+	int			file_encoding;	/* file or remote side's character encoding */
+	bool		need_transcoding;		/* file encoding diff from server? */
 	bool		encoding_embeds_ascii;	/* ASCII can be non-first byte? */
 
 	/* parameters from the COPY command */
@@ -110,11 +110,14 @@ typedef struct CopyStateData
 	bool		header_line;	/* CSV header line? */
 	char	   *null_print;		/* NULL marker string (server encoding!) */
 	int			null_print_len; /* length of same */
-	char	   *null_print_client;		/* same converted to client encoding */
+	char	   *null_print_client;		/* same converted to file encoding */
 	char	   *delim;			/* column delimiter (must be 1 byte) */
 	char	   *quote;			/* CSV quote char (must be 1 byte) */
 	char	   *escape;			/* CSV escape char (must be 1 byte) */
+	List	   *force_quote;	/* list of column names */
+	bool		force_quote_all; /* FORCE QUOTE *? */
 	bool	   *force_quote_flags;		/* per-column CSV FQ flags */
+	List	   *force_notnull;	/* list of column names */
 	bool	   *force_notnull_flags;	/* per-column CSV FNN flags */
 
 	/* these are just for error messages, see CopyFromErrorCallback */
@@ -760,11 +763,12 @@ DoCopy(const CopyStmt *stmt, const char *queryString)
 		rte = makeNode(RangeTblEntry);
 		rte->rtekind = RTE_RELATION;
 		rte->relid = RelationGetRelid(rel);
+		rte->relkind = rel->rd_rel->relkind;
 		rte->requiredPerms = required_access;
 
 		tupDesc = RelationGetDescr(rel);
 		attnums = CopyGetAttnums(tupDesc, rel, stmt->attlist);
-		foreach (cur, attnums)
+		foreach(cur, attnums)
 		{
 			int		attno = lfirst_int(cur) -
 							FirstLowInvalidHeapAttributeNumber;
@@ -814,52 +818,35 @@ DoCopy(const CopyStmt *stmt, const char *queryString)
 }
 
 /*
- * Common setup routines used by BeginCopyFrom and BeginCopyTo.
+ * Process the statement option list for COPY.
  *
- * Iff <binary>, unload or reload in the binary format, as opposed to the
- * more wasteful but more robust and portable text format.
+ * Scan the options list (a list of DefElem) and transpose the information
+ * into cstate, applying appropriate error checking.
  *
- * Iff <oids>, unload or reload the format that includes OID information.
- * On input, we accept OIDs whether or not the table has an OID column,
- * but silently drop them if it does not.  On output, we report an error
- * if the user asks for OIDs in a table that has none (not providing an
- * OID column might seem friendlier, but could seriously confuse programs).
+ * cstate is assumed to be filled with zeroes initially.
  *
- * If in the text format, delimit columns with delimiter <delim> and print
- * NULL values as <null_print>.
+ * This is exported so that external users of the COPY API can sanity-check
+ * a list of options.  In that usage, cstate should be passed as NULL
+ * (since external users don't know sizeof(CopyStateData)) and the collected
+ * data is just leaked until CurrentMemoryContext is reset.
+ *
+ * Note that additional checking, such as whether column names listed in FORCE
+ * QUOTE actually exist, has to be applied later.  This just checks for
+ * self-consistency of the options list.
  */
-static CopyState
-BeginCopy(bool is_from,
-		  Relation rel,
-		  Node *raw_query,
-		  const char *queryString,
-		  List *attnamelist,
-		  List *options)
+void
+ProcessCopyOptions(CopyState cstate,
+				   bool is_from,
+				   List *options)
 {
-	CopyState	cstate;
-	List	   *force_quote = NIL;
-	List	   *force_notnull = NIL;
-	bool		force_quote_all = false;
 	bool		format_specified = false;
 	ListCell   *option;
-	TupleDesc	tupDesc;
-	int			num_phys_attrs;
-	MemoryContext oldcontext;
 
-	/* Allocate workspace and zero all fields */
-	cstate = (CopyStateData *) palloc0(sizeof(CopyStateData));
+	/* Support external use for option sanity checking */
+	if (cstate == NULL)
+		cstate = (CopyStateData *) palloc0(sizeof(CopyStateData));
 
-	/*
-	 * We allocate everything used by a cstate in a new memory context.
-	 * This would avoid memory leaks repeated uses of COPY in a query.
-	 */
-	cstate->copycontext = AllocSetContextCreate(CurrentMemoryContext,
-												"COPY",
-												ALLOCSET_DEFAULT_MINSIZE,
-												ALLOCSET_DEFAULT_INITSIZE,
-												ALLOCSET_DEFAULT_MAXSIZE);
-
-	oldcontext = MemoryContextSwitchTo(cstate->copycontext);
+	cstate->file_encoding = -1;
 
 	/* Extract options from the statement node tree */
 	foreach(option, options)
@@ -936,14 +923,14 @@ BeginCopy(bool is_from,
 		}
 		else if (strcmp(defel->defname, "force_quote") == 0)
 		{
-			if (force_quote || force_quote_all)
+			if (cstate->force_quote || cstate->force_quote_all)
 				ereport(ERROR,
 						(errcode(ERRCODE_SYNTAX_ERROR),
 						 errmsg("conflicting or redundant options")));
 			if (defel->arg && IsA(defel->arg, A_Star))
-				force_quote_all = true;
+				cstate->force_quote_all = true;
 			else if (defel->arg && IsA(defel->arg, List))
-				force_quote = (List *) defel->arg;
+				cstate->force_quote = (List *) defel->arg;
 			else
 				ereport(ERROR,
 						(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
@@ -952,16 +939,29 @@ BeginCopy(bool is_from,
 		}
 		else if (strcmp(defel->defname, "force_not_null") == 0)
 		{
-			if (force_notnull)
+			if (cstate->force_notnull)
 				ereport(ERROR,
 						(errcode(ERRCODE_SYNTAX_ERROR),
 						 errmsg("conflicting or redundant options")));
 			if (defel->arg && IsA(defel->arg, List))
-				force_notnull = (List *) defel->arg;
+				cstate->force_notnull = (List *) defel->arg;
 			else
 				ereport(ERROR,
 						(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
 						 errmsg("argument to option \"%s\" must be a list of column names",
+								defel->defname)));
+		}
+		else if (strcmp(defel->defname, "encoding") == 0)
+		{
+			if (cstate->file_encoding >= 0)
+				ereport(ERROR,
+						(errcode(ERRCODE_SYNTAX_ERROR),
+						 errmsg("conflicting or redundant options")));
+			cstate->file_encoding = pg_char_to_encoding(defGetString(defel));
+			if (cstate->file_encoding < 0)
+				ereport(ERROR,
+						(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+						 errmsg("argument to option \"%s\" must be a valid encoding name",
 								defel->defname)));
 		}
 		else
@@ -1071,21 +1071,21 @@ BeginCopy(bool is_from,
 				 errmsg("COPY escape must be a single one-byte character")));
 
 	/* Check force_quote */
-	if (!cstate->csv_mode && (force_quote != NIL || force_quote_all))
+	if (!cstate->csv_mode && (cstate->force_quote || cstate->force_quote_all))
 		ereport(ERROR,
 				(errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
 				 errmsg("COPY force quote available only in CSV mode")));
-	if ((force_quote != NIL || force_quote_all) && is_from)
+	if ((cstate->force_quote || cstate->force_quote_all) && is_from)
 		ereport(ERROR,
 				(errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
 				 errmsg("COPY force quote only available using COPY TO")));
 
 	/* Check force_notnull */
-	if (!cstate->csv_mode && force_notnull != NIL)
+	if (!cstate->csv_mode && cstate->force_notnull != NIL)
 		ereport(ERROR,
 				(errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
 				 errmsg("COPY force not null available only in CSV mode")));
-	if (force_notnull != NIL && !is_from)
+	if (cstate->force_notnull != NIL && !is_from)
 		ereport(ERROR,
 				(errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
 			  errmsg("COPY force not null only available using COPY FROM")));
@@ -1102,7 +1102,55 @@ BeginCopy(bool is_from,
 		ereport(ERROR,
 				(errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
 				 errmsg("CSV quote character must not appear in the NULL specification")));
+}
 
+/*
+ * Common setup routines used by BeginCopyFrom and BeginCopyTo.
+ *
+ * Iff <binary>, unload or reload in the binary format, as opposed to the
+ * more wasteful but more robust and portable text format.
+ *
+ * Iff <oids>, unload or reload the format that includes OID information.
+ * On input, we accept OIDs whether or not the table has an OID column,
+ * but silently drop them if it does not.  On output, we report an error
+ * if the user asks for OIDs in a table that has none (not providing an
+ * OID column might seem friendlier, but could seriously confuse programs).
+ *
+ * If in the text format, delimit columns with delimiter <delim> and print
+ * NULL values as <null_print>.
+ */
+static CopyState
+BeginCopy(bool is_from,
+		  Relation rel,
+		  Node *raw_query,
+		  const char *queryString,
+		  List *attnamelist,
+		  List *options)
+{
+	CopyState	cstate;
+	TupleDesc	tupDesc;
+	int			num_phys_attrs;
+	MemoryContext oldcontext;
+
+	/* Allocate workspace and zero all fields */
+	cstate = (CopyStateData *) palloc0(sizeof(CopyStateData));
+
+	/*
+	 * We allocate everything used by a cstate in a new memory context.
+	 * This avoids memory leaks during repeated use of COPY in a query.
+	 */
+	cstate->copycontext = AllocSetContextCreate(CurrentMemoryContext,
+												"COPY",
+												ALLOCSET_DEFAULT_MINSIZE,
+												ALLOCSET_DEFAULT_INITSIZE,
+												ALLOCSET_DEFAULT_MAXSIZE);
+
+	oldcontext = MemoryContextSwitchTo(cstate->copycontext);
+
+	/* Extract options from the statement node tree */
+	ProcessCopyOptions(cstate, is_from, options);
+
+	/* Process the source/target relation or query */
 	if (rel)
 	{
 		Assert(!raw_query);
@@ -1197,19 +1245,19 @@ BeginCopy(bool is_from,
 
 	/* Convert FORCE QUOTE name list to per-column flags, check validity */
 	cstate->force_quote_flags = (bool *) palloc0(num_phys_attrs * sizeof(bool));
-	if (force_quote_all)
+	if (cstate->force_quote_all)
 	{
 		int			i;
 
 		for (i = 0; i < num_phys_attrs; i++)
 			cstate->force_quote_flags[i] = true;
 	}
-	else if (force_quote)
+	else if (cstate->force_quote)
 	{
 		List	   *attnums;
 		ListCell   *cur;
 
-		attnums = CopyGetAttnums(tupDesc, cstate->rel, force_quote);
+		attnums = CopyGetAttnums(tupDesc, cstate->rel, cstate->force_quote);
 
 		foreach(cur, attnums)
 		{
@@ -1226,12 +1274,12 @@ BeginCopy(bool is_from,
 
 	/* Convert FORCE NOT NULL name list to per-column flags, check validity */
 	cstate->force_notnull_flags = (bool *) palloc0(num_phys_attrs * sizeof(bool));
-	if (force_notnull)
+	if (cstate->force_notnull)
 	{
 		List	   *attnums;
 		ListCell   *cur;
 
-		attnums = CopyGetAttnums(tupDesc, cstate->rel, force_notnull);
+		attnums = CopyGetAttnums(tupDesc, cstate->rel, cstate->force_notnull);
 
 		foreach(cur, attnums)
 		{
@@ -1246,17 +1294,20 @@ BeginCopy(bool is_from,
 		}
 	}
 
+	/* Use client encoding when ENCODING option is not specified. */
+	if (cstate->file_encoding < 0)
+		cstate->file_encoding = pg_get_client_encoding();
+
 	/*
-	 * Set up encoding conversion info.  Even if the client and server
-	 * encodings are the same, we must apply pg_client_to_server() to validate
+	 * Set up encoding conversion info.  Even if the file and server
+	 * encodings are the same, we must apply pg_any_to_server() to validate
 	 * data in multibyte encodings.
 	 */
-	cstate->client_encoding = pg_get_client_encoding();
 	cstate->need_transcoding =
-		(cstate->client_encoding != GetDatabaseEncoding() ||
+		(cstate->file_encoding != GetDatabaseEncoding() ||
 		 pg_database_encoding_max_length() > 1);
 	/* See Multibyte encoding comment above */
-	cstate->encoding_embeds_ascii = PG_ENCODING_IS_CLIENT_ONLY(cstate->client_encoding);
+	cstate->encoding_embeds_ascii = PG_ENCODING_IS_CLIENT_ONLY(cstate->file_encoding);
 
 	cstate->copy_dest = COPY_FILE;		/* default */
 
@@ -1494,12 +1545,13 @@ CopyTo(CopyState cstate)
 	else
 	{
 		/*
-		 * For non-binary copy, we need to convert null_print to client
+		 * For non-binary copy, we need to convert null_print to file
 		 * encoding, because it will be sent directly with CopySendString.
 		 */
 		if (cstate->need_transcoding)
-			cstate->null_print_client = pg_server_to_client(cstate->null_print,
-													 cstate->null_print_len);
+			cstate->null_print_client = pg_server_to_any(cstate->null_print,
+														 cstate->null_print_len,
+														 cstate->file_encoding);
 
 		/* if a header has been requested send the line */
 		if (cstate->header_line)
@@ -1785,7 +1837,7 @@ CopyFrom(CopyState cstate)
 	ResultRelInfo *resultRelInfo;
 	EState	   *estate = CreateExecutorState(); /* for ExecConstraints() */
 	ExprContext *econtext;
-	TupleTableSlot *slot;
+	TupleTableSlot *myslot;
 	MemoryContext oldcontext = CurrentMemoryContext;
 	ErrorContextCallback errcontext;
 	CommandId	mycid = GetCurrentCommandId(true);
@@ -1881,8 +1933,10 @@ CopyFrom(CopyState cstate)
 	estate->es_result_relation_info = resultRelInfo;
 
 	/* Set up a tuple slot too */
-	slot = ExecInitExtraTupleSlot(estate);
-	ExecSetSlotDescriptor(slot, tupDesc);
+	myslot = ExecInitExtraTupleSlot(estate);
+	ExecSetSlotDescriptor(myslot, tupDesc);
+	/* Triggers might need a slot as well */
+	estate->es_trig_tuple_slot = ExecInitExtraTupleSlot(estate);
 
 	/* Prepare to catch AFTER triggers. */
 	AfterTriggerBeginQuery();
@@ -1909,6 +1963,7 @@ CopyFrom(CopyState cstate)
 
 	for (;;)
 	{
+		TupleTableSlot *slot;
 		bool		skip_tuple;
 		Oid			loaded_oid = InvalidOid;
 
@@ -1932,31 +1987,27 @@ CopyFrom(CopyState cstate)
 		/* Triggers and stuff need to be invoked in query context. */
 		MemoryContextSwitchTo(oldcontext);
 
+		/* Place tuple in tuple slot --- but slot shouldn't free it */
+		slot = myslot;
+		ExecStoreTuple(tuple, slot, InvalidBuffer, false);
+
 		skip_tuple = false;
 
 		/* BEFORE ROW INSERT Triggers */
 		if (resultRelInfo->ri_TrigDesc &&
 			resultRelInfo->ri_TrigDesc->trig_insert_before_row)
 		{
-			HeapTuple	newtuple;
+			slot = ExecBRInsertTriggers(estate, resultRelInfo, slot);
 
-			newtuple = ExecBRInsertTriggers(estate, resultRelInfo, tuple);
-
-			if (newtuple == NULL)		/* "do nothing" */
+			if (slot == NULL)		/* "do nothing" */
 				skip_tuple = true;
-			else if (newtuple != tuple) /* modified by Trigger(s) */
-			{
-				heap_freetuple(tuple);
-				tuple = newtuple;
-			}
+			else					/* trigger might have changed tuple */
+				tuple = ExecMaterializeSlot(slot);
 		}
 
 		if (!skip_tuple)
 		{
 			List	   *recheckIndexes = NIL;
-
-			/* Place tuple in tuple slot */
-			ExecStoreTuple(tuple, slot, InvalidBuffer, false);
 
 			/* Check the constraints of the tuple */
 			if (cstate->rel->rd_att->constr)
@@ -2576,8 +2627,9 @@ CopyReadLine(CopyState cstate)
 	{
 		char	   *cvt;
 
-		cvt = pg_client_to_server(cstate->line_buf.data,
-								  cstate->line_buf.len);
+		cvt = pg_any_to_server(cstate->line_buf.data,
+							   cstate->line_buf.len,
+							   cstate->file_encoding);
 		if (cvt != cstate->line_buf.data)
 		{
 			/* transfer converted data back to line_buf */
@@ -2822,7 +2874,7 @@ CopyReadLineText(CopyState cstate)
 			/* -----
 			 * get next character
 			 * Note: we do not change c so if it isn't \., we can fall
-			 * through and continue processing for client encoding.
+			 * through and continue processing for file encoding.
 			 * -----
 			 */
 			c2 = copy_raw_buf[raw_buf_ptr];
@@ -2936,7 +2988,7 @@ not_end_of_copy:
 
 			mblen_str[0] = c;
 			/* All our encodings only read the first byte to get the length */
-			mblen = pg_encoding_mblen(cstate->client_encoding, mblen_str);
+			mblen = pg_encoding_mblen(cstate->file_encoding, mblen_str);
 			IF_NEED_REFILL_AND_NOT_EOF_CONTINUE(mblen - 1);
 			IF_NEED_REFILL_AND_EOF_BREAK(mblen - 1);
 			raw_buf_ptr += mblen - 1;
@@ -3435,7 +3487,7 @@ CopyAttributeOutText(CopyState cstate, char *string)
 	char		delimc = cstate->delim[0];
 
 	if (cstate->need_transcoding)
-		ptr = pg_server_to_client(string, strlen(string));
+		ptr = pg_server_to_any(string, strlen(string), cstate->file_encoding);
 	else
 		ptr = string;
 
@@ -3508,7 +3560,7 @@ CopyAttributeOutText(CopyState cstate, char *string)
 				start = ptr++;	/* we include char in next run */
 			}
 			else if (IS_HIGHBIT_SET(c))
-				ptr += pg_encoding_mblen(cstate->client_encoding, ptr);
+				ptr += pg_encoding_mblen(cstate->file_encoding, ptr);
 			else
 				ptr++;
 		}
@@ -3595,7 +3647,7 @@ CopyAttributeOutCSV(CopyState cstate, char *string,
 		use_quote = true;
 
 	if (cstate->need_transcoding)
-		ptr = pg_server_to_client(string, strlen(string));
+		ptr = pg_server_to_any(string, strlen(string), cstate->file_encoding);
 	else
 		ptr = string;
 
@@ -3622,7 +3674,7 @@ CopyAttributeOutCSV(CopyState cstate, char *string,
 					break;
 				}
 				if (IS_HIGHBIT_SET(c) && cstate->encoding_embeds_ascii)
-					tptr += pg_encoding_mblen(cstate->client_encoding, tptr);
+					tptr += pg_encoding_mblen(cstate->file_encoding, tptr);
 				else
 					tptr++;
 			}
@@ -3646,7 +3698,7 @@ CopyAttributeOutCSV(CopyState cstate, char *string,
 				start = ptr;	/* we include char in next run */
 			}
 			if (IS_HIGHBIT_SET(c) && cstate->encoding_embeds_ascii)
-				ptr += pg_encoding_mblen(cstate->client_encoding, ptr);
+				ptr += pg_encoding_mblen(cstate->file_encoding, ptr);
 			else
 				ptr++;
 		}

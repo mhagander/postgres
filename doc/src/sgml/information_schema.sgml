@@ -21,6 +21,30 @@
   <productname>PostgreSQL</productname>-specific views.
  </para>
 
+ <note>
+  <para>
+   When querying the database for constraint information, it is possible
+   for a standard-compliant query that expects to return one row to
+   return several.  This is because the SQL standard requires constraint
+   names to be unique within a schema, but
+   <productname>PostgreSQL</productname> does not enforce this
+   restriction.  <productname>PostgreSQL</productname>
+   automatically-generated constraint names avoid duplicates in the
+   same schema, but users can specify such duplicate names.
+  </para>
+
+  <para>
+   This problem can appear when querying information schema views like
+   <literal>referential_constraints</>, <literal>check_constraints</>,
+   <literal>domain_constraints</>, and
+   <literal>check_constraint_routine_usage</>.  Some other views have
+   similar issues but contain the table name to help distinguish
+   duplicate rows, e.g. <literal>table_constraints</>,
+   <literal>constraint_table_usage</>, <literal>constraint_column_usage</>.
+  </para>
+ </note>
+
+
  <sect1 id="infoschema-schema">
   <title>The Schema</title>
 
@@ -3211,6 +3235,7 @@ ORDER BY c.ordinal_position;
     </tbody>
    </tgroup>
   </table>
+
  </sect1>
 
  <sect1 id="infoschema-role-column-grants">

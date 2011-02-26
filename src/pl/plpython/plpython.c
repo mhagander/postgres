@@ -101,6 +101,7 @@ typedef int Py_ssize_t;
 #include "nodes/makefuncs.h"
 #include "parser/parse_type.h"
 #include "tcop/tcopprot.h"
+#include "access/transam.h"
 #include "access/xact.h"
 #include "utils/builtins.h"
 #include "utils/hsearch.h"
@@ -131,6 +132,7 @@ typedef struct PLyDatumToOb
 	PLyDatumToObFunc func;
 	FmgrInfo	typfunc;		/* The type's output function */
 	Oid			typoid;			/* The OID of the type */
+	int32		typmod;			/* The typmod of the type */
 	Oid			typioparam;
 	bool		typbyval;
 	int16		typlen;
@@ -163,6 +165,7 @@ typedef struct PLyObToDatum
 	PLyObToDatumFunc func;
 	FmgrInfo	typfunc;		/* The type's input function */
 	Oid			typoid;			/* The OID of the type */
+	int32		typmod;			/* The typmod of the type */
 	Oid			typioparam;
 	bool		typbyval;
 	int16		typlen;
@@ -195,6 +198,10 @@ typedef struct PLyTypeInfo
 	 * datatype; 1 = rowtype; 2 = rowtype, but I/O functions not set up yet
 	 */
 	int			is_rowtype;
+	/* used to check if the type has been modified */
+	Oid			typ_relid;
+	TransactionId typrel_xmin;
+	ItemPointerData typrel_tid;
 } PLyTypeInfo;
 
 
@@ -343,6 +350,7 @@ static void PLy_input_datum_func(PLyTypeInfo *, Oid, HeapTuple);
 static void PLy_input_datum_func2(PLyDatumToOb *, Oid, HeapTuple);
 static void PLy_output_tuple_funcs(PLyTypeInfo *, TupleDesc);
 static void PLy_input_tuple_funcs(PLyTypeInfo *, TupleDesc);
+static void PLy_output_record_funcs(PLyTypeInfo *, TupleDesc);
 
 /* conversion functions */
 static PyObject *PLyBool_FromBool(PLyDatumToOb *arg, Datum d);
@@ -360,12 +368,14 @@ static PyObject *PLyDict_FromTuple(PLyTypeInfo *, HeapTuple, TupleDesc);
 
 static Datum PLyObject_ToBool(PLyObToDatum *, int32, PyObject *);
 static Datum PLyObject_ToBytea(PLyObToDatum *, int32, PyObject *);
+static Datum PLyObject_ToComposite(PLyObToDatum *, int32, PyObject *);
 static Datum PLyObject_ToDatum(PLyObToDatum *, int32, PyObject *);
 static Datum PLySequence_ToArray(PLyObToDatum *, int32, PyObject *);
 
-static HeapTuple PLyMapping_ToTuple(PLyTypeInfo *, PyObject *);
-static HeapTuple PLySequence_ToTuple(PLyTypeInfo *, PyObject *);
-static HeapTuple PLyObject_ToTuple(PLyTypeInfo *, PyObject *);
+static HeapTuple PLyObject_ToTuple(PLyTypeInfo *, TupleDesc, PyObject *);
+static HeapTuple PLyMapping_ToTuple(PLyTypeInfo *, TupleDesc, PyObject *);
+static HeapTuple PLySequence_ToTuple(PLyTypeInfo *, TupleDesc, PyObject *);
+static HeapTuple PLyGenericObject_ToTuple(PLyTypeInfo *, TupleDesc, PyObject *);
 
 /*
  * Currently active plpython function
@@ -1160,17 +1170,19 @@ PLy_function_handler(FunctionCallInfo fcinfo, PLyProcedure *proc)
 		}
 		else if (proc->result.is_rowtype >= 1)
 		{
+			TupleDesc	desc;
 			HeapTuple	tuple = NULL;
 
-			if (PySequence_Check(plrv))
-				/* composite type as sequence (tuple, list etc) */
-				tuple = PLySequence_ToTuple(&proc->result, plrv);
-			else if (PyMapping_Check(plrv))
-				/* composite type as mapping (currently only dict) */
-				tuple = PLyMapping_ToTuple(&proc->result, plrv);
-			else
-				/* returned as smth, must provide method __getattr__(name) */
-				tuple = PLyObject_ToTuple(&proc->result, plrv);
+			/* make sure it's not an unnamed record */
+			Assert((proc->result.out.d.typoid == RECORDOID &&
+					proc->result.out.d.typmod != -1) ||
+				   (proc->result.out.d.typoid != RECORDOID &&
+					proc->result.out.d.typmod == -1));
+
+			desc = lookup_rowtype_tupdesc(proc->result.out.d.typoid,
+										  proc->result.out.d.typmod);
+
+			tuple = PLyObject_ToTuple(&proc->result, desc, plrv);
 
 			if (tuple != NULL)
 			{
@@ -1302,6 +1314,21 @@ PLy_function_build_args(FunctionCallInfo fcinfo, PLyProcedure *proc)
 				PLy_elog(ERROR, "PyDict_SetItemString() failed, while setting up arguments");
 			arg = NULL;
 		}
+
+		/* Set up output conversion for functions returning RECORD */
+		if (proc->result.out.d.typoid == RECORDOID)
+		{
+			TupleDesc	desc;
+
+			if (get_call_result_type(fcinfo, NULL, &desc) != TYPEFUNC_COMPOSITE)
+				ereport(ERROR,
+						(errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
+						 errmsg("function returning record called in context "
+								"that cannot accept type record")));
+
+			/* cache the output conversion functions */
+			PLy_output_record_funcs(&(proc->result), desc);
+		}
 	}
 	PG_CATCH();
 	{
@@ -1335,11 +1362,50 @@ PLy_function_delete_args(PLyProcedure *proc)
 static bool
 PLy_procedure_valid(PLyProcedure *proc, HeapTuple procTup)
 {
+	int			i;
+	bool		valid;
+
 	Assert(proc != NULL);
 
 	/* If the pg_proc tuple has changed, it's not valid */
-	return (proc->fn_xmin == HeapTupleHeaderGetXmin(procTup->t_data) &&
-			ItemPointerEquals(&proc->fn_tid, &procTup->t_self));
+	if (!(proc->fn_xmin == HeapTupleHeaderGetXmin(procTup->t_data) &&
+		  ItemPointerEquals(&proc->fn_tid, &procTup->t_self)))
+		return false;
+
+	valid = true;
+	/* If there are composite input arguments, they might have changed */
+	for (i = 0; i < proc->nargs; i++)
+	{
+		Oid				relid;
+		HeapTuple		relTup;
+
+		/* Short-circuit on first changed argument */
+		if (!valid)
+			break;
+
+		/* Only check input arguments that are composite */
+		if (proc->args[i].is_rowtype != 1)
+			continue;
+
+		Assert(OidIsValid(proc->args[i].typ_relid));
+		Assert(TransactionIdIsValid(proc->args[i].typrel_xmin));
+		Assert(ItemPointerIsValid(&proc->args[i].typrel_tid));
+
+		/* Get the pg_class tuple for the argument type */
+		relid = proc->args[i].typ_relid;
+		relTup = SearchSysCache1(RELOID, ObjectIdGetDatum(relid));
+		if (!HeapTupleIsValid(relTup))
+			elog(ERROR, "cache lookup failed for relation %u", relid);
+
+		/* If it has changed, the function is not valid */
+		if (!(proc->args[i].typrel_xmin == HeapTupleHeaderGetXmin(relTup->t_data) &&
+			  ItemPointerEquals(&proc->args[i].typrel_tid, &relTup->t_self)))
+			valid = false;
+
+		ReleaseSysCache(relTup);
+	}
+
+	return valid;
 }
 
 
@@ -1464,32 +1530,37 @@ PLy_procedure_create(HeapTuple procTup, Oid fn_oid, bool is_trigger)
 					 procStruct->prorettype);
 			rvTypeStruct = (Form_pg_type) GETSTRUCT(rvTypeTup);
 
-			/* Disallow pseudotype result, except for void */
-			if (rvTypeStruct->typtype == TYPTYPE_PSEUDO &&
-				procStruct->prorettype != VOIDOID)
+			/* Disallow pseudotype result, except for void or record */
+			if (rvTypeStruct->typtype == TYPTYPE_PSEUDO)
 			{
 				if (procStruct->prorettype == TRIGGEROID)
 					ereport(ERROR,
 							(errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
 							 errmsg("trigger functions can only be called as triggers")));
-				else
+				else if (procStruct->prorettype != VOIDOID &&
+						 procStruct->prorettype != RECORDOID)
 					ereport(ERROR,
 							(errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
-						  errmsg("PL/Python functions cannot return type %s",
-								 format_type_be(procStruct->prorettype))));
+							 errmsg("PL/Python functions cannot return type %s",
+									format_type_be(procStruct->prorettype))));
 			}
 
-			if (rvTypeStruct->typtype == TYPTYPE_COMPOSITE)
+			if (rvTypeStruct->typtype == TYPTYPE_COMPOSITE ||
+				procStruct->prorettype == RECORDOID)
 			{
 				/*
 				 * Tuple: set up later, during first call to
 				 * PLy_function_handler
 				 */
 				proc->result.out.d.typoid = procStruct->prorettype;
+				proc->result.out.d.typmod = -1;
 				proc->result.is_rowtype = 2;
 			}
 			else
+			{
+				/* do the real work */
 				PLy_output_datum_func(&proc->result, rvTypeTup);
+			}
 
 			ReleaseSysCache(rvTypeTup);
 		}
@@ -1747,6 +1818,33 @@ PLy_input_tuple_funcs(PLyTypeInfo *arg, TupleDesc desc)
 		arg->in.r.atts = PLy_malloc0(desc->natts * sizeof(PLyDatumToOb));
 	}
 
+	/* Can this be an unnamed tuple? If not, then an Assert would be enough */
+	if (desc->tdtypmod != -1)
+		elog(ERROR, "received unnamed record type as input");
+
+	Assert(OidIsValid(desc->tdtypeid));
+
+	/*
+	 * RECORDOID means we got called to create input functions for a tuple
+	 * fetched by plpy.execute or for an anonymous record type
+	 */
+	if (desc->tdtypeid != RECORDOID && !TransactionIdIsValid(arg->typrel_xmin))
+	{
+		HeapTuple	relTup;
+
+		/* Get the pg_class tuple corresponding to the type of the input */
+		arg->typ_relid = typeidTypeRelid(desc->tdtypeid);
+		relTup = SearchSysCache1(RELOID, ObjectIdGetDatum(arg->typ_relid));
+		if (!HeapTupleIsValid(relTup))
+			elog(ERROR, "cache lookup failed for relation %u", arg->typ_relid);
+
+		/* Extract the XMIN value to later use it in PLy_procedure_valid */
+		arg->typrel_xmin = HeapTupleHeaderGetXmin(relTup->t_data);
+		arg->typrel_tid = relTup->t_self;
+
+		ReleaseSysCache(relTup);
+	}
+
 	for (i = 0; i < desc->natts; i++)
 	{
 		HeapTuple	typeTup;
@@ -1769,6 +1867,29 @@ PLy_input_tuple_funcs(PLyTypeInfo *arg, TupleDesc desc)
 
 		ReleaseSysCache(typeTup);
 	}
+}
+
+static void
+PLy_output_record_funcs(PLyTypeInfo *arg, TupleDesc desc)
+{
+	/*
+	 * If the output record functions are already set, we just have to check
+	 * if the record descriptor has not changed
+	 */
+	if ((arg->is_rowtype == 1) &&
+		(arg->out.d.typmod != -1) &&
+		(arg->out.d.typmod == desc->tdtypmod))
+		return;
+
+	/* bless the record to make it known to the typcache lookup code */
+	BlessTupleDesc(desc);
+	/* save the freshly generated typmod */
+	arg->out.d.typmod = desc->tdtypmod;
+	/* proceed with normal I/O function caching */
+	PLy_output_tuple_funcs(arg, desc);
+	/* it should change is_rowtype to 1, so we won't go through this again
+	 * unless the the output record description changes */
+	Assert(arg->is_rowtype == 1);
 }
 
 static void
@@ -1827,6 +1948,7 @@ PLy_output_datum_func2(PLyObToDatum *arg, HeapTuple typeTup)
 
 	perm_fmgr_info(typeStruct->typinput, &arg->typfunc);
 	arg->typoid = HeapTupleGetOid(typeTup);
+	arg->typmod = -1;
 	arg->typioparam = getTypeIOParam(typeTup);
 	arg->typbyval = typeStruct->typbyval;
 
@@ -1849,6 +1971,12 @@ PLy_output_datum_func2(PLyObToDatum *arg, HeapTuple typeTup)
 			break;
 	}
 
+	/* Composite types need their own input routine, though */
+	if (typeStruct->typtype == TYPTYPE_COMPOSITE)
+	{
+		arg->func = PLyObject_ToComposite;
+	}
+
 	if (element_type)
 	{
 		char		dummy_delim;
@@ -1866,6 +1994,7 @@ PLy_output_datum_func2(PLyObToDatum *arg, HeapTuple typeTup)
 		arg->func = PLySequence_ToArray;
 
 		arg->elm->typoid = element_type;
+		arg->elm->typmod = -1;
 		get_type_io_data(element_type, IOFunc_input,
 						 &arg->elm->typlen, &arg->elm->typbyval, &arg->elm->typalign, &dummy_delim,
 						 &arg->elm->typioparam, &funcid);
@@ -1891,6 +2020,7 @@ PLy_input_datum_func2(PLyDatumToOb *arg, Oid typeOid, HeapTuple typeTup)
 	/* Get the type's conversion information */
 	perm_fmgr_info(typeStruct->typoutput, &arg->typfunc);
 	arg->typoid = HeapTupleGetOid(typeTup);
+	arg->typmod = -1;
 	arg->typioparam = getTypeIOParam(typeTup);
 	arg->typbyval = typeStruct->typbyval;
 	arg->typlen = typeStruct->typlen;
@@ -1937,6 +2067,7 @@ PLy_input_datum_func2(PLyDatumToOb *arg, Oid typeOid, HeapTuple typeTup)
 		arg->elm->func = arg->func;
 		arg->func = PLyList_FromArray;
 		arg->elm->typoid = element_type;
+		arg->elm->typmod = -1;
 		get_type_io_data(element_type, IOFunc_output,
 						 &arg->elm->typlen, &arg->elm->typbyval, &arg->elm->typalign, &dummy_delim,
 						 &arg->elm->typioparam, &funcid);
@@ -1951,6 +2082,9 @@ PLy_typeinfo_init(PLyTypeInfo *arg)
 	arg->in.r.natts = arg->out.r.natts = 0;
 	arg->in.r.atts = NULL;
 	arg->out.r.atts = NULL;
+	arg->typ_relid = InvalidOid;
+	arg->typrel_xmin = InvalidTransactionId;
+	ItemPointerSetInvalid(&arg->typrel_tid);
 }
 
 static void
@@ -2140,6 +2274,29 @@ PLyDict_FromTuple(PLyTypeInfo *info, HeapTuple tuple, TupleDesc desc)
 }
 
 /*
+ *  Convert a Python object to a PostgreSQL tuple, using all supported
+ *  conversion methods: tuple as a sequence, as a mapping or as an object that
+ *  has __getattr__ support.
+ */
+static HeapTuple
+PLyObject_ToTuple(PLyTypeInfo *info, TupleDesc desc, PyObject *plrv)
+{
+	HeapTuple	tuple;
+
+	if (PySequence_Check(plrv))
+		/* composite type as sequence (tuple, list etc) */
+		tuple = PLySequence_ToTuple(info, desc, plrv);
+	else if (PyMapping_Check(plrv))
+		/* composite type as mapping (currently only dict) */
+		tuple = PLyMapping_ToTuple(info, desc, plrv);
+	else
+		/* returned as smth, must provide method __getattr__(name) */
+		tuple = PLyGenericObject_ToTuple(info, desc, plrv);
+
+	return tuple;
+}
+
+/*
  * Convert a Python object to a PostgreSQL bool datum.	This can't go
  * through the generic conversion function, because Python attaches a
  * Boolean value to everything, more things than the PostgreSQL bool
@@ -2201,6 +2358,50 @@ PLyObject_ToBytea(PLyObToDatum *arg, int32 typmod, PyObject *plrv)
 
 	return rv;
 }
+
+
+/*
+ * Convert a Python object to a composite type. First look up the type's
+ * description, then route the Python object through the conversion function
+ * for obtaining PostgreSQL tuples.
+ */
+static Datum
+PLyObject_ToComposite(PLyObToDatum *arg, int32 typmod, PyObject *plrv)
+{
+	HeapTuple	tuple = NULL;
+	Datum		rv;
+	PLyTypeInfo	info;
+	TupleDesc	desc;
+
+	if (typmod != -1)
+		elog(ERROR, "received unnamed record type as input");
+
+	/* Create a dummy PLyTypeInfo */
+	MemSet(&info, 0, sizeof(PLyTypeInfo));
+	PLy_typeinfo_init(&info);
+	/* Mark it as needing output routines lookup */
+	info.is_rowtype = 2;
+
+	desc = lookup_rowtype_tupdesc(arg->typoid, arg->typmod);
+
+	/*
+	 * This will set up the dummy PLyTypeInfo's output conversion routines,
+	 * since we left is_rowtype as 2. A future optimisation could be caching
+	 * that info instead of looking it up every time a tuple is returned from
+	 * the function.
+	 */
+	tuple = PLyObject_ToTuple(&info, desc, plrv);
+
+	PLy_typeinfo_dealloc(&info);
+
+	if (tuple != NULL)
+		rv = HeapTupleGetDatum(tuple);
+	else
+		rv = (Datum) NULL;
+
+	return rv;
+}
+
 
 /*
  * Generic conversion function: Convert PyObject to cstring and
@@ -2305,9 +2506,8 @@ PLySequence_ToArray(PLyObToDatum *arg, int32 typmod, PyObject *plrv)
 }
 
 static HeapTuple
-PLyMapping_ToTuple(PLyTypeInfo *info, PyObject *mapping)
+PLyMapping_ToTuple(PLyTypeInfo *info, TupleDesc desc, PyObject *mapping)
 {
-	TupleDesc	desc;
 	HeapTuple	tuple;
 	Datum	   *values;
 	bool	   *nulls;
@@ -2315,7 +2515,6 @@ PLyMapping_ToTuple(PLyTypeInfo *info, PyObject *mapping)
 
 	Assert(PyMapping_Check(mapping));
 
-	desc = lookup_rowtype_tupdesc(info->out.d.typoid, -1);
 	if (info->is_rowtype == 2)
 		PLy_output_tuple_funcs(info, desc);
 	Assert(info->is_rowtype == 1);
@@ -2376,9 +2575,8 @@ PLyMapping_ToTuple(PLyTypeInfo *info, PyObject *mapping)
 
 
 static HeapTuple
-PLySequence_ToTuple(PLyTypeInfo *info, PyObject *sequence)
+PLySequence_ToTuple(PLyTypeInfo *info, TupleDesc desc, PyObject *sequence)
 {
-	TupleDesc	desc;
 	HeapTuple	tuple;
 	Datum	   *values;
 	bool	   *nulls;
@@ -2392,7 +2590,6 @@ PLySequence_ToTuple(PLyTypeInfo *info, PyObject *sequence)
 	 * can ignore exceeding items or assume missing ones as null but to avoid
 	 * plpython developer's errors we are strict here
 	 */
-	desc = lookup_rowtype_tupdesc(info->out.d.typoid, -1);
 	idx = 0;
 	for (i = 0; i < desc->natts; i++)
 	{
@@ -2460,15 +2657,13 @@ PLySequence_ToTuple(PLyTypeInfo *info, PyObject *sequence)
 
 
 static HeapTuple
-PLyObject_ToTuple(PLyTypeInfo *info, PyObject *object)
+PLyGenericObject_ToTuple(PLyTypeInfo *info, TupleDesc desc, PyObject *object)
 {
-	TupleDesc	desc;
 	HeapTuple	tuple;
 	Datum	   *values;
 	bool	   *nulls;
 	volatile int i;
 
-	desc = lookup_rowtype_tupdesc(info->out.d.typoid, -1);
 	if (info->is_rowtype == 2)
 		PLy_output_tuple_funcs(info, desc);
 	Assert(info->is_rowtype == 1);
@@ -2562,6 +2757,10 @@ static PyObject *PLy_spi_execute(PyObject *, PyObject *);
 static PyObject *PLy_spi_execute_query(char *query, long limit);
 static PyObject *PLy_spi_execute_plan(PyObject *, PyObject *, long);
 static PyObject *PLy_spi_execute_fetch_result(SPITupleTable *, int, int);
+
+static PyObject *PLy_quote_literal(PyObject *self, PyObject *args);
+static PyObject *PLy_quote_nullable(PyObject *self, PyObject *args);
+static PyObject *PLy_quote_ident(PyObject *self, PyObject *args);
 
 
 static PyMethodDef PLy_plan_methods[] = {
@@ -2676,6 +2875,13 @@ static PyMethodDef PLy_methods[] = {
 	 * execute a plan or query
 	 */
 	{"execute", PLy_spi_execute, METH_VARARGS, NULL},
+
+	/*
+	 * escaping strings
+	 */
+	{"quote_literal", PLy_quote_literal, METH_VARARGS, NULL},
+	{"quote_nullable", PLy_quote_nullable, METH_VARARGS, NULL},
+	{"quote_ident", PLy_quote_ident, METH_VARARGS, NULL},
 
 	{NULL, NULL, 0, NULL}
 };
@@ -3611,6 +3817,60 @@ PLy_output(volatile int level, PyObject *self, PyObject *args)
 	 */
 	Py_INCREF(Py_None);
 	return Py_None;
+}
+
+
+static PyObject *
+PLy_quote_literal(PyObject *self, PyObject *args)
+{
+	const char *str;
+	char	   *quoted;
+	PyObject   *ret;
+
+	if (!PyArg_ParseTuple(args, "s", &str))
+		return NULL;
+
+	quoted = quote_literal_cstr(str);
+	ret = PyString_FromString(quoted);
+	pfree(quoted);
+
+	return ret;
+}
+
+static PyObject *
+PLy_quote_nullable(PyObject *self, PyObject *args)
+{
+	const char *str;
+	char	   *quoted;
+	PyObject   *ret;
+
+	if (!PyArg_ParseTuple(args, "z", &str))
+		return NULL;
+
+	if (str == NULL)
+		return PyString_FromString("NULL");
+
+	quoted = quote_literal_cstr(str);
+	ret = PyString_FromString(quoted);
+	pfree(quoted);
+
+	return ret;
+}
+
+static PyObject *
+PLy_quote_ident(PyObject *self, PyObject *args)
+{
+	const char *str;
+	const char *quoted;
+	PyObject   *ret;
+
+	if (!PyArg_ParseTuple(args, "s", &str))
+		return NULL;
+
+	quoted = quote_identifier(str);
+	ret = PyString_FromString(quoted);
+
+	return ret;
 }
 
 

@@ -79,6 +79,8 @@ REGRESS = \
 	plpython_types \
 	plpython_error \
 	plpython_unicode \
+	plpython_quote \
+	plpython_composite \
 	plpython_drop
 # where to find psql for running the tests
 PSQLDIR = $(bindir)

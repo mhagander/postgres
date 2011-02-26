@@ -13244,6 +13244,10 @@ SELECT pg_type_is_visible('myschema.widget'::regtype);
    </indexterm>
 
    <indexterm>
+    <primary>pg_options_to_table</primary>
+   </indexterm>
+
+   <indexterm>
     <primary>pg_tablespace_databases</primary>
    </indexterm>
 
@@ -13380,6 +13384,11 @@ SELECT pg_type_is_visible('myschema.widget'::regtype);
        <entry>get underlying <command>SELECT</command> command for view</entry>
       </row>
       <row>
+       <entry><literal><function>pg_options_to_table(<parameter>reloptions</parameter>)</function></literal></entry>
+       <entry><type>name, option</type></entry>
+       <entry>get the set of option name/value pairs from <structname>pg_class</>.<structfield>reloptions</></entry>
+      </row>
+      <row>
        <entry><literal><function>pg_tablespace_databases(<parameter>tablespace_oid</parameter>)</function></literal></entry>
        <entry><type>setof oid</type></entry>
        <entry>get the set of database OIDs that have objects in the tablespace</entry>
@@ -13472,6 +13481,12 @@ SELECT pg_type_is_visible('myschema.widget'::regtype);
   <para>
    <function>pg_get_userbyid</function> extracts a role's name given
    its OID.
+  </para>
+
+  <para>
+   <function>pg_options_to_table</function> returns the set of option
+   name/value pairs when passed
+   <structname>pg_class</>.<structfield>reloptions</>.
   </para>
 
   <para>
@@ -14067,6 +14082,16 @@ postgres=# select pg_start_backup('label_goes_here');
     If there has been no transaction log activity since the last transaction log switch,
     <function>pg_switch_xlog</> does nothing and returns the start location
     of the transaction log file currently in use.
+   </para>
+
+   <para>
+    <function>pg_create_restore_point</> creates a named transaction log
+    record that can be used as recovery target, and returns the corresponding
+    transaction log location.  The given name can then be used with
+    <xref linkend="recovery-target-name"> to specify the point up to which
+    recovery will proceed.  Avoid creating multiple restore points with the
+    same name, since recovery will stop at the first one whose name matches
+    the recovery target.
    </para>
 
    <para>
