@@ -1029,14 +1029,14 @@ BaseBackup()
 		/* First wait for the thread to exit */
 		if (WaitForSingleObjectEx((HANDLE) bgchild, INFINITE, FALSE) != WAIT_OBJECT_0)
 		{
-			_dosmaperr();
+			_dosmaperr(GetLastError());
 			fprintf(stderr, _("%s: could not wait for child thread: %s\n"),
 					progname, strerror(errno));
 			disconnect_and_exit(1);
 		}
 		if (GetExitCodeThread((HANDLE) bgchild, &status) == 0)
 		{
-			_dosmaperr();
+			_dosmaperr(GetLastError());
 			fprintf(stderr, _("%s: could not get child thread exit status: %s\n"),
 					progname, strerror(errno));
 			disconnect_and_exit(1);
