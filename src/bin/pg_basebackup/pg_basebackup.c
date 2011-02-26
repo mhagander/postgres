@@ -126,54 +126,66 @@ segment_callback(XLogRecPtr segendpos, uint32 timeline)
 	struct timeval tv;
 	int			r;
 
-	if (has_xlogendptr)
+	if (!has_xlogendptr)
 	{
 		/*
-		 * We have previously received an end pointer, so compare it to
-		 * the current position to figure out if it's time to stop.
+		 * Don't have the end pointer yet - check our pipe to see if it
+		 * has been sent yet.
 		 */
-		if (segendpos.xlogid > xlogendptr.xlogid ||
-			(segendpos.xlogid == xlogendptr.xlogid &&
-			 segendpos.xrecoff >= xlogendptr.xrecoff))
-			return true;
+		FD_ZERO(&fds);
+		FD_SET(bgpipe[0], &fds);
+
+		MemSet(&tv, 0, sizeof(tv));
+
+		r = select(bgpipe[0] + 1, &fds, NULL, NULL, &tv);
+		if (r == 1)
+		{
+			char		xlogend[64];
+
+			MemSet(xlogend, 0, sizeof(xlogend));
+			r = piperead(bgpipe[0], xlogend, sizeof(xlogend));
+			if (r < 0)
+			{
+				fprintf(stderr, _("%s: could not read from ready pipe: %s\n"),
+						progname, strerror(errno));
+				exit(1);
+			}
+
+			if (sscanf(xlogend, "%X/%X", &xlogendptr.xlogid, &xlogendptr.xrecoff) != 2)
+			{
+				fprintf(stderr, _("%s: could not parse xlog end position \"%s\"\n"),
+						progname, xlogend);
+				exit(1);
+			}
+			has_xlogendptr = true;
+			/*
+			 * Fall through to check if we've reached the point further
+			 * already.
+			 */
+		}
+		else
+		{
+			/*
+			 * No data received on the pipe means we don't know the end
+			 * position yet - so just say it's not time to stop yet.
+			 */
+			return false;
+		}
 	}
 
 	/*
-	 * Don't have the end pointer yet - check our pipe to see if it has been
-	 * sent now.
+	 * At this point we have an end pointer, so compare it to the current
+	 * position to figure out if it's time to stop.
 	 */
-	FD_ZERO(&fds);
-	FD_SET(bgpipe[0], &fds);
+	if (segendpos.xlogid > xlogendptr.xlogid ||
+		(segendpos.xlogid == xlogendptr.xlogid &&
+		 segendpos.xrecoff >= xlogendptr.xrecoff))
+		return true;
 
-	MemSet(&tv, 0, sizeof(tv));
-
-	r = select(bgpipe[0] + 1, &fds, NULL, NULL, &tv);
-	if (r == 1)
-	{
-		char		xlogend[64];
-
-		MemSet(xlogend, 0, sizeof(xlogend));
-		r = piperead(bgpipe[0], xlogend, sizeof(xlogend));
-		if (r < 0)
-		{
-			fprintf(stderr, _("%s: could not read from ready pipe: %s\n"),
-					progname, strerror(errno));
-			exit(1);
-		}
-
-		if (sscanf(xlogend, "%X/%X", &xlogendptr.xlogid, &xlogendptr.xrecoff) != 2)
-		{
-			fprintf(stderr, _("%s: could not parse xlog end position \"%s\"\n"),
-					progname, xlogend);
-			exit(1);
-		}
-		has_xlogendptr = true;
-
-		/* since we have a value now, call ourselves to make the comparison */
-		return segment_callback(segendpos, timeline);
-	}
-
-	/* Else nothing happened, so don't exit */
+	/*
+	 * Have end pointer, but haven't reached it yet - so tell the caller
+	 * to keep streaming.
+	 */
 	return false;
 }
 
