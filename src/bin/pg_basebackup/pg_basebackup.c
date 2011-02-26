@@ -189,6 +189,29 @@ segment_callback(XLogRecPtr segendpos, uint32 timeline)
 	return false;
 }
 
+typedef struct
+{
+	PGconn *bgconn;
+	XLogRecPtr startptr;
+	char	xlogdir[MAXPGPATH];
+	int timeline;
+} logstreamer_param;
+
+static int
+LogStreamerMain(logstreamer_param *param)
+{
+	if (!ReceiveXlogStream(param->bgconn, param->startptr, param->timeline, param-> xlogdir, segment_callback))
+		/*
+		 * Any errors will already have been reported in the function
+		 * process, but we need to tell the parent that we didn't shutdown
+		 * in a nice way.
+		 */
+		return 1;
+
+	PQfinish(param->bgconn);
+	return 0;
+}
+
 /*
  * Initiate background process for receiving xlog during the backup.
  * The background stream will use its own database connection so we can
@@ -197,19 +220,20 @@ segment_callback(XLogRecPtr segendpos, uint32 timeline)
 static void
 StartLogStreamer(char *startpos, uint32 timeline)
 {
-	PGconn	   *bgconn;
-	XLogRecPtr	startptr;
-	char		xlogdir[MAXPGPATH];
+	logstreamer_param *param;
+
+	param = xmalloc0(sizeof(logstreamer_param));
+	param->timeline = timeline;
 
 	/* Convert the starting position */
-	if (sscanf(startpos, "%X/%X", &startptr.xlogid, &startptr.xrecoff) != 2)
+	if (sscanf(startpos, "%X/%X", &param->startptr.xlogid, &param->startptr.xrecoff) != 2)
 	{
 		fprintf(stderr, _("%s: invalid format of xlog location: %s\n"),
 				progname, startpos);
 		disconnect_and_exit(1);
 	}
 	/* Round off to even segment position */
-	startptr.xrecoff -= startptr.xrecoff % XLOG_SEG_SIZE;
+	param->startptr.xrecoff -= param->startptr.xrecoff % XLOG_SEG_SIZE;
 
 	/* Create our background pipe */
 	if (pgpipe(bgpipe) < 0)
@@ -220,35 +244,26 @@ StartLogStreamer(char *startpos, uint32 timeline)
 	}
 
 	/* Get a second connection */
-	bgconn = GetConnection();
+	param->bgconn = GetConnection();
 
 	/*
 	 * Always in plain format, so we can write to basedir/pg_xlog. But the
 	 * directory entry in the tar file may arrive later, so make sure it's
 	 * created before we start.
 	 */
-	snprintf(xlogdir, sizeof(xlogdir), "%s/pg_xlog", basedir);
-	verify_dir_is_empty_or_create(xlogdir);
+	snprintf(param->xlogdir, sizeof(param->xlogdir), "%s/pg_xlog", basedir);
+	verify_dir_is_empty_or_create(param->xlogdir);
 
-	/* Fork off the child process and tell it to go about it's business */
-	/* XXX: win32 */
+	/*
+	 * Start a child process and tell it to start streaming. On Unix, this
+	 * is a fork(). On Windows, we create a thread.
+	 */
+#ifndef WIN32
 	bgchild = fork();
 	if (bgchild == 0)
 	{
 		/* in child process */
-
-		if (!ReceiveXlogStream(bgconn, startptr, timeline, xlogdir, segment_callback))
-
-			/*
-			 * Any errors will already have been reported in the function
-			 * process, but we need to tell the parent that we didn't shutdown
-			 * in a nice way. Do this by exiting with an error code and expect
-			 * it to be picked up.
-			 */
-			exit(1);
-
-		PQfinish(bgconn);
-		exit(0);
+		exit(LogStreamerMain(param));
 	}
 	else if (bgchild < 0)
 	{
@@ -260,6 +275,15 @@ StartLogStreamer(char *startpos, uint32 timeline)
 	/*
 	 * Else we are in the parent process and all is well.
 	 */
+#else /* WIN32 */
+	bgchild = _beginthreadex(NULL, 0, LogStreamerMain, params, 0, NULL);
+	if (bgchild == -1)
+	{
+		fprintf(stderr, _("%s: could not create background thread: %s\n"),
+				progname, strerror(errno));
+		disconnect_and_exit(1);
+	}
+#endif
 }
 
 /*
@@ -973,6 +997,7 @@ BaseBackup()
 			disconnect_and_exit(1);
 		}
 
+#ifndef WIN32
 		/* Just wait for the background process to exit */
 		r = waitpid(bgchild, &status, 0);
 		if (r == -1)
@@ -1000,6 +1025,30 @@ BaseBackup()
 			disconnect_and_exit(1);
 		}
 		/* Exited normally, we're happy! */
+#else /* WIN32 */
+		/* First wait for the thread to exit */
+		if (WaitForSingleObjectEx(bgchild, INFINITE, FALSE) != WAIT_OBJECT_0)
+		{
+			_dosmaperror();
+			fprintf(stderr, _("%s: could not wait for child thread: %s\n"),
+					progname, strerror(errno));
+			disconnect_and_exit(1);
+		}
+		if (GetExitCodeThread(bgchild, &status) == 0)
+		{
+			_dosmaperror();
+			fprintf(stderr, _("%s: could not get child thread exit status: %s\n"),
+					progname, strerror(errno));
+			disconnect_and_exit(1);
+		}
+		if (status != 0)
+		{
+			fprintf(stderr, _("%s: child thread exited with error %u\n"),
+					progname, status);
+			disconnect_and_exit(1);
+		}
+		/* Exited normally, we're happy */
+#endif
 	}
 
 	/*
