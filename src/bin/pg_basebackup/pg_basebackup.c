@@ -127,13 +127,13 @@ usage(void)
 static bool
 segment_callback(XLogRecPtr segendpos, uint32 timeline)
 {
-	fd_set		fds;
-	struct timeval tv;
-	int			r;
-
 	if (!has_xlogendptr)
 	{
 #ifndef WIN32
+		fd_set		fds;
+		struct timeval tv;
+		int			r;
+
 		/*
 		 * Don't have the end pointer yet - check our pipe to see if it
 		 * has been sent yet.
