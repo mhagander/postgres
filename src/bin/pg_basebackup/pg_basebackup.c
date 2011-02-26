@@ -128,7 +128,10 @@ segment_callback(XLogRecPtr segendpos, uint32 timeline)
 
 	if (has_xlogendptr)
 	{
-		/* Already know when to stop, compare to the position we got */
+		/*
+		 * We have previously received an end pointer, so compare it to
+		 * the current position to figure out if it's time to stop.
+		 */
 		if (segendpos.xlogid > xlogendptr.xlogid ||
 			(segendpos.xlogid == xlogendptr.xlogid &&
 			 segendpos.xrecoff >= xlogendptr.xrecoff))
@@ -176,7 +179,7 @@ segment_callback(XLogRecPtr segendpos, uint32 timeline)
 
 /*
  * Initiate background process for receiving xlog during the backup.
- * The background stream will use it's own database connection so we can
+ * The background stream will use its own database connection so we can
  * stream the logfile in parallel with the backups.
  */
 static void
