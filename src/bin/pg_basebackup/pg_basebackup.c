@@ -47,14 +47,16 @@ static uint64 totaldone;
 static int	tablespacecount;
 
 /* Pipe to communicate with background wal receiver process */
+#ifndef WIN32
 static int	bgpipe[2] = {-1, -1};
+#endif
 
 /* Handle to child process */
 static pid_t bgchild = -1;
 
 /* End position for xlog streaming, empty string if unknown yet */
 static XLogRecPtr xlogendptr;
-static bool has_xlogendptr = false;
+static int has_xlogendptr = 0;
 
 /* Function headers */
 static void usage(void);
@@ -115,9 +117,12 @@ usage(void)
 
 /*
  * Called in the background process whenever a complete segment of WAL
- * has been received. Check to see if there is any data on our pipe
+ * has been received.
+ * On Unix, we check to see if there is any data on our pipe
  * (which would mean we have a stop position), and if it is, check if
  * it is time to stop.
+ * On Windows, we are in a single process, so we can just check if it's
+ * time to stop.
  */
 static bool
 segment_callback(XLogRecPtr segendpos, uint32 timeline)
@@ -128,6 +133,7 @@ segment_callback(XLogRecPtr segendpos, uint32 timeline)
 
 	if (!has_xlogendptr)
 	{
+#ifndef WIN32
 		/*
 		 * Don't have the end pointer yet - check our pipe to see if it
 		 * has been sent yet.
@@ -157,7 +163,7 @@ segment_callback(XLogRecPtr segendpos, uint32 timeline)
 						progname, xlogend);
 				exit(1);
 			}
-			has_xlogendptr = true;
+			has_xlogendptr = 1;
 			/*
 			 * Fall through to check if we've reached the point further
 			 * already.
@@ -171,6 +177,13 @@ segment_callback(XLogRecPtr segendpos, uint32 timeline)
 			 */
 			return false;
 		}
+#else
+		/*
+		 * On win32, has_xlogendptr is set by the main thread, so if it's
+		 * not set here, we just go back and wait until it shows up.
+		 */
+		return false;
+#endif
 	}
 
 	/*
@@ -235,6 +248,7 @@ StartLogStreamer(char *startpos, uint32 timeline)
 	/* Round off to even segment position */
 	param->startptr.xrecoff -= param->startptr.xrecoff % XLOG_SEG_SIZE;
 
+#ifndef WIN32
 	/* Create our background pipe */
 	if (pgpipe(bgpipe) < 0)
 	{
@@ -242,6 +256,7 @@ StartLogStreamer(char *startpos, uint32 timeline)
 				progname, strerror(errno));
 		disconnect_and_exit(1);
 	}
+#endif
 
 	/* Get a second connection */
 	param->bgconn = GetConnection();
@@ -990,6 +1005,8 @@ BaseBackup()
 
 		if (verbose)
 			fprintf(stderr, _("%s: waiting for background process to finish streaming...\n"), progname);
+
+#ifndef WIN32
 		if (pipewrite(bgpipe[1], xlogend, strlen(xlogend)) != strlen(xlogend))
 		{
 			fprintf(stderr, _("%s: could not send command to background pipe: %s\n"),
@@ -997,7 +1014,6 @@ BaseBackup()
 			disconnect_and_exit(1);
 		}
 
-#ifndef WIN32
 		/* Just wait for the background process to exit */
 		r = waitpid(bgchild, &status, 0);
 		if (r == -1)
@@ -1026,6 +1042,19 @@ BaseBackup()
 		}
 		/* Exited normally, we're happy! */
 #else /* WIN32 */
+		/*
+		 * On Windows, since we are in the same thread, we can just store
+		 * the value directly in the variable, and then set the flag that
+		 * says it's there.
+		 */
+		if (sscanf(xlogend, "%X/%X", &xlogendptr.xlogid, &xlogendptr.xrecoff) != 2)
+		{
+			fprintf(stderr, _("%s: could not parse xlog end position \"%s\"\n"),
+					progname, xlogend);
+			exit(1);
+		}
+		InterlockedIncrement(&has_xlogendptr);
+
 		/* First wait for the thread to exit */
 		if (WaitForSingleObjectEx((HANDLE) bgchild, INFINITE, FALSE) != WAIT_OBJECT_0)
 		{
