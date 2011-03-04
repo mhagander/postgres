@@ -161,7 +161,7 @@ CREATE VIEW pg_available_extensions AS
 
 CREATE VIEW pg_available_extension_versions AS
     SELECT E.name, E.version, (X.extname IS NOT NULL) AS installed,
-           E.relocatable, E.schema, E.requires, E.comment
+           E.superuser, E.relocatable, E.schema, E.requires, E.comment
       FROM pg_available_extension_versions() AS E
            LEFT JOIN pg_extension AS X
              ON E.name = X.extname AND E.version = X.extversion;
@@ -520,7 +520,7 @@ CREATE VIEW pg_stat_replication AS
             W.sent_location,
             W.write_location,
             W.flush_location,
-            W.apply_location
+            W.replay_location
     FROM pg_stat_get_activity(NULL) AS S, pg_authid U,
             pg_stat_get_wal_senders() AS W
     WHERE S.usesysid = U.oid AND

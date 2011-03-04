@@ -45,6 +45,7 @@
 
 #include "access/attnum.h"
 #include "access/sysattr.h"
+#include "access/transam.h"
 #include "catalog/pg_cast.h"
 #include "catalog/pg_class.h"
 #include "catalog/pg_default_acl.h"
@@ -7041,6 +7042,19 @@ dumpExtension(Archive *fout, ExtensionInfo *extinfo)
 	if (!extinfo->dobj.dump || dataOnly)
 		return;
 
+	/*
+	 * In a regular dump, we use IF NOT EXISTS so that there isn't a problem
+	 * if the extension already exists in the target database; this is
+	 * essential for installed-by-default extensions such as plpgsql.
+	 *
+	 * In binary-upgrade mode, that doesn't work well, so instead we skip
+	 * extensions with OIDs less than FirstNormalObjectId; those were
+	 * presumably installed by initdb, and we assume they'll exist in the
+	 * target installation too.
+	 */
+	if (binary_upgrade && extinfo->dobj.catId.oid < (Oid) FirstNormalObjectId)
+		return;
+
 	q = createPQExpBuffer();
 	delq = createPQExpBuffer();
 	labelq = createPQExpBuffer();
@@ -7051,7 +7065,7 @@ dumpExtension(Archive *fout, ExtensionInfo *extinfo)
 
 	if (!binary_upgrade)
 	{
-		appendPQExpBuffer(q, "CREATE EXTENSION %s WITH SCHEMA %s;\n",
+		appendPQExpBuffer(q, "CREATE EXTENSION IF NOT EXISTS %s WITH SCHEMA %s;\n",
 						  qextname, fmtId(extinfo->namespace));
 	}
 	else
@@ -7305,6 +7319,7 @@ dumpBaseType(Archive *fout, TypeInfo *tyinfo)
 	char	   *typbyval;
 	char	   *typalign;
 	char	   *typstorage;
+	char	   *typcollatable;
 	char	   *typdefault;
 	bool		typdefault_is_literal = false;
 
@@ -7312,7 +7327,7 @@ dumpBaseType(Archive *fout, TypeInfo *tyinfo)
 	selectSourceSchema(tyinfo->dobj.namespace->dobj.name);
 
 	/* Fetch type-specific details */
-	if (fout->remoteVersion >= 80400)
+	if (fout->remoteVersion >= 90100)
 	{
 		appendPQExpBuffer(query, "SELECT typlen, "
 						  "typinput, typoutput, typreceive, typsend, "
@@ -7326,6 +7341,27 @@ dumpBaseType(Archive *fout, TypeInfo *tyinfo)
 						  "typanalyze::pg_catalog.oid AS typanalyzeoid, "
 						  "typcategory, typispreferred, "
 						  "typdelim, typbyval, typalign, typstorage, "
+						  "(typcollation = (SELECT oid FROM pg_catalog.pg_collation WHERE collname = 'default')) AS typcollatable, "
+						  "pg_catalog.pg_get_expr(typdefaultbin, 0) AS typdefaultbin, typdefault "
+						  "FROM pg_catalog.pg_type "
+						  "WHERE oid = '%u'::pg_catalog.oid",
+						  tyinfo->dobj.catId.oid);
+	}
+	else if (fout->remoteVersion >= 80400)
+	{
+		appendPQExpBuffer(query, "SELECT typlen, "
+						  "typinput, typoutput, typreceive, typsend, "
+						  "typmodin, typmodout, typanalyze, "
+						  "typinput::pg_catalog.oid AS typinputoid, "
+						  "typoutput::pg_catalog.oid AS typoutputoid, "
+						  "typreceive::pg_catalog.oid AS typreceiveoid, "
+						  "typsend::pg_catalog.oid AS typsendoid, "
+						  "typmodin::pg_catalog.oid AS typmodinoid, "
+						  "typmodout::pg_catalog.oid AS typmodoutoid, "
+						  "typanalyze::pg_catalog.oid AS typanalyzeoid, "
+						  "typcategory, typispreferred, "
+						  "typdelim, typbyval, typalign, typstorage, "
+						  "false AS typcollatable, "
 						  "pg_catalog.pg_get_expr(typdefaultbin, 0) AS typdefaultbin, typdefault "
 						  "FROM pg_catalog.pg_type "
 						  "WHERE oid = '%u'::pg_catalog.oid",
@@ -7346,6 +7382,7 @@ dumpBaseType(Archive *fout, TypeInfo *tyinfo)
 						  "typanalyze::pg_catalog.oid AS typanalyzeoid, "
 						  "'U' AS typcategory, false AS typispreferred, "
 						  "typdelim, typbyval, typalign, typstorage, "
+						  "false AS typcollatable, "
 						  "pg_catalog.pg_get_expr(typdefaultbin, 'pg_catalog.pg_type'::pg_catalog.regclass) AS typdefaultbin, typdefault "
 						  "FROM pg_catalog.pg_type "
 						  "WHERE oid = '%u'::pg_catalog.oid",
@@ -7365,6 +7402,7 @@ dumpBaseType(Archive *fout, TypeInfo *tyinfo)
 						  "typanalyze::pg_catalog.oid AS typanalyzeoid, "
 						  "'U' AS typcategory, false AS typispreferred, "
 						  "typdelim, typbyval, typalign, typstorage, "
+						  "false AS typcollatable, "
 						  "pg_catalog.pg_get_expr(typdefaultbin, 'pg_catalog.pg_type'::pg_catalog.regclass) AS typdefaultbin, typdefault "
 						  "FROM pg_catalog.pg_type "
 						  "WHERE oid = '%u'::pg_catalog.oid",
@@ -7384,6 +7422,7 @@ dumpBaseType(Archive *fout, TypeInfo *tyinfo)
 						  "0 AS typanalyzeoid, "
 						  "'U' AS typcategory, false AS typispreferred, "
 						  "typdelim, typbyval, typalign, typstorage, "
+						  "false AS typcollatable, "
 						  "pg_catalog.pg_get_expr(typdefaultbin, 'pg_catalog.pg_type'::pg_catalog.regclass) AS typdefaultbin, typdefault "
 						  "FROM pg_catalog.pg_type "
 						  "WHERE oid = '%u'::pg_catalog.oid",
@@ -7403,6 +7442,7 @@ dumpBaseType(Archive *fout, TypeInfo *tyinfo)
 						  "0 AS typanalyzeoid, "
 						  "'U' AS typcategory, false AS typispreferred, "
 						  "typdelim, typbyval, typalign, typstorage, "
+						  "false AS typcollatable, "
 						  "pg_catalog.pg_get_expr(typdefaultbin, 'pg_catalog.pg_type'::pg_catalog.regclass) AS typdefaultbin, typdefault "
 						  "FROM pg_catalog.pg_type "
 						  "WHERE oid = '%u'::pg_catalog.oid",
@@ -7426,6 +7466,7 @@ dumpBaseType(Archive *fout, TypeInfo *tyinfo)
 						  "0 AS typanalyzeoid, "
 						  "'U' AS typcategory, false AS typispreferred, "
 						  "typdelim, typbyval, typalign, typstorage, "
+						  "false AS typcollatable, "
 						  "NULL AS typdefaultbin, typdefault "
 						  "FROM pg_type "
 						  "WHERE oid = '%u'::oid",
@@ -7449,6 +7490,7 @@ dumpBaseType(Archive *fout, TypeInfo *tyinfo)
 						  "0 AS typanalyzeoid, "
 						  "'U' AS typcategory, false AS typispreferred, "
 						  "typdelim, typbyval, typalign, typstorage, "
+						  "false AS typcollatable, "
 						  "NULL AS typdefaultbin, NULL AS typdefault "
 						  "FROM pg_type "
 						  "WHERE oid = '%u'::oid",
@@ -7469,6 +7511,7 @@ dumpBaseType(Archive *fout, TypeInfo *tyinfo)
 						  "'U' AS typcategory, false AS typispreferred, "
 						  "typdelim, typbyval, typalign, "
 						  "'p'::char AS typstorage, "
+						  "false AS typcollatable, "
 						  "NULL AS typdefaultbin, NULL AS typdefault "
 						  "FROM pg_type "
 						  "WHERE oid = '%u'::oid",
@@ -7510,6 +7553,7 @@ dumpBaseType(Archive *fout, TypeInfo *tyinfo)
 	typbyval = PQgetvalue(res, 0, PQfnumber(res, "typbyval"));
 	typalign = PQgetvalue(res, 0, PQfnumber(res, "typalign"));
 	typstorage = PQgetvalue(res, 0, PQfnumber(res, "typstorage"));
+	typcollatable = PQgetvalue(res, 0, PQfnumber(res, "typcollatable"));
 	if (!PQgetisnull(res, 0, PQfnumber(res, "typdefaultbin")))
 		typdefault = PQgetvalue(res, 0, PQfnumber(res, "typdefaultbin"));
 	else if (!PQgetisnull(res, 0, PQfnumber(res, "typdefault")))
@@ -7565,6 +7609,9 @@ dumpBaseType(Archive *fout, TypeInfo *tyinfo)
 		appendPQExpBuffer(q, ",\n    OUTPUT = %s", fmtId(typoutput));
 		/* receive/send/typmodin/typmodout/analyze need not be printed */
 	}
+
+	if (strcmp(typcollatable, "t") == 0)
+		appendPQExpBuffer(q, ",\n    COLLATABLE = true");
 
 	if (typdefault != NULL)
 	{

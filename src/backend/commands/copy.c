@@ -1216,7 +1216,8 @@ BeginCopy(bool is_from,
 		 * Use a snapshot with an updated command ID to ensure this query sees
 		 * results of any previously executed queries.
 		 */
-		PushUpdatedSnapshot(GetActiveSnapshot());
+		PushCopiedSnapshot(GetActiveSnapshot());
+		UpdateActiveSnapshotCommandId();
 
 		/* Create dest receiver for COPY OUT */
 		dest = CreateDestReceiver(DestCopyOut);
@@ -1463,6 +1464,7 @@ EndCopyTo(CopyState cstate)
 	if (cstate->queryDesc != NULL)
 	{
 		/* Close down the query and free resources. */
+		ExecutorFinish(cstate->queryDesc);
 		ExecutorEnd(cstate->queryDesc);
 		FreeQueryDesc(cstate->queryDesc);
 		PopActiveSnapshot();

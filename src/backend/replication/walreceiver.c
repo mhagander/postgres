@@ -218,7 +218,7 @@ WalReceiverMain(void)
 
 	/* Fetch information required to start streaming */
 	strlcpy(conninfo, (char *) walrcv->conninfo, MAXCONNINFO);
-	startpoint = walrcv->receivedUpto;
+	startpoint = walrcv->receiveStart;
 	SpinLockRelease(&walrcv->mutex);
 
 	/* Arrange to clean up at walreceiver exit */
@@ -558,8 +558,11 @@ XLogWalRcvFlush(bool dying)
 
 		/* Update shared-memory status */
 		SpinLockAcquire(&walrcv->mutex);
-		walrcv->latestChunkStart = walrcv->receivedUpto;
-		walrcv->receivedUpto = LogstreamResult.Flush;
+		if (XLByteLT(walrcv->receivedUpto, LogstreamResult.Flush))
+		{
+			walrcv->latestChunkStart = walrcv->receivedUpto;
+			walrcv->receivedUpto = LogstreamResult.Flush;
+		}
 		SpinLockRelease(&walrcv->mutex);
 
 		/* Signal the startup process that new WAL has arrived */
@@ -651,7 +654,7 @@ XLogWalRcvSendHSFeedback(void)
 	 * If the user doesn't want status to be reported to the master, be sure
 	 * to exit before doing anything at all.
 	 */
-	if (!hot_standby_feedback)
+	if (wal_receiver_status_interval <= 0 || !hot_standby_feedback)
 		return;
 
 	/* Get current timestamp. */

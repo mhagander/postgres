@@ -32,7 +32,7 @@ endif
 # to work without, we have to skip it.
 ifneq (,$(findstring yes, $(shared_libpython)$(allow_nonpic_in_shlib)))
 
-override CPPFLAGS := -I$(srcdir) $(python_includespec) $(CPPFLAGS)
+override CPPFLAGS := -I. -I$(srcdir) $(python_includespec) $(CPPFLAGS)
 
 rpathdir = $(python_libdir)
 
@@ -81,14 +81,22 @@ REGRESS = \
 	plpython_unicode \
 	plpython_quote \
 	plpython_composite \
+	plpython_subtransaction \
 	plpython_drop
 # where to find psql for running the tests
 PSQLDIR = $(bindir)
 
 include $(top_srcdir)/src/Makefile.shlib
 
+# Force this dependency to be known even without dependency info built:
+plpython.o: spiexceptions.h
+
+spiexceptions.h: $(top_srcdir)/src/backend/utils/errcodes.txt generate-spiexceptions.pl
+	$(PERL) $(srcdir)/generate-spiexceptions.pl $< > $@
 
 all: all-lib
+
+distprep: spiexceptions.h
 
 install: all installdirs install-lib
 ifeq ($(python_majorversion),2)
@@ -141,12 +149,15 @@ endif
 submake:
 	$(MAKE) -C $(top_builddir)/src/test/regress pg_regress$(X)
 
-clean distclean maintainer-clean: clean-lib
+clean distclean: clean-lib
 	rm -f $(OBJS)
 	rm -rf $(pg_regress_clean_files)
 ifeq ($(PORTNAME), win32)
 	rm -f python${pytverstr}.def
 endif
+
+maintainer-clean: distclean
+	rm -f spiexceptions.h
 
 else # can't build
 

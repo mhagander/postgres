@@ -84,6 +84,8 @@ static void show_hash_info(HashState *hashstate, ExplainState *es);
 static void show_foreignscan_info(ForeignScanState *fsstate, ExplainState *es);
 static const char *explain_get_index_name(Oid indexId);
 static void ExplainScanTarget(Scan *plan, ExplainState *es);
+static void ExplainModifyTarget(ModifyTable *plan, ExplainState *es);
+static void ExplainTargetRel(Plan *plan, Index rti, ExplainState *es);
 static void ExplainMemberNodes(List *plans, PlanState **planstates,
 				   List *ancestors, ExplainState *es);
 static void ExplainSubPlans(List *plans, List *ancestors,
@@ -360,22 +362,19 @@ ExplainOnePlan(PlannedStmt *plannedstmt, ExplainState *es,
 	if (es->buffers)
 		instrument_option |= INSTRUMENT_BUFFERS;
 
+	INSTR_TIME_SET_CURRENT(starttime);
+
 	/*
 	 * Use a snapshot with an updated command ID to ensure this query sees
 	 * results of any previously executed queries.
 	 */
-	PushUpdatedSnapshot(GetActiveSnapshot());
+	PushCopiedSnapshot(GetActiveSnapshot());
+	UpdateActiveSnapshotCommandId();
 
 	/* Create a QueryDesc requesting no output */
 	queryDesc = CreateQueryDesc(plannedstmt, queryString,
 								GetActiveSnapshot(), InvalidSnapshot,
 								None_Receiver, params, instrument_option);
-
-	INSTR_TIME_SET_CURRENT(starttime);
-
-	/* If analyzing, we need to cope with queued triggers */
-	if (es->analyze)
-		AfterTriggerBeginQuery();
 
 	/* Select execution options */
 	if (es->analyze)
@@ -392,7 +391,10 @@ ExplainOnePlan(PlannedStmt *plannedstmt, ExplainState *es,
 		/* run the plan */
 		ExecutorRun(queryDesc, ForwardScanDirection, 0L);
 
-		/* We can't clean up 'till we're done printing the stats... */
+		/* run cleanup too */
+		ExecutorFinish(queryDesc);
+
+		/* We can't run ExecutorEnd 'till we're done printing the stats... */
 		totaltime += elapsed_time(&starttime);
 	}
 
@@ -400,18 +402,6 @@ ExplainOnePlan(PlannedStmt *plannedstmt, ExplainState *es,
 
 	/* Create textual dump of plan tree */
 	ExplainPrintPlan(es, queryDesc);
-
-	/*
-	 * If we ran the command, run any AFTER triggers it queued.  (Note this
-	 * will not include DEFERRED triggers; since those don't run until end of
-	 * transaction, we can't measure them.)  Include into total runtime.
-	 */
-	if (es->analyze)
-	{
-		INSTR_TIME_SET_CURRENT(starttime);
-		AfterTriggerEndQuery(queryDesc->estate);
-		totaltime += elapsed_time(&starttime);
-	}
 
 	/* Print info about runtime of triggers */
 	if (es->analyze)
@@ -862,6 +852,9 @@ ExplainNode(PlanState *planstate, List *ancestors,
 				else
 					ExplainPropertyText("Index Name", indexname, es);
 			}
+			break;
+		case T_ModifyTable:
+			ExplainModifyTarget((ModifyTable *) plan, es);
 			break;
 		case T_NestLoop:
 		case T_MergeJoin:
@@ -1566,14 +1559,39 @@ explain_get_index_name(Oid indexId)
 static void
 ExplainScanTarget(Scan *plan, ExplainState *es)
 {
+	ExplainTargetRel((Plan *) plan, plan->scanrelid, es);
+}
+
+/*
+ * Show the target of a ModifyTable node
+ */
+static void
+ExplainModifyTarget(ModifyTable *plan, ExplainState *es)
+{
+	Index		rti;
+
+	/*
+	 * We show the name of the first target relation.  In multi-target-table
+	 * cases this should always be the parent of the inheritance tree.
+	 */
+	Assert(plan->resultRelations != NIL);
+	rti = linitial_int(plan->resultRelations);
+
+	ExplainTargetRel((Plan *) plan, rti, es);
+}
+
+/*
+ * Show the target relation of a scan or modify node
+ */
+static void
+ExplainTargetRel(Plan *plan, Index rti, ExplainState *es)
+{
 	char	   *objectname = NULL;
 	char	   *namespace = NULL;
 	const char *objecttag = NULL;
 	RangeTblEntry *rte;
 
-	if (plan->scanrelid <= 0)	/* Is this still possible? */
-		return;
-	rte = rt_fetch(plan->scanrelid, es->rtable);
+	rte = rt_fetch(rti, es->rtable);
 
 	switch (nodeTag(plan))
 	{
@@ -1582,6 +1600,7 @@ ExplainScanTarget(Scan *plan, ExplainState *es)
 		case T_BitmapHeapScan:
 		case T_TidScan:
 		case T_ForeignScan:
+		case T_ModifyTable:
 			/* Assert it's on a real relation */
 			Assert(rte->rtekind == RTE_RELATION);
 			objectname = get_rel_name(rte->relid);
