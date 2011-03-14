@@ -324,7 +324,9 @@ SET ENABLE_SEQSCAN TO OFF;
          to listen for connections from client applications.
          The value takes the form of a comma-separated list of host names
          and/or numeric IP addresses.  The special entry <literal>*</>
-         corresponds to all available IP interfaces.
+         corresponds to all available IP interfaces.  The entry
+         <literal>0.0.0.0</> allows listening for all IPv4 addresses and
+         <literal>::</> allows listening for all IPv6 addresses.
          If the list is empty, the server does not listen on any IP interface
          at all, in which case only Unix-domain sockets can be used to connect
          to it.
@@ -5355,7 +5357,7 @@ dynamic_library_path = 'C:\tools\postgresql;H:\my_project\lib;$libdir'
         null values to be entered.  However, <productname>PostgreSQL</> versions
         before 8.2 did not support null values in arrays, and therefore would
         treat <literal>NULL</> as specifying a normal array element with
-        the string value <quote>NULL</>.  For backwards compatibility with
+        the string value <quote>NULL</>.  For backward compatibility with
         applications that require the old behavior, this variable can be
         turned <literal>off</>.
        </para>
