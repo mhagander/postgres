@@ -2640,7 +2640,6 @@ main(int argc, char *argv[])
 	if (strcmp(authmethod, "md5") &&
 		strcmp(authmethod, "peer") &&
 		strcmp(authmethod, "ident") &&
-		strncmp(authmethod, "ident ", 6) &&		/* ident with space = param */
 		strcmp(authmethod, "trust") &&
 #ifdef USE_PAM
 		strcmp(authmethod, "pam") &&
