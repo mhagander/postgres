@@ -1145,13 +1145,7 @@ parse_hba_line(List *line, int line_num, HbaLine *parsedline)
 	 */
 	if (parsedline->conntype == ctLocal &&
 		parsedline->auth_method == uaIdent)
-	{
-		ereport(LOG,
-				(errmsg("\"ident\" authentication on local socket automatically changed to \"peer\""),
-				 errcontext("line %d of configuration file \"%s\"",
-							line_num, HbaFileName)));
 		parsedline->auth_method = uaPeer;
-	}
 
 	/* Invalid authentication combinations */
 	if (parsedline->conntype == ctLocal &&
