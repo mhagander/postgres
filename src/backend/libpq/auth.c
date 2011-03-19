@@ -61,7 +61,9 @@ static int	recv_and_check_password_packet(Port *port);
 #define IDENT_PORT 113
 
 static int	ident_inet(hbaPort *port);
+#ifdef HAVE_UNIX_SOCKETS
 static int	auth_peer(hbaPort *port);
+#endif
 
 
 /*----------------------------------------------------------------
@@ -511,6 +513,7 @@ ClientAuthentication(Port *port)
 			break;
 
 		case uaPeer:
+#ifdef HAVE_UNIX_SOCKETS
 
 			/*
 			 * If we are doing peer on unix-domain sockets, use SCM_CREDS only
@@ -540,6 +543,9 @@ ClientAuthentication(Port *port)
 			}
 #endif
 			status = auth_peer(port);
+#else /* HAVE_UNIX_SOCKETS */
+			Assert(false);
+#endif
 			break;
 
 		case uaIdent:
