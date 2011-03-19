@@ -60,8 +60,8 @@ static int	recv_and_check_password_packet(Port *port);
 /* Standard TCP port number for Ident service.	Assigned by IANA */
 #define IDENT_PORT 113
 
-static int ident_inet(hbaPort *port);
-static int auth_peer(hbaPort *port);
+static int	ident_inet(hbaPort *port);
+static int	auth_peer(hbaPort *port);
 
 
 /*----------------------------------------------------------------
@@ -513,8 +513,8 @@ ClientAuthentication(Port *port)
 		case uaPeer:
 
 			/*
-			 * If we are doing peer on unix-domain sockets, use SCM_CREDS
-			 * only if it is defined and SO_PEERCRED isn't.
+			 * If we are doing peer on unix-domain sockets, use SCM_CREDS only
+			 * if it is defined and SO_PEERCRED isn't.
 			 */
 #if !defined(HAVE_GETPEEREID) && !defined(SO_PEERCRED) && \
 	(defined(HAVE_STRUCT_CMSGCRED) || defined(HAVE_STRUCT_FCRED) || \
@@ -1610,8 +1610,8 @@ interpret_ident_response(const char *ident_response,
 static int
 ident_inet(hbaPort *port)
 {
-	const		SockAddr remote_addr = port->raddr;
-	const		SockAddr local_addr = port->laddr;
+	const SockAddr remote_addr = port->raddr;
+	const SockAddr local_addr = port->laddr;
 	char		ident_user[IDENT_USERNAME_MAX + 1];
 	pgsocket	sock_fd,		/* File descriptor for socket on which we talk
 								 * to Ident */
@@ -1655,7 +1655,7 @@ ident_inet(hbaPort *port)
 	{
 		if (ident_serv)
 			pg_freeaddrinfo_all(hints.ai_family, ident_serv);
-		return STATUS_ERROR;			/* we don't expect this to happen */
+		return STATUS_ERROR;	/* we don't expect this to happen */
 	}
 
 	hints.ai_flags = AI_NUMERICHOST;
@@ -1671,7 +1671,7 @@ ident_inet(hbaPort *port)
 	{
 		if (la)
 			pg_freeaddrinfo_all(hints.ai_family, la);
-		return STATUS_ERROR;			/* we don't expect this to happen */
+		return STATUS_ERROR;	/* we don't expect this to happen */
 	}
 
 	sock_fd = socket(ident_serv->ai_family, ident_serv->ai_socktype,

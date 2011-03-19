@@ -1140,8 +1140,8 @@ parse_hba_line(List *line, int line_num, HbaLine *parsedline)
 	}
 
 	/*
-	 * XXX: When using ident on local connections, change it to peer,
-	 * for backwards compatibility.
+	 * XXX: When using ident on local connections, change it to peer, for
+	 * backwards compatibility.
 	 */
 	if (parsedline->conntype == ctLocal &&
 		parsedline->auth_method == uaIdent)
@@ -1175,7 +1175,7 @@ parse_hba_line(List *line, int line_num, HbaLine *parsedline)
 	{
 		ereport(LOG,
 				(errcode(ERRCODE_CONFIG_FILE_ERROR),
-				 errmsg("peer authentication is only supported on local sockets"),
+			errmsg("peer authentication is only supported on local sockets"),
 				 errcontext("line %d of configuration file \"%s\"",
 							line_num, HbaFileName)));
 		return false;

@@ -2672,8 +2672,8 @@ main(int argc, char *argv[])
 	}
 
 	/*
-	 * When ident is specified, use peer for local connections. Mirrored,
-	 * when peer is specified, use ident for TCP connections.
+	 * When ident is specified, use peer for local connections. Mirrored, when
+	 * peer is specified, use ident for TCP connections.
 	 */
 	if (strcmp(authmethod, "ident") == 0)
 		authmethodlocal = "peer";
