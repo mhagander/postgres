@@ -166,10 +166,12 @@ SET ENABLE_SEQSCAN TO OFF;
    </para>
 
    <para>
-    The virtual table <structname>pg_settings</structname>
-    (described in <xref linkend="view-pg-settings">) also allows
-    displaying and updating session run-time parameters.  It is equivalent
-    to <command>SHOW</> and <command>SET</>, but can be more convenient
+    The virtual table <structname>pg_settings</structname> also allows
+    displaying and updating session run-time parameters;  see <xref
+    linkend="view-pg-settings"> for details and a description of the
+    different variable types and when they can be changed.
+    <structname>pg_settings</structname> is equivalent to <command>SHOW</>
+    and <command>SET</>, but can be more convenient
     to use because it can be joined with other tables, or selected from using
     any desired selection condition. It also contains more information about
     what values are allowed for the parameters.
@@ -2045,9 +2047,11 @@ SET ENABLE_SEQSCAN TO OFF;
         for confirmation of successful replication. That delay will
         increase depending upon the physical distance and network activity
         between primary and standby. The commit wait will last until a
-        reply from the current synchronous standby indicates it has received
-        the commit record of the transaction. Synchronous standbys must
-        already have been defined (see <xref linkend="guc-sync-standby-names">).
+        reply from the current synchronous standby indicates it has written
+        the commit record of the transaction to durable storage.  This
+        parameter has no effect if
+        <xref linkend="guc-synchronous-standby-names"> is empty or
+        <xref linkend="guc-max-wal-senders"> is zero.
        </para>
        <para>
         This parameter can be changed at any time; the
@@ -2062,7 +2066,7 @@ SET ENABLE_SEQSCAN TO OFF;
       </listitem>
      </varlistentry>
 
-     <varlistentry id="guc-sync-standby-names" xreflabel="synchronous_standby_names">
+     <varlistentry id="guc-synchronous-standby-names" xreflabel="synchronous_standby_names">
       <term><varname>synchronous_standby_names</varname> (<type>string</type>)</term>
       <indexterm>
        <primary><varname>synchronous_standby_names</> configuration parameter</primary>
@@ -2096,8 +2100,7 @@ SET ENABLE_SEQSCAN TO OFF;
         If a standby is removed from the list of servers then it will stop
         being the synchronous standby, allowing another to take its place.
         If the list is empty, synchronous replication will not be
-        possible, whatever the setting of <varname>synchronous_replication</>,
-        however, already waiting commits will continue to wait.
+        possible, whatever the setting of <varname>synchronous_replication</>.
         Standbys may also be added to the list without restarting the server.
        </para>
       </listitem>
@@ -5649,7 +5652,7 @@ dynamic_library_path = 'C:\tools\postgresql;H:\my_project\lib;$libdir'
         value set to true is normally the best way to maximize the availability
         of the database.  However, in some circumstances, such as when
         <productname>PostgreSQL</> is being invoked by clusterware, it may be
-        useful to disable this behavior, so that the clusterware can gain
+        useful to disable the restart so that the clusterware can gain
         control and take any actions it deems appropriate.
        </para>
       </listitem>
