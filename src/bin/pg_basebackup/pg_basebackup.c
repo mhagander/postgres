@@ -366,17 +366,25 @@ progress_report(int tablespacenum, char *fn)
 	if (percent > 100)
 		percent = 100;
 
-	if (!fn)
-		fprintf(stderr,
-		INT64_FORMAT "/" INT64_FORMAT " kb g(100%%) %i/%i tablespaces %35s\r",
-				totaldone / 1024, totalsize,
-				tablespacenum, tablespacecount, "");
-	else if (verbose)
-		fprintf(stderr,
-				INT64_FORMAT "/" INT64_FORMAT " kB (%i%%) %i/%i tablespaces (%-30.30s)\r",
-				totaldone / 1024, totalsize,
-				percent,
-				tablespacenum, tablespacecount, fn);
+	if (verbose)
+	{
+		if (!fn)
+
+			/*
+			 * No filename given, so clear the status line (used for last
+			 * call)
+			 */
+			fprintf(stderr,
+					INT64_FORMAT "/" INT64_FORMAT " kB (100%%) %i/%i tablespaces %35s\r",
+					totaldone / 1024, totalsize,
+					tablespacenum, tablespacecount, "");
+		else
+			fprintf(stderr,
+					INT64_FORMAT "/" INT64_FORMAT " kB (%i%%) %i/%i tablespaces (%-30.30s)\r",
+					totaldone / 1024, totalsize,
+					percent,
+					tablespacenum, tablespacecount, fn);
+	}
 	else
 		fprintf(stderr, INT64_FORMAT "/" INT64_FORMAT " kB (%i%%) %i/%i tablespaces\r",
 				totaldone / 1024, totalsize,
