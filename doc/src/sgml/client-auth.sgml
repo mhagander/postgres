@@ -460,7 +460,9 @@ hostnossl  <replaceable>database</replaceable>  <replaceable>user</replaceable> 
           Obtain the operating system user name of the client
           by contacting the ident server on the client
           and check if it matches the requested database user name.
-          This is only available for TCP/IP connections.
+          Ident authentication can only be used on TCP/IP
+          connections. When specified for local connections, peer
+          authentication will be used instead.
           See <xref linkend="auth-ident"> for details.
          </para>
         </listitem>
@@ -1223,6 +1225,14 @@ omicron         bryanh                  guest1
     the allowed database user name (with an optional user name mapping).
     This is only supported on TCP/IP connections.
    </para>
+
+   <note>
+    <para>
+     When ident is specified for a local (non-TCP/IP) connection,
+     peer authentication (see <xref linkend="auth-peer">) will be
+     used instead.
+    </para>
+   </note>
 
    <para>
     The following configuration options are supported for <productname>ident</productname>:
