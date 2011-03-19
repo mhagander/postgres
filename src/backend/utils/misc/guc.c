@@ -55,6 +55,7 @@
 #include "postmaster/postmaster.h"
 #include "postmaster/syslogger.h"
 #include "postmaster/walwriter.h"
+#include "replication/syncrep.h"
 #include "replication/walreceiver.h"
 #include "replication/walsender.h"
 #include "storage/bufmgr.h"
@@ -754,6 +755,14 @@ static struct config_bool ConfigureNamesBool[] =
 		true, NULL, NULL
 	},
 	{
+		{"synchronous_replication", PGC_USERSET, WAL_REPLICATION,
+			gettext_noop("Requests synchronous replication."),
+			NULL
+		},
+		&synchronous_replication,
+		false, NULL, NULL
+	},
+	{
 		{"zero_damaged_pages", PGC_SUSET, DEVELOPER_OPTIONS,
 			gettext_noop("Continues processing past damaged page headers."),
 			gettext_noop("Detection of a damaged page header normally causes PostgreSQL to "
@@ -1427,7 +1436,7 @@ static struct config_int ConfigureNamesInt[] =
 			GUC_UNIT_MS
 		},
 		&DeadlockTimeout,
-		1000, 1, INT_MAX / 1000, NULL, NULL
+		1000, 1, INT_MAX, NULL, NULL
 	},
 
 	{
@@ -1437,7 +1446,7 @@ static struct config_int ConfigureNamesInt[] =
 			GUC_UNIT_MS
 		},
 		&max_standby_archive_delay,
-		30 * 1000, -1, INT_MAX / 1000, NULL, NULL
+		30 * 1000, -1, INT_MAX, NULL, NULL
 	},
 
 	{
@@ -1447,7 +1456,7 @@ static struct config_int ConfigureNamesInt[] =
 			GUC_UNIT_MS
 		},
 		&max_standby_streaming_delay,
-		30 * 1000, -1, INT_MAX / 1000, NULL, NULL
+		30 * 1000, -1, INT_MAX, NULL, NULL
 	},
 
 	{
@@ -1885,7 +1894,7 @@ static struct config_int ConfigureNamesInt[] =
 			GUC_UNIT_MS
 		},
 		&log_min_duration_statement,
-		-1, -1, INT_MAX / 1000, NULL, NULL
+		-1, -1, INT_MAX, NULL, NULL
 	},
 
 	{
@@ -1896,7 +1905,7 @@ static struct config_int ConfigureNamesInt[] =
 			GUC_UNIT_MS
 		},
 		&Log_autovacuum_min_duration,
-		-1, -1, INT_MAX / 1000, NULL, NULL
+		-1, -1, INT_MAX, NULL, NULL
 	},
 
 	{
@@ -2714,6 +2723,16 @@ static struct config_string ConfigureNamesString[] =
 		},
 		&pgstat_temp_directory,
 		"pg_stat_tmp", assign_pgstat_temp_directory, NULL
+	},
+
+	{
+		{"synchronous_standby_names", PGC_SIGHUP, WAL_REPLICATION,
+			gettext_noop("List of potential standby names to synchronise with."),
+			NULL,
+			GUC_LIST_INPUT
+		},
+		&SyncRepStandbyNames,
+		"", assign_synchronous_standby_names, NULL
 	},
 
 	{

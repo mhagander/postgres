@@ -609,7 +609,7 @@ static const pgsql_thing_t words_after_create[] = {
 	{"AGGREGATE", NULL, &Query_for_list_of_aggregates},
 	{"CAST", NULL, NULL},		/* Casts have complex structures for names, so
 								 * skip it */
-	{"COLLATION", "SELECT pg_catalog.quote_ident(collname) FROM pg_catalog.pg_collation WHERE collencoding = pg_char_to_encoding(getdatabaseencoding()) AND substring(pg_catalog.quote_ident(collname),1,%d)='%s'"},
+	{"COLLATION", "SELECT pg_catalog.quote_ident(collname) FROM pg_catalog.pg_collation WHERE collencoding IN (-1, pg_catalog.pg_char_to_encoding(pg_catalog.getdatabaseencoding())) AND substring(pg_catalog.quote_ident(collname),1,%d)='%s'"},
 
 	/*
 	 * CREATE CONSTRAINT TRIGGER is not supported here because it is designed
@@ -2827,6 +2827,24 @@ psql_completion(char *text, int start, int end)
 		"linestyle", "pager", "recordsep", NULL};
 
 		COMPLETE_WITH_LIST(my_list);
+	}
+	else if (strcmp(prev2_wd, "\\pset") == 0)
+	{
+		if (strcmp(prev_wd, "format") == 0)
+		{
+			static const char *const my_list[] =
+				{"unaligned", "aligned", "wrapped", "html", "latex", 
+					"troff-ms", NULL};
+
+			COMPLETE_WITH_LIST(my_list);
+		}
+		else if (strcmp(prev_wd, "linestyle") == 0)
+		{
+			static const char *const my_list[] =
+				{"ascii", "old-ascii", "unicode", NULL};
+
+			COMPLETE_WITH_LIST(my_list);
+		}
 	}
 	else if (strcmp(prev_wd, "\\set") == 0)
 	{
