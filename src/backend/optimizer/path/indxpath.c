@@ -19,6 +19,7 @@
 
 #include "access/skey.h"
 #include "catalog/pg_am.h"
+#include "catalog/pg_collation.h"
 #include "catalog/pg_operator.h"
 #include "catalog/pg_opfamily.h"
 #include "catalog/pg_type.h"
@@ -41,6 +42,13 @@
 #define IsBooleanOpfamily(opfamily) \
 	((opfamily) == BOOL_BTREE_FAM_OID || (opfamily) == BOOL_HASH_FAM_OID)
 
+/* Whether to use ScalarArrayOpExpr to build index qualifications */
+typedef enum
+{
+	SAOP_FORBID,				/* Do not use ScalarArrayOpExpr */
+	SAOP_ALLOW,					/* OK to use ScalarArrayOpExpr */
+	SAOP_REQUIRE				/* Require ScalarArrayOpExpr */
+} SaOpControl;
 
 /* Whether we are looking for plain indexscan, bitmap scan, or either */
 typedef enum
@@ -78,6 +86,11 @@ static PathClauseUsage *classify_index_clause_usage(Path *path,
 							List **clauselist);
 static void find_indexpath_quals(Path *bitmapqual, List **quals, List **preds);
 static int	find_list_position(Node *node, List **nodelist);
+static List *group_clauses_by_indexkey(IndexOptInfo *index,
+						  List *clauses, List *outer_clauses,
+						  Relids outer_relids,
+						  SaOpControl saop_control,
+						  bool *found_clause);
 static bool match_clause_to_indexcol(IndexOptInfo *index,
 						 int indexcol,
 						 RestrictInfo *rinfo,
@@ -1060,7 +1073,7 @@ find_list_position(Node *node, List **nodelist)
  * from multiple places.  Defend against redundant outputs by using
  * list_append_unique_ptr (pointer equality should be good enough).
  */
-List *
+static List *
 group_clauses_by_indexkey(IndexOptInfo *index,
 						  List *clauses, List *outer_clauses,
 						  Relids outer_relids,
@@ -3221,7 +3234,9 @@ network_prefix_quals(Node *leftop, Oid expr_op, Oid opfamily, Datum rightop)
 
 	expr = make_opclause(opr1oid, BOOLOID, false,
 						 (Expr *) leftop,
-						 (Expr *) makeConst(datatype, -1, -1, opr1right,
+						 (Expr *) makeConst(datatype, -1,
+											InvalidOid,	/* not collatable */
+											-1, opr1right,
 											false, false),
 						 InvalidOid, InvalidOid);
 	result = list_make1(make_simple_restrictinfo(expr));
@@ -3237,7 +3252,9 @@ network_prefix_quals(Node *leftop, Oid expr_op, Oid opfamily, Datum rightop)
 
 	expr = make_opclause(opr2oid, BOOLOID, false,
 						 (Expr *) leftop,
-						 (Expr *) makeConst(datatype, -1, -1, opr2right,
+						 (Expr *) makeConst(datatype, -1,
+											InvalidOid,	/* not collatable */
+											-1, opr2right,
 											false, false),
 						 InvalidOid, InvalidOid);
 	result = lappend(result, make_simple_restrictinfo(expr));
@@ -3276,8 +3293,38 @@ static Const *
 string_to_const(const char *str, Oid datatype)
 {
 	Datum		conval = string_to_datum(str, datatype);
+	Oid			collation;
+	int			constlen;
 
-	return makeConst(datatype, -1,
-					 ((datatype == NAMEOID) ? NAMEDATALEN : -1),
+	/*
+	 * We only need to support a few datatypes here, so hard-wire properties
+	 * instead of incurring the expense of catalog lookups.
+	 */
+	switch (datatype)
+	{
+		case TEXTOID:
+		case VARCHAROID:
+		case BPCHAROID:
+			collation = DEFAULT_COLLATION_OID;
+			constlen = -1;
+			break;
+
+		case NAMEOID:
+			collation = InvalidOid;
+			constlen = NAMEDATALEN;
+			break;
+
+		case BYTEAOID:
+			collation = InvalidOid;
+			constlen = -1;
+			break;
+
+		default:
+			elog(ERROR, "unexpected datatype in string_to_const: %u",
+				 datatype);
+			return NULL;
+	}
+
+	return makeConst(datatype, -1, collation, constlen,
 					 conval, false, false);
 }

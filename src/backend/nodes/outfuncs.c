@@ -1914,7 +1914,10 @@ _outMinMaxAggInfo(StringInfo str, MinMaxAggInfo *node)
 	WRITE_OID_FIELD(aggfnoid);
 	WRITE_OID_FIELD(aggsortop);
 	WRITE_NODE_FIELD(target);
-	WRITE_NODE_FIELD(pathkeys);
+	/* We intentionally omit subroot --- too large, not interesting enough */
+	WRITE_NODE_FIELD(path);
+	WRITE_FLOAT_FIELD(pathcost, "%.2f");
+	WRITE_NODE_FIELD(param);
 }
 
 static void
@@ -2622,6 +2625,7 @@ _outConstraint(StringInfo str, Constraint *node)
 			WRITE_CHAR_FIELD(fk_upd_action);
 			WRITE_CHAR_FIELD(fk_del_action);
 			WRITE_BOOL_FIELD(skip_validation);
+			WRITE_BOOL_FIELD(initially_valid);
 			break;
 
 		case CONSTR_ATTR_DEFERRABLE:

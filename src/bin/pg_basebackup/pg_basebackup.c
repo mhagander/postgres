@@ -65,7 +65,7 @@ static void progress_report(int tablespacenum, char *fn);
 
 static void ReceiveTarFile(PGconn *conn, PGresult *res, int rownum);
 static void ReceiveAndUnpackTarFile(PGconn *conn, PGresult *res, int rownum);
-static void BaseBackup();
+static void BaseBackup(void);
 
 static bool segment_callback(XLogRecPtr segendpos, uint32 timeline);
 
@@ -831,7 +831,7 @@ ReceiveAndUnpackTarFile(PGconn *conn, PGresult *res, int rownum)
 
 
 static void
-BaseBackup()
+BaseBackup(void)
 {
 	PGresult   *res;
 	uint32		timeline;

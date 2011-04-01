@@ -1058,6 +1058,10 @@ typedef struct SelectStmt
  * can be coerced to the output column type.)  Also, if it's not UNION ALL,
  * information about the types' sort/group semantics is provided in the form
  * of a SortGroupClause list (same representation as, eg, DISTINCT).
+ * The resolved common column collations are provided too; but note that if
+ * it's not UNION ALL, it's okay for a column to not have a common collation,
+ * so a member of the colCollations list could be InvalidOid even though the
+ * column has a collatable type.
  * ----------------------
  */
 typedef struct SetOperationStmt
@@ -1536,6 +1540,7 @@ typedef struct Constraint
 	char		fk_upd_action;	/* ON UPDATE action */
 	char		fk_del_action;	/* ON DELETE action */
 	bool		skip_validation;	/* skip validation of existing rows? */
+	bool		initially_valid;	/* start the new constraint as valid */
 } Constraint;
 
 /* ----------------------

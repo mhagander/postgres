@@ -193,6 +193,7 @@ CREATE TABLE test_u AS SELECT a, b FROM collate_test1 UNION ALL SELECT a, b FROM
 -- ideally this would be a parse-time error, but for now it must be run-time:
 select x < y from collate_test10; -- fail
 select x || y from collate_test10; -- ok, because || is not collation aware
+select x, y from collate_test10 order by x || y; -- not so ok
 
 -- collation mismatch between recursive and non-recursive term
 WITH RECURSIVE foo(x) AS
@@ -209,6 +210,30 @@ SELECT CAST('42' AS text COLLATE "C");
 SELECT a, CAST(b AS varchar) FROM collate_test1 ORDER BY 2;
 SELECT a, CAST(b AS varchar) FROM collate_test2 ORDER BY 2;
 SELECT a, CAST(b AS varchar) FROM collate_test3 ORDER BY 2;
+
+
+-- propagation of collation in SQL functions (inlined and non-inlined cases)
+-- and plpgsql functions too
+
+CREATE FUNCTION mylt (text, text) RETURNS boolean LANGUAGE sql
+    AS $$ select $1 < $2 $$;
+
+CREATE FUNCTION mylt_noninline (text, text) RETURNS boolean LANGUAGE sql
+    AS $$ select $1 < $2 limit 1 $$;
+
+CREATE FUNCTION mylt_plpgsql (text, text) RETURNS boolean LANGUAGE plpgsql
+    AS $$ begin return $1 < $2; end $$;
+
+SELECT a.b AS a, b.b AS b, a.b < b.b AS lt,
+       mylt(a.b, b.b), mylt_noninline(a.b, b.b), mylt_plpgsql(a.b, b.b)
+FROM collate_test1 a, collate_test1 b
+ORDER BY a.b, b.b;
+
+SELECT a.b AS a, b.b AS b, a.b < b.b COLLATE "C" AS lt,
+       mylt(a.b, b.b COLLATE "C"), mylt_noninline(a.b, b.b COLLATE "C"),
+       mylt_plpgsql(a.b, b.b COLLATE "C")
+FROM collate_test1 a, collate_test1 b
+ORDER BY a.b, b.b;
 
 
 -- polymorphism
@@ -230,11 +255,12 @@ SELECT a, (dup(b)).* FROM collate_test3 ORDER BY 2;
 CREATE INDEX collate_test1_idx1 ON collate_test1 (b);
 CREATE INDEX collate_test1_idx2 ON collate_test1 (b COLLATE "C");
 CREATE INDEX collate_test1_idx3 ON collate_test1 ((b COLLATE "C")); -- this is different grammatically
+CREATE INDEX collate_test1_idx4 ON collate_test1 (((b||'foo') COLLATE "POSIX"));
 
-CREATE INDEX collate_test1_idx4 ON collate_test1 (a COLLATE "C"); -- fail
-CREATE INDEX collate_test1_idx5 ON collate_test1 ((a COLLATE "C")); -- fail
+CREATE INDEX collate_test1_idx5 ON collate_test1 (a COLLATE "C"); -- fail
+CREATE INDEX collate_test1_idx6 ON collate_test1 ((a COLLATE "C")); -- fail
 
-SELECT relname, pg_get_indexdef(oid) FROM pg_class WHERE relname LIKE 'collate_test%_idx%';
+SELECT relname, pg_get_indexdef(oid) FROM pg_class WHERE relname LIKE 'collate_test%_idx%' ORDER BY 1;
 
 
 -- schema manipulation commands

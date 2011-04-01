@@ -4221,7 +4221,9 @@ ATExecAddColumn(AlteredTableInfo *tab, Relation rel,
 	collOid = GetColumnDefCollation(NULL, colDef, typeOid);
 
 	/* make sure datatype is legal for a column */
-	CheckAttributeType(colDef->colname, typeOid, collOid, false);
+	CheckAttributeType(colDef->colname, typeOid, collOid,
+					   list_make1_oid(rel->rd_rel->reltype),
+					   false);
 
 	/* construct new attribute's pg_attribute entry */
 	attribute.attrelid = myrelid;
@@ -4337,10 +4339,12 @@ ATExecAddColumn(AlteredTableInfo *tab, Relation rel,
 		{
 			Oid			baseTypeId;
 			int32		baseTypeMod;
+			Oid			baseTypeColl;
 
 			baseTypeMod = typmod;
 			baseTypeId = getBaseTypeAndTypmod(typeOid, &baseTypeMod);
-			defval = (Expr *) makeNullConst(baseTypeId, baseTypeMod);
+			baseTypeColl = get_typcollation(baseTypeId);
+			defval = (Expr *) makeNullConst(baseTypeId, baseTypeMod, baseTypeColl);
 			defval = (Expr *) coerce_to_target_type(NULL,
 													(Node *) defval,
 													baseTypeId,
@@ -5595,7 +5599,7 @@ ATAddForeignKeyConstraint(AlteredTableInfo *tab, Relation rel,
 									  CONSTRAINT_FOREIGN,
 									  fkconstraint->deferrable,
 									  fkconstraint->initdeferred,
-									  !fkconstraint->skip_validation,
+									  fkconstraint->initially_valid,
 									  RelationGetRelid(rel),
 									  fkattnum,
 									  numfks,
@@ -6534,7 +6538,9 @@ ATPrepAlterColumnType(List **wqueue,
 	targetcollid = GetColumnDefCollation(NULL, def, targettype);
 
 	/* make sure datatype is legal for a column */
-	CheckAttributeType(colName, targettype, targetcollid, false);
+	CheckAttributeType(colName, targettype, targetcollid,
+					   list_make1_oid(rel->rd_rel->reltype),
+					   false);
 
 	if (tab->relkind == RELKIND_RELATION)
 	{

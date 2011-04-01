@@ -1152,7 +1152,7 @@ addRangeTableEntryForFunction(ParseState *pstate,
 
 		/*
 		 * Use the column definition list to form the alias list and
-		 * funccoltypes/funccoltypmods lists.
+		 * funccoltypes/funccoltypmods/funccolcollations lists.
 		 */
 		foreach(col, coldeflist)
 		{
@@ -1870,7 +1870,8 @@ expandTupleDesc(TupleDesc tupdesc, Alias *eref,
 					 * can't use atttypid here, but it doesn't really matter
 					 * what type the Const claims to be.
 					 */
-					*colvars = lappend(*colvars, makeNullConst(INT4OID, -1));
+					*colvars = lappend(*colvars,
+									   makeNullConst(INT4OID, -1, InvalidOid));
 				}
 			}
 			continue;

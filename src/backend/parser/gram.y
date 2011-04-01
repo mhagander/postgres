@@ -2621,6 +2621,7 @@ ColConstraintElem:
 					n->fk_upd_action	= (char) ($5 >> 8);
 					n->fk_del_action	= (char) ($5 & 0xFF);
 					n->skip_validation  = FALSE;
+					n->initially_valid  = true;
 					$$ = (Node *)n;
 				}
 		;
@@ -2820,6 +2821,7 @@ ConstraintElem:
 					n->deferrable		= ($11 & 1) != 0;
 					n->initdeferred		= ($11 & 2) != 0;
 					n->skip_validation  = false;
+					n->initially_valid  = true;
 					$$ = (Node *)n;
 				}
 			| FOREIGN KEY '(' columnList ')' REFERENCES qualified_name
@@ -2836,6 +2838,7 @@ ConstraintElem:
 					n->fk_upd_action	= (char) ($10 >> 8);
 					n->fk_del_action	= (char) ($10 & 0xFF);
 					n->skip_validation  = true;
+					n->initially_valid  = false;
 					$$ = (Node *)n;
 				}
 		;
@@ -4784,11 +4787,12 @@ opt_restart_seqs:
  *	the object associated with the comment. The form of the statement is:
  *
  *	COMMENT ON [ [ DATABASE | DOMAIN | INDEX | SEQUENCE | TABLE | TYPE | VIEW |
- *				   COLLATION | CONVERSION | LANGUAGE | OPERATOR CLASS | LARGE OBJECT |
- *				   CAST | COLUMN | SCHEMA | TABLESPACE | EXTENSION | ROLE |
- *				   TEXT SEARCH PARSER | TEXT SEARCH DICTIONARY |
- *				   TEXT SEARCH TEMPLATE | TEXT SEARCH CONFIGURATION |
- *				   FOREIGN TABLE ] <objname> |
+ *				   COLLATION | CONVERSION | LANGUAGE | OPERATOR CLASS |
+ *				   LARGE OBJECT | CAST | COLUMN | SCHEMA | TABLESPACE |
+ *				   EXTENSION | ROLE | TEXT SEARCH PARSER |
+ *				   TEXT SEARCH DICTIONARY | TEXT SEARCH TEMPLATE |
+ *				   TEXT SEARCH CONFIGURATION | FOREIGN TABLE |
+ *				   FOREIGN DATA WRAPPER | SERVER ] <objname> |
  *				 AGGREGATE <aggname> (arg1, ...) |
  *				 FUNCTION <funcname> (arg1, arg2, ...) |
  *				 OPERATOR <op> (leftoperand_typ, rightoperand_typ) |
@@ -4968,6 +4972,8 @@ comment_type:
 			| EXTENSION 						{ $$ = OBJECT_EXTENSION; }
 			| ROLE								{ $$ = OBJECT_ROLE; }
 			| FOREIGN TABLE						{ $$ = OBJECT_FOREIGN_TABLE; }
+			| SERVER							{ $$ = OBJECT_FOREIGN_SERVER; }
+			| FOREIGN DATA_P WRAPPER			{ $$ = OBJECT_FDW; }
 		;
 
 comment_text:
