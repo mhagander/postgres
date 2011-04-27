@@ -212,7 +212,7 @@ ExecIndexEvalRuntimeKeys(ExprContext *econtext,
 
 		/*
 		 * For each run-time key, extract the run-time expression and evaluate
-		 * it with respect to the current context.  We then stick the result
+		 * it with respect to the current context.	We then stick the result
 		 * into the proper scan key.
 		 *
 		 * Note: the result of the eval could be a pass-by-ref value that's
@@ -605,16 +605,16 @@ ExecInitIndexScan(IndexScan *node, EState *estate, int eflags)
 											   indexstate->iss_RelationDesc,
 											   estate->es_snapshot,
 											   indexstate->iss_NumScanKeys,
-											   indexstate->iss_NumOrderByKeys);
+											 indexstate->iss_NumOrderByKeys);
 
 	/*
-	 * If no run-time keys to calculate, go ahead and pass the scankeys to
-	 * the index AM.
+	 * If no run-time keys to calculate, go ahead and pass the scankeys to the
+	 * index AM.
 	 */
 	if (indexstate->iss_NumRuntimeKeys == 0)
 		index_rescan(indexstate->iss_ScanDesc,
 					 indexstate->iss_ScanKeys, indexstate->iss_NumScanKeys,
-					 indexstate->iss_OrderByKeys, indexstate->iss_NumOrderByKeys);
+				indexstate->iss_OrderByKeys, indexstate->iss_NumOrderByKeys);
 
 	/*
 	 * all done.
@@ -703,11 +703,11 @@ ExecIndexBuildScanKeys(PlanState *planstate, Relation index, Index scanrelid,
 	scan_keys = (ScanKey) palloc(n_scan_keys * sizeof(ScanKeyData));
 
 	/*
-	 * runtime_keys array is dynamically resized as needed.  We handle it
-	 * this way so that the same runtime keys array can be shared between
-	 * indexquals and indexorderbys, which will be processed in separate
-	 * calls of this function.  Caller must be sure to pass in NULL/0 for
-	 * first call.
+	 * runtime_keys array is dynamically resized as needed.  We handle it this
+	 * way so that the same runtime keys array can be shared between
+	 * indexquals and indexorderbys, which will be processed in separate calls
+	 * of this function.  Caller must be sure to pass in NULL/0 for first
+	 * call.
 	 */
 	runtime_keys = *runtimeKeys;
 	n_runtime_keys = max_runtime_keys = *numRuntimeKeys;
@@ -973,7 +973,7 @@ ExecIndexBuildScanKeys(PlanState *planstate, Relation index, Index scanrelid,
 			this_scan_key->sk_flags = SK_ROW_HEADER;
 			this_scan_key->sk_attno = first_sub_key->sk_attno;
 			this_scan_key->sk_strategy = rc->rctype;
-			/* sk_subtype, sk_func not used in a header */
+			/* sk_subtype, sk_collation, sk_func not used in a header */
 			this_scan_key->sk_argument = PointerGetDatum(first_sub_key);
 		}
 		else if (IsA(clause, ScalarArrayOpExpr))

@@ -20,7 +20,7 @@
 #include "utils/guc.h"
 
 #define SyncRepRequested() \
-	(synchronous_replication && max_wal_senders > 0)
+	(max_wal_senders > 0 && synchronous_commit > SYNCHRONOUS_COMMIT_LOCAL_FLUSH)
 
 /* syncRepState */
 #define SYNC_REP_NOT_WAITING		0
@@ -28,7 +28,6 @@
 #define SYNC_REP_WAIT_COMPLETE		2
 
 /* user-settable parameters for synchronous replication */
-extern bool synchronous_replication;
 extern char *SyncRepStandbyNames;
 
 /* called by user backend */
@@ -45,7 +44,7 @@ extern void SyncRepReleaseWaiters(void);
 extern void SyncRepUpdateSyncStandbysDefined(void);
 
 /* called by various procs */
-extern int SyncRepWakeQueue(bool all);
-extern const char *assign_synchronous_standby_names(const char *newval, bool doit, GucSource source);
+extern int	SyncRepWakeQueue(bool all);
+extern bool check_synchronous_standby_names(char **newval, void **extra, GucSource source);
 
 #endif   /* _SYNCREP_H */

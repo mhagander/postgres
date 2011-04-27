@@ -372,7 +372,7 @@ transformAssignedExpr(ParseState *pstate,
 	Oid			type_id;		/* type of value provided */
 	Oid			attrtype;		/* type of target column */
 	int32		attrtypmod;
-	Oid			attrcollation;
+	Oid			attrcollation;	/* collation of target column */
 	Relation	rd = pstate->p_target_relation;
 
 	Assert(rd != NULL);
@@ -388,11 +388,12 @@ transformAssignedExpr(ParseState *pstate,
 
 	/*
 	 * If the expression is a DEFAULT placeholder, insert the attribute's
-	 * type/typmod into it so that exprType will report the right things. (We
-	 * expect that the eventually substituted default expression will in fact
-	 * have this type and typmod.)	Also, reject trying to update a subfield
-	 * or array element with DEFAULT, since there can't be any default for
-	 * portions of a column.
+	 * type/typmod/collation into it so that exprType etc will report the
+	 * right things.  (We expect that the eventually substituted default
+	 * expression will in fact have this type and typmod.  The collation
+	 * likely doesn't matter, but let's set it correctly anyway.)  Also,
+	 * reject trying to update a subfield or array element with DEFAULT, since
+	 * there can't be any default for portions of a column.
 	 */
 	if (expr && IsA(expr, SetToDefault))
 	{
@@ -671,7 +672,7 @@ transformAssignmentIndirection(ParseState *pstate,
 						 parser_errposition(pstate, location)));
 
 			get_atttypetypmodcoll(typrelid, attnum,
-								  &fieldTypeId, &fieldTypMod, &fieldCollation);
+								&fieldTypeId, &fieldTypMod, &fieldCollation);
 
 			/* recurse to create appropriate RHS for field assign */
 			rhs = transformAssignmentIndirection(pstate,
@@ -783,8 +784,8 @@ transformAssignmentSubscripts(ParseState *pstate,
 
 	/*
 	 * Array normally has same collation as elements, but there's an
-	 * exception: we might be subscripting a domain over an array type.
-	 * In that case use collation of the base type.
+	 * exception: we might be subscripting a domain over an array type. In
+	 * that case use collation of the base type.
 	 */
 	if (arrayType == targetTypeId)
 		collationNeeded = targetCollation;
@@ -1290,7 +1291,7 @@ ExpandRowReference(ParseState *pstate, Node *expr,
 		fselect->fieldnum = i + 1;
 		fselect->resulttype = att->atttypid;
 		fselect->resulttypmod = att->atttypmod;
-		/* resultcollid may get overridden by parse_collate.c */
+		/* save attribute's collation for parse_collate.c */
 		fselect->resultcollid = att->attcollation;
 
 		if (targetlist)

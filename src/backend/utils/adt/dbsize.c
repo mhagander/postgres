@@ -490,9 +490,15 @@ pg_size_pretty(PG_FUNCTION_ARGS)
 							 (size + mult / 2) / mult);
 				else
 				{
+					/* Here we have to worry about avoiding overflow */
+					int64	val;
+
 					mult *= 1024;
+					val = size / mult;
+					if ((size % mult) >= (mult / 2))
+						val++;
 					snprintf(buf, sizeof(buf), INT64_FORMAT " TB",
-							 (size + mult / 2) / mult);
+							 val);
 				}
 			}
 		}
@@ -634,7 +640,7 @@ pg_relation_filepath(PG_FUNCTION_ARGS)
 			break;
 		default:
 			elog(ERROR, "invalid relpersistence: %c", relform->relpersistence);
-			backend = InvalidBackendId; 	/* placate compiler */
+			backend = InvalidBackendId; /* placate compiler */
 			break;
 	}
 

@@ -154,6 +154,9 @@ WITH RECURSIVE foo(x) AS
    SELECT (x || 'c') COLLATE "POSIX" FROM foo WHERE length(x) < 10)
 SELECT * FROM foo;
 
+SELECT a, b, a < b as lt FROM
+  (VALUES ('a', 'B'), ('A', 'b' COLLATE "C")) v(a,b);
+
 
 -- casting
 
@@ -168,11 +171,11 @@ SELECT a, CAST(b AS varchar) FROM collate_test2 ORDER BY 2;
 SELECT * FROM unnest((SELECT array_agg(b ORDER BY b) FROM collate_test1)) ORDER BY 1;
 SELECT * FROM unnest((SELECT array_agg(b ORDER BY b) FROM collate_test2)) ORDER BY 1;
 
-CREATE FUNCTION dup (f1 anyelement, f2 out anyelement, f3 out anyarray)
-    AS 'select $1, array[$1,$1]' LANGUAGE sql;
+CREATE FUNCTION dup (anyelement) RETURNS anyelement
+    AS 'select $1' LANGUAGE sql;
 
-SELECT a, (dup(b)).* FROM collate_test1 ORDER BY 2;
-SELECT a, (dup(b)).* FROM collate_test2 ORDER BY 2;
+SELECT a, dup(b) FROM collate_test1 ORDER BY 2;
+SELECT a, dup(b) FROM collate_test2 ORDER BY 2;
 
 
 -- indexes
@@ -186,6 +189,30 @@ CREATE INDEX collate_test1_idx5 ON collate_test1 (a COLLATE "POSIX"); -- fail
 CREATE INDEX collate_test1_idx6 ON collate_test1 ((a COLLATE "POSIX")); -- fail
 
 SELECT relname, pg_get_indexdef(oid) FROM pg_class WHERE relname LIKE 'collate_test%_idx%' ORDER BY 1;
+
+
+-- foreign keys
+
+-- force indexes and mergejoins to be used for FK checking queries,
+-- else they might not exercise collation-dependent operators
+SET enable_seqscan TO 0;
+SET enable_hashjoin TO 0;
+SET enable_nestloop TO 0;
+
+CREATE TABLE collate_test20 (f1 text COLLATE "C" PRIMARY KEY);
+INSERT INTO collate_test20 VALUES ('foo'), ('bar');
+CREATE TABLE collate_test21 (f2 text COLLATE "POSIX" REFERENCES collate_test20);
+INSERT INTO collate_test21 VALUES ('foo'), ('bar');
+INSERT INTO collate_test21 VALUES ('baz'); -- fail
+CREATE TABLE collate_test22 (f2 text COLLATE "POSIX");
+INSERT INTO collate_test22 VALUES ('foo'), ('bar'), ('baz');
+ALTER TABLE collate_test22 ADD FOREIGN KEY (f2) REFERENCES collate_test20; -- fail
+DELETE FROM collate_test22 WHERE f2 = 'baz';
+ALTER TABLE collate_test22 ADD FOREIGN KEY (f2) REFERENCES collate_test20;
+
+RESET enable_seqscan;
+RESET enable_hashjoin;
+RESET enable_nestloop;
 
 --
 -- Clean up.  Many of these table names will be re-used if the user is

@@ -350,7 +350,8 @@ DefineIndex(RangeVar *heapRelation,
 	collationObjectId = (Oid *) palloc(numberOfAttributes * sizeof(Oid));
 	classObjectId = (Oid *) palloc(numberOfAttributes * sizeof(Oid));
 	coloptions = (int16 *) palloc(numberOfAttributes * sizeof(int16));
-	ComputeIndexAttrs(indexInfo, collationObjectId, classObjectId, coloptions, attributeList,
+	ComputeIndexAttrs(indexInfo, collationObjectId, classObjectId,
+					  coloptions, attributeList,
 					  exclusionOpNames, relationId,
 					  accessMethodName, accessMethodId,
 					  amcanorder, isconstraint);
@@ -395,7 +396,8 @@ DefineIndex(RangeVar *heapRelation,
 	indexRelationId =
 		index_create(rel, indexRelationName, indexRelationId,
 					 indexInfo, indexColNames,
-					 accessMethodId, tablespaceId, collationObjectId, classObjectId,
+					 accessMethodId, tablespaceId,
+					 collationObjectId, classObjectId,
 					 coloptions, reloptions, primary,
 					 isconstraint, deferrable, initdeferred,
 					 allowSystemTableMods,
@@ -505,7 +507,7 @@ DefineIndex(RangeVar *heapRelation,
 	indexInfo->ii_BrokenHotChain = false;
 
 	/* Now build the index */
-	index_build(rel, indexRelation, indexInfo, primary);
+	index_build(rel, indexRelation, indexInfo, primary, false);
 
 	/* Close both the relations, but keep the locks */
 	heap_close(rel, NoLock);
@@ -840,14 +842,14 @@ ComputeIndexAttrs(IndexInfo *indexInfo,
 		else
 		{
 			/* Index expression */
-			Node   *expr = attribute->expr;
+			Node	   *expr = attribute->expr;
 
 			Assert(expr != NULL);
 			atttype = exprType(expr);
 			attcollation = exprCollation(expr);
 
 			/*
-			 * Strip any top-level COLLATE clause.  This ensures that we treat
+			 * Strip any top-level COLLATE clause.	This ensures that we treat
 			 * "x COLLATE y" and "(x COLLATE y)" alike.
 			 */
 			while (IsA(expr, CollateExpr))
@@ -864,7 +866,7 @@ ComputeIndexAttrs(IndexInfo *indexInfo,
 			}
 			else
 			{
-				indexInfo->ii_KeyAttrNumbers[attn] = 0;	/* marks expression */
+				indexInfo->ii_KeyAttrNumbers[attn] = 0; /* marks expression */
 				indexInfo->ii_Expressions = lappend(indexInfo->ii_Expressions,
 													expr);
 
@@ -876,7 +878,7 @@ ComputeIndexAttrs(IndexInfo *indexInfo,
 				if (contain_subplans(expr))
 					ereport(ERROR,
 							(errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
-							 errmsg("cannot use subquery in index expression")));
+						 errmsg("cannot use subquery in index expression")));
 				if (contain_agg_clause(expr))
 					ereport(ERROR,
 							(errcode(ERRCODE_GROUPING_ERROR),
@@ -904,8 +906,8 @@ ComputeIndexAttrs(IndexInfo *indexInfo,
 		/*
 		 * Check we have a collation iff it's a collatable type.  The only
 		 * expected failures here are (1) COLLATE applied to a noncollatable
-		 * type, or (2) index expression had an unresolved collation.  But
-		 * we might as well code this to be a complete consistency check.
+		 * type, or (2) index expression had an unresolved collation.  But we
+		 * might as well code this to be a complete consistency check.
 		 */
 		if (type_is_collatable(atttype))
 		{
@@ -1566,7 +1568,7 @@ ReindexTable(RangeVar *relation)
 
 	ReleaseSysCache(tuple);
 
-	if (!reindex_relation(heapOid, true, 0))
+	if (!reindex_relation(heapOid, REINDEX_REL_PROCESS_TOAST))
 		ereport(NOTICE,
 				(errmsg("table \"%s\" has no indexes",
 						relation->relname)));
@@ -1679,7 +1681,7 @@ ReindexDatabase(const char *databaseName, bool do_system, bool do_user)
 		StartTransactionCommand();
 		/* functions in indexes may want a snapshot set */
 		PushActiveSnapshot(GetTransactionSnapshot());
-		if (reindex_relation(relid, true, 0))
+		if (reindex_relation(relid, REINDEX_REL_PROCESS_TOAST))
 			ereport(NOTICE,
 					(errmsg("table \"%s.%s\" was reindexed",
 							get_namespace_name(get_rel_namespace(relid)),

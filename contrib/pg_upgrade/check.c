@@ -11,7 +11,8 @@
 
 
 static void set_locale_and_encoding(ClusterInfo *cluster);
-static void check_new_db_is_empty(void);
+static void check_new_cluster_is_empty(void);
+static void check_old_cluster_has_new_cluster_dbs(void);
 static void check_locale_and_encoding(ControlData *oldctrl,
 						  ControlData *newctrl);
 static void check_for_isn_and_int8_passing_mismatch(ClusterInfo *cluster);
@@ -45,7 +46,7 @@ check_old_cluster(bool live_check,
 	/* -- OLD -- */
 
 	if (!live_check)
-		start_postmaster(&old_cluster, false);
+		start_postmaster(&old_cluster);
 
 	set_locale_and_encoding(&old_cluster);
 
@@ -103,7 +104,7 @@ check_old_cluster(bool live_check,
 	}
 
 	if (!live_check)
-		stop_postmaster(false, false);
+		stop_postmaster(false);
 }
 
 
@@ -112,7 +113,10 @@ check_new_cluster(void)
 {
 	set_locale_and_encoding(&new_cluster);
 
-	check_new_db_is_empty();
+	get_db_and_rel_infos(&new_cluster);
+
+	check_new_cluster_is_empty();
+	check_old_cluster_has_new_cluster_dbs();
 
 	check_loadable_libraries();
 
@@ -130,8 +134,8 @@ report_clusters_compatible(void)
 	{
 		pg_log(PG_REPORT, "\n*Clusters are compatible*\n");
 		/* stops new cluster */
-		stop_postmaster(false, false);
-		exit_nicely(false);
+		stop_postmaster(false);
+		exit(0);
 	}
 
 	pg_log(PG_REPORT, "\n"
@@ -148,7 +152,7 @@ issue_warnings(char *sequence_script_file_name)
 	/* old = PG 8.3 warnings? */
 	if (GET_MAJOR_VERSION(old_cluster.major_version) <= 803)
 	{
-		start_postmaster(&new_cluster, true);
+		start_postmaster(&new_cluster);
 
 		/* restore proper sequence values using file created from old server */
 		if (sequence_script_file_name)
@@ -167,15 +171,15 @@ issue_warnings(char *sequence_script_file_name)
 		old_8_3_rebuild_tsvector_tables(&new_cluster, false);
 		old_8_3_invalidate_hash_gin_indexes(&new_cluster, false);
 		old_8_3_invalidate_bpchar_pattern_ops_indexes(&new_cluster, false);
-		stop_postmaster(false, true);
+		stop_postmaster(false);
 	}
 
 	/* Create dummy large object permissions for old < PG 9.0? */
 	if (GET_MAJOR_VERSION(old_cluster.major_version) <= 804)
 	{
-		start_postmaster(&new_cluster, true);
+		start_postmaster(&new_cluster);
 		new_9_0_populate_pg_largeobject_metadata(&new_cluster, false);
-		stop_postmaster(false, true);
+		stop_postmaster(false);
 	}
 }
 
@@ -212,7 +216,10 @@ check_cluster_versions(void)
 	old_cluster.major_version = get_major_server_version(&old_cluster);
 	new_cluster.major_version = get_major_server_version(&new_cluster);
 
-	/* We allow upgrades from/to the same major version for alpha/beta upgrades */
+	/*
+	 * We allow upgrades from/to the same major version for alpha/beta
+	 * upgrades
+	 */
 
 	if (GET_MAJOR_VERSION(old_cluster.major_version) < 803)
 		pg_log(PG_FATAL, "This utility can only upgrade from PostgreSQL version 8.3 and later.\n");
@@ -257,7 +264,7 @@ check_cluster_compatibility(bool live_check)
 
 	/* Is it 9.0 but without tablespace directories? */
 	if (GET_MAJOR_VERSION(new_cluster.major_version) == 900 &&
-		new_cluster.controldata.cat_ver < TABLE_SPACE_SUBDIRS)
+		new_cluster.controldata.cat_ver < TABLE_SPACE_SUBDIRS_CAT_VER)
 		pg_log(PG_FATAL, "This utility can only upgrade to PostgreSQL version 9.0 after 2010-01-11\n"
 			   "because of backend API changes made during development.\n");
 }
@@ -338,12 +345,9 @@ check_locale_and_encoding(ControlData *oldctrl,
 
 
 static void
-check_new_db_is_empty(void)
+check_new_cluster_is_empty(void)
 {
 	int			dbnum;
-	bool		found = false;
-
-	get_db_and_rel_infos(&new_cluster);
 
 	for (dbnum = 0; dbnum < new_cluster.dbarr.ndbs; dbnum++)
 	{
@@ -355,15 +359,38 @@ check_new_db_is_empty(void)
 		{
 			/* pg_largeobject and its index should be skipped */
 			if (strcmp(rel_arr->rels[relnum].nspname, "pg_catalog") != 0)
-			{
-				found = true;
-				break;
-			}
+				pg_log(PG_FATAL, "New cluster database \"%s\" is not empty\n",
+					new_cluster.dbarr.dbs[dbnum].db_name);
 		}
 	}
 
-	if (found)
-		pg_log(PG_FATAL, "New cluster is not empty; exiting\n");
+}
+
+
+/*
+ *	If someone removes the 'postgres' database from the old cluster and
+ *	the new cluster has a 'postgres' database, the number of databases
+ *	will not match.  We actually could upgrade such a setup, but it would
+ *	violate the 1-to-1 mapping of database counts, so we throw an error
+ *	instead.  We would detect this as a database count mismatch during
+ *	upgrade, but we want to detect it during the check phase and report
+ *	the database name.
+ */
+static void
+check_old_cluster_has_new_cluster_dbs(void)
+{
+	int			old_dbnum, new_dbnum;
+
+	for (new_dbnum = 0; new_dbnum < new_cluster.dbarr.ndbs; new_dbnum++)
+	{
+		for (old_dbnum = 0; old_dbnum < old_cluster.dbarr.ndbs; old_dbnum++)
+			if (strcmp(old_cluster.dbarr.dbs[old_dbnum].db_name,
+				new_cluster.dbarr.dbs[new_dbnum].db_name) == 0)
+				break;
+		if (old_dbnum == old_cluster.dbarr.ndbs)
+			pg_log(PG_FATAL, "New cluster database \"%s\" does not exist in the old cluster\n",
+				new_cluster.dbarr.dbs[new_dbnum].db_name);
+	}
 }
 
 
@@ -516,7 +543,7 @@ check_for_isn_and_int8_passing_mismatch(ClusterInfo *cluster)
 	}
 
 	if (script)
-			fclose(script);
+		fclose(script);
 
 	if (found)
 	{

@@ -50,6 +50,12 @@
 
 typedef struct
 {
+	PlannerInfo *root;
+	AggClauseCosts *costs;
+} count_agg_clauses_context;
+
+typedef struct
+{
 	ParamListInfo boundParams;
 	PlannerGlobal *glob;
 	List	   *active_fns;
@@ -79,7 +85,8 @@ typedef struct
 
 static bool contain_agg_clause_walker(Node *node, void *context);
 static bool pull_agg_clause_walker(Node *node, List **context);
-static bool count_agg_clauses_walker(Node *node, AggClauseCounts *counts);
+static bool count_agg_clauses_walker(Node *node,
+									 count_agg_clauses_context *context);
 static bool find_window_functions_walker(Node *node, WindowFuncLists *lists);
 static bool expression_returns_set_rows_walker(Node *node, double *count);
 static bool contain_subplans_walker(Node *node, void *context);
@@ -448,48 +455,80 @@ pull_agg_clause_walker(Node *node, List **context)
 
 /*
  * count_agg_clauses
- *	  Recursively count the Aggref nodes in an expression tree.
+ *	  Recursively count the Aggref nodes in an expression tree, and
+ *	  accumulate other cost information about them too.
  *
  *	  Note: this also checks for nested aggregates, which are an error.
  *
- * We not only count the nodes, but attempt to estimate the total space
- * needed for their transition state values if all are evaluated in parallel
- * (as would be done in a HashAgg plan).  See AggClauseCounts for the exact
- * set of statistics returned.
+ * We not only count the nodes, but estimate their execution costs, and
+ * attempt to estimate the total space needed for their transition state
+ * values if all are evaluated in parallel (as would be done in a HashAgg
+ * plan).  See AggClauseCosts for the exact set of statistics collected.
  *
- * NOTE that the counts are ADDED to those already in *counts ... so the
- * caller is responsible for zeroing the struct initially.
+ * NOTE that the counts/costs are ADDED to those already in *costs ... so
+ * the caller is responsible for zeroing the struct initially.
  *
  * This does not descend into subqueries, and so should be used only after
  * reduction of sublinks to subplans, or in contexts where it's known there
  * are no subqueries.  There mustn't be outer-aggregate references either.
  */
 void
-count_agg_clauses(Node *clause, AggClauseCounts *counts)
+count_agg_clauses(PlannerInfo *root, Node *clause, AggClauseCosts *costs)
 {
-	/* no setup needed */
-	count_agg_clauses_walker(clause, counts);
+	count_agg_clauses_context context;
+
+	context.root = root;
+	context.costs = costs;
+	(void) count_agg_clauses_walker(clause, &context);
 }
 
 static bool
-count_agg_clauses_walker(Node *node, AggClauseCounts *counts)
+count_agg_clauses_walker(Node *node, count_agg_clauses_context *context)
 {
 	if (node == NULL)
 		return false;
 	if (IsA(node, Aggref))
 	{
 		Aggref	   *aggref = (Aggref *) node;
-		Oid		   *inputTypes;
-		int			numArguments;
+		AggClauseCosts *costs = context->costs;
 		HeapTuple	aggTuple;
 		Form_pg_aggregate aggform;
+		Oid			aggtransfn;
+		Oid			aggfinalfn;
 		Oid			aggtranstype;
+		QualCost	argcosts;
+		Oid		   *inputTypes;
+		int			numArguments;
 		ListCell   *l;
 
 		Assert(aggref->agglevelsup == 0);
-		counts->numAggs++;
+
+		/* fetch info about aggregate from pg_aggregate */
+		aggTuple = SearchSysCache1(AGGFNOID,
+								   ObjectIdGetDatum(aggref->aggfnoid));
+		if (!HeapTupleIsValid(aggTuple))
+			elog(ERROR, "cache lookup failed for aggregate %u",
+				 aggref->aggfnoid);
+		aggform = (Form_pg_aggregate) GETSTRUCT(aggTuple);
+		aggtransfn = aggform->aggtransfn;
+		aggfinalfn = aggform->aggfinalfn;
+		aggtranstype = aggform->aggtranstype;
+		ReleaseSysCache(aggTuple);
+
+		/* count it */
+		costs->numAggs++;
 		if (aggref->aggorder != NIL || aggref->aggdistinct != NIL)
-			counts->numOrderedAggs++;
+			costs->numOrderedAggs++;
+
+		/* add component function execution costs to appropriate totals */
+		costs->transCost.per_tuple += get_func_cost(aggtransfn) * cpu_operator_cost;
+		if (OidIsValid(aggfinalfn))
+			costs->finalCost += get_func_cost(aggfinalfn) * cpu_operator_cost;
+
+		/* also add the input expressions' cost to per-input-row costs */
+		cost_qual_eval_node(&argcosts, (Node *) aggref->args, context->root);
+		costs->transCost.startup += argcosts.startup;
+		costs->transCost.per_tuple += argcosts.per_tuple;
 
 		/* extract argument types (ignoring any ORDER BY expressions) */
 		inputTypes = (Oid *) palloc(sizeof(Oid) * list_length(aggref->args));
@@ -501,16 +540,6 @@ count_agg_clauses_walker(Node *node, AggClauseCounts *counts)
 			if (!tle->resjunk)
 				inputTypes[numArguments++] = exprType((Node *) tle->expr);
 		}
-
-		/* fetch aggregate transition datatype from pg_aggregate */
-		aggTuple = SearchSysCache1(AGGFNOID,
-								   ObjectIdGetDatum(aggref->aggfnoid));
-		if (!HeapTupleIsValid(aggTuple))
-			elog(ERROR, "cache lookup failed for aggregate %u",
-				 aggref->aggfnoid);
-		aggform = (Form_pg_aggregate) GETSTRUCT(aggTuple);
-		aggtranstype = aggform->aggtranstype;
-		ReleaseSysCache(aggTuple);
 
 		/* resolve actual type of transition state, if polymorphic */
 		if (IsPolymorphicType(aggtranstype))
@@ -554,7 +583,7 @@ count_agg_clauses_walker(Node *node, AggClauseCounts *counts)
 			avgwidth = get_typavgwidth(aggtranstype, aggtranstypmod);
 			avgwidth = MAXALIGN(avgwidth);
 
-			counts->transitionSpace += avgwidth + 2 * sizeof(void *);
+			costs->transitionSpace += avgwidth + 2 * sizeof(void *);
 		}
 		else if (aggtranstype == INTERNALOID)
 		{
@@ -566,7 +595,7 @@ count_agg_clauses_walker(Node *node, AggClauseCounts *counts)
 			 * being kept in a private memory context, as is done by
 			 * array_agg() for instance.
 			 */
-			counts->transitionSpace += ALLOCSET_DEFAULT_INITSIZE;
+			costs->transitionSpace += ALLOCSET_DEFAULT_INITSIZE;
 		}
 
 		/*
@@ -585,7 +614,7 @@ count_agg_clauses_walker(Node *node, AggClauseCounts *counts)
 	}
 	Assert(!IsA(node, SubLink));
 	return expression_tree_walker(node, count_agg_clauses_walker,
-								  (void *) counts);
+								  (void *) context);
 }
 
 
@@ -2042,7 +2071,7 @@ rowtype_field_matches(Oid rowtypeid, int fieldnum,
  *
  * Whenever a function is eliminated from the expression by means of
  * constant-expression evaluation or inlining, we add the function to
- * root->glob->invalItems.  This ensures the plan is known to depend on
+ * root->glob->invalItems.	This ensures the plan is known to depend on
  * such functions, even though they aren't referenced anymore.
  *
  * We assume that the tree has already been type-checked and contains
@@ -2437,8 +2466,8 @@ eval_const_expressions_mutator(Node *node,
 														 context);
 
 					/*
-					 * Use negate_clause() to see if we can simplify away
-					 * the NOT.
+					 * Use negate_clause() to see if we can simplify away the
+					 * NOT.
 					 */
 					return negate_clause(arg);
 				}
@@ -2548,9 +2577,9 @@ eval_const_expressions_mutator(Node *node,
 							  makeConst(OIDOID, -1, InvalidOid, sizeof(Oid),
 										ObjectIdGetDatum(intypioparam),
 										false, true),
-							  makeConst(INT4OID, -1, InvalidOid, sizeof(int32),
-										Int32GetDatum(-1),
-										false, true));
+							makeConst(INT4OID, -1, InvalidOid, sizeof(int32),
+									  Int32GetDatum(-1),
+									  false, true));
 
 			simple = simplify_function(infunc,
 									   expr->resulttype, -1,
@@ -2618,9 +2647,9 @@ eval_const_expressions_mutator(Node *node,
 		/*
 		 * If we can simplify the input to a constant, then we don't need the
 		 * CollateExpr node at all: just change the constcollid field of the
-		 * Const node.  Otherwise, replace the CollateExpr with a RelabelType.
-		 * (We do that so as to improve uniformity of expression representation
-		 * and thus simplify comparison of expressions.)
+		 * Const node.	Otherwise, replace the CollateExpr with a RelabelType.
+		 * (We do that so as to improve uniformity of expression
+		 * representation and thus simplify comparison of expressions.)
 		 */
 		CollateExpr *collate = (CollateExpr *) node;
 		Node	   *arg;
@@ -2675,7 +2704,7 @@ eval_const_expressions_mutator(Node *node,
 		 * placeholder nodes, so that we have the opportunity to reduce
 		 * constant test conditions.  For example this allows
 		 *		CASE 0 WHEN 0 THEN 1 ELSE 1/0 END
-		 * to reduce to 1 rather than drawing a divide-by-0 error.  Note
+		 * to reduce to 1 rather than drawing a divide-by-0 error.	Note
 		 * that when the test expression is constant, we don't have to
 		 * include it in the resulting CASE; for example
 		 *		CASE 0 WHEN x THEN y ELSE z END
@@ -2855,9 +2884,9 @@ eval_const_expressions_mutator(Node *node,
 			/*
 			 * We can remove null constants from the list. For a non-null
 			 * constant, if it has not been preceded by any other
-			 * non-null-constant expressions then it is the result.  Otherwise,
-			 * it's the next argument, but we can drop following arguments
-			 * since they will never be reached.
+			 * non-null-constant expressions then it is the result.
+			 * Otherwise, it's the next argument, but we can drop following
+			 * arguments since they will never be reached.
 			 */
 			if (IsA(e, Const))
 			{
@@ -3353,12 +3382,12 @@ simplify_boolean_equality(Oid opno, List *args)
 			if (DatumGetBool(((Const *) leftop)->constvalue))
 				return rightop; /* true = foo */
 			else
-				return negate_clause(rightop); /* false = foo */
+				return negate_clause(rightop);	/* false = foo */
 		}
 		else
 		{
 			if (DatumGetBool(((Const *) leftop)->constvalue))
-				return negate_clause(rightop); /* true <> foo */
+				return negate_clause(rightop);	/* true <> foo */
 			else
 				return rightop; /* false <> foo */
 		}
@@ -3902,7 +3931,7 @@ inline_function(Oid funcid, Oid result_type, Oid result_collid,
 	fexpr->funcresulttype = result_type;
 	fexpr->funcretset = false;
 	fexpr->funcformat = COERCE_DONTCARE;		/* doesn't matter */
-	fexpr->funccollid = result_collid;			/* doesn't matter */
+	fexpr->funccollid = result_collid;	/* doesn't matter */
 	fexpr->inputcollid = input_collid;
 	fexpr->args = args;
 	fexpr->location = -1;
@@ -4060,18 +4089,18 @@ inline_function(Oid funcid, Oid result_type, Oid result_collid,
 	MemoryContextDelete(mycxt);
 
 	/*
-	 * If the result is of a collatable type, force the result to expose
-	 * the correct collation.  In most cases this does not matter, but
-	 * it's possible that the function result is used directly as a sort key
-	 * or in other places where we expect exprCollation() to tell the truth.
+	 * If the result is of a collatable type, force the result to expose the
+	 * correct collation.  In most cases this does not matter, but it's
+	 * possible that the function result is used directly as a sort key or in
+	 * other places where we expect exprCollation() to tell the truth.
 	 */
 	if (OidIsValid(result_collid))
 	{
-		Oid		exprcoll = exprCollation(newexpr);
+		Oid			exprcoll = exprCollation(newexpr);
 
 		if (OidIsValid(exprcoll) && exprcoll != result_collid)
 		{
-			CollateExpr   *newnode = makeNode(CollateExpr);
+			CollateExpr *newnode = makeNode(CollateExpr);
 
 			newnode->arg = (Expr *) newexpr;
 			newnode->collOid = result_collid;
@@ -4370,11 +4399,11 @@ inline_set_returning_function(PlannerInfo *root, RangeTblEntry *rte)
 	oldcxt = MemoryContextSwitchTo(mycxt);
 
 	/*
-	 * When we call eval_const_expressions below, it might try to add items
-	 * to root->glob->invalItems.  Since it is running in the temp context,
-	 * those items will be in that context, and will need to be copied out
-	 * if we're successful.  Temporarily reset the list so that we can keep
-	 * those items separate from the pre-existing list contents.
+	 * When we call eval_const_expressions below, it might try to add items to
+	 * root->glob->invalItems.	Since it is running in the temp context, those
+	 * items will be in that context, and will need to be copied out if we're
+	 * successful.	Temporarily reset the list so that we can keep those items
+	 * separate from the pre-existing list contents.
 	 */
 	saveInvalItems = root->glob->invalItems;
 	root->glob->invalItems = NIL;
@@ -4419,8 +4448,8 @@ inline_set_returning_function(PlannerInfo *root, RangeTblEntry *rte)
 		goto fail;
 
 	/*
-	 * Set up to handle parameters while parsing the function body.  We
-	 * can use the FuncExpr just created as the input for
+	 * Set up to handle parameters while parsing the function body.  We can
+	 * use the FuncExpr just created as the input for
 	 * prepare_sql_fn_parse_info.
 	 */
 	pinfo = prepare_sql_fn_parse_info(func_tuple,
@@ -4438,7 +4467,7 @@ inline_set_returning_function(PlannerInfo *root, RangeTblEntry *rte)
 
 	querytree_list = pg_analyze_and_rewrite_params(linitial(raw_parsetree_list),
 												   src,
-												   (ParserSetupHook) sql_fn_parser_setup,
+									   (ParserSetupHook) sql_fn_parser_setup,
 												   pinfo);
 	if (list_length(querytree_list) != 1)
 		goto fail;
@@ -4513,8 +4542,8 @@ inline_set_returning_function(PlannerInfo *root, RangeTblEntry *rte)
 	ReleaseSysCache(func_tuple);
 
 	/*
-	 * We don't have to fix collations here because the upper query is
-	 * already parsed, ie, the collations in the RTE are what count.
+	 * We don't have to fix collations here because the upper query is already
+	 * parsed, ie, the collations in the RTE are what count.
 	 */
 
 	/*

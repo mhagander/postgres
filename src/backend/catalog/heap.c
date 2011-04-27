@@ -431,7 +431,7 @@ CheckAttributeNamesTypes(TupleDesc tupdesc, char relkind,
 		CheckAttributeType(NameStr(tupdesc->attrs[i]->attname),
 						   tupdesc->attrs[i]->atttypid,
 						   tupdesc->attrs[i]->attcollation,
-						   NIL,	/* assume we're creating a new rowtype */
+						   NIL, /* assume we're creating a new rowtype */
 						   allow_system_table_mods);
 	}
 }
@@ -497,7 +497,7 @@ CheckAttributeType(const char *attname,
 		int			i;
 
 		/*
-		 * Check for self-containment.  Eventually we might be able to allow
+		 * Check for self-containment.	Eventually we might be able to allow
 		 * this (just return without complaint, if so) but it's not clear how
 		 * many other places would require anti-recursion defenses before it
 		 * would be safe to allow tables to contain their own rowtype.
@@ -505,8 +505,8 @@ CheckAttributeType(const char *attname,
 		if (list_member_oid(containing_rowtypes, atttypid))
 			ereport(ERROR,
 					(errcode(ERRCODE_INVALID_TABLE_DEFINITION),
-					 errmsg("composite type %s cannot be made a member of itself",
-							format_type_be(atttypid))));
+				errmsg("composite type %s cannot be made a member of itself",
+					   format_type_be(atttypid))));
 
 		containing_rowtypes = lcons_oid(atttypid, containing_rowtypes);
 
@@ -541,15 +541,15 @@ CheckAttributeType(const char *attname,
 	}
 
 	/*
-	 * This might not be strictly invalid per SQL standard, but it is
-	 * pretty useless, and it cannot be dumped, so we must disallow it.
+	 * This might not be strictly invalid per SQL standard, but it is pretty
+	 * useless, and it cannot be dumped, so we must disallow it.
 	 */
 	if (!OidIsValid(attcollation) && type_is_collatable(atttypid))
-			ereport(ERROR,
-					(errcode(ERRCODE_INVALID_TABLE_DEFINITION),
-					 errmsg("no collation was derived for column \"%s\" with collatable type %s",
-							attname, format_type_be(atttypid)),
-					 errhint("Use the COLLATE clause to set the collation explicitly.")));
+		ereport(ERROR,
+				(errcode(ERRCODE_INVALID_TABLE_DEFINITION),
+				 errmsg("no collation was derived for column \"%s\" with collatable type %s",
+						attname, format_type_be(atttypid)),
+		errhint("Use the COLLATE clause to set the collation explicitly.")));
 }
 
 /*
@@ -644,7 +644,7 @@ AddNewAttributeTuples(Oid new_rel_oid,
 
 	/*
 	 * First we add the user attributes.  This is also a convenient place to
-	 * add dependencies on their datatypes.
+	 * add dependencies on their datatypes and collations.
 	 */
 	for (i = 0; i < natts; i++)
 	{
@@ -666,7 +666,9 @@ AddNewAttributeTuples(Oid new_rel_oid,
 		referenced.objectSubId = 0;
 		recordDependencyOn(&myself, &referenced, DEPENDENCY_NORMAL);
 
-		if (OidIsValid(attr->attcollation))
+		/* The default collation is pinned, so don't bother recording it */
+		if (OidIsValid(attr->attcollation) &&
+			attr->attcollation != DEFAULT_COLLATION_OID)
 		{
 			referenced.classId = CollationRelationId;
 			referenced.objectId = attr->attcollation;
@@ -921,7 +923,7 @@ AddNewRelationType(const char *typeName,
 				   -1,			/* typmod */
 				   0,			/* array dimensions for typBaseType */
 				   false,		/* Type NOT NULL */
-				   InvalidOid);	/* typcollation */
+				   InvalidOid); /* rowtypes never have a collation */
 }
 
 /* --------------------------------
@@ -971,8 +973,7 @@ heap_create_with_catalog(const char *relname,
 						 OnCommitAction oncommit,
 						 Datum reloptions,
 						 bool use_user_acl,
-						 bool allow_system_table_mods,
-						 bool if_not_exists)
+						 bool allow_system_table_mods)
 {
 	Relation	pg_class_desc;
 	Relation	new_rel_desc;
@@ -992,26 +993,14 @@ heap_create_with_catalog(const char *relname,
 	CheckAttributeNamesTypes(tupdesc, relkind, allow_system_table_mods);
 
 	/*
-	 * If the relation already exists, it's an error, unless the user specifies
-	 * "IF NOT EXISTS".  In that case, we just print a notice and do nothing
-	 * further.
+	 * This would fail later on anyway, if the relation already exists.  But
+	 * by catching it here we can emit a nicer error message.
 	 */
 	existing_relid = get_relname_relid(relname, relnamespace);
 	if (existing_relid != InvalidOid)
-	{
-		if (if_not_exists)
-		{
-			ereport(NOTICE,
-					(errcode(ERRCODE_DUPLICATE_TABLE),
-					 errmsg("relation \"%s\" already exists, skipping",
-					 relname)));
-			heap_close(pg_class_desc, RowExclusiveLock);
-			return InvalidOid;
-		}
 		ereport(ERROR,
 				(errcode(ERRCODE_DUPLICATE_TABLE),
 				 errmsg("relation \"%s\" already exists", relname)));
-	}
 
 	/*
 	 * Since we are going to create a rowtype as well, also check for
@@ -1048,10 +1037,11 @@ heap_create_with_catalog(const char *relname,
 	if (!OidIsValid(relid))
 	{
 		/*
-		 *	Use binary-upgrade override for pg_class.oid/relfilenode,
-		 *	if supplied.
+		 * Use binary-upgrade override for pg_class.oid/relfilenode, if
+		 * supplied.
 		 */
-		if (OidIsValid(binary_upgrade_next_heap_pg_class_oid) &&
+		if (IsBinaryUpgrade &&
+			OidIsValid(binary_upgrade_next_heap_pg_class_oid) &&
 			(relkind == RELKIND_RELATION || relkind == RELKIND_SEQUENCE ||
 			 relkind == RELKIND_VIEW || relkind == RELKIND_COMPOSITE_TYPE ||
 			 relkind == RELKIND_FOREIGN_TABLE))
@@ -1059,7 +1049,8 @@ heap_create_with_catalog(const char *relname,
 			relid = binary_upgrade_next_heap_pg_class_oid;
 			binary_upgrade_next_heap_pg_class_oid = InvalidOid;
 		}
-		else if (OidIsValid(binary_upgrade_next_toast_pg_class_oid) &&
+		else if (IsBinaryUpgrade &&
+				 OidIsValid(binary_upgrade_next_toast_pg_class_oid) &&
 				 relkind == RELKIND_TOASTVALUE)
 		{
 			relid = binary_upgrade_next_toast_pg_class_oid;
@@ -1183,7 +1174,7 @@ heap_create_with_catalog(const char *relname,
 				   -1,			/* typmod */
 				   0,			/* array dimensions for typBaseType */
 				   false,		/* Type NOT NULL */
-				   InvalidOid);	/* typcollation */
+				   InvalidOid); /* rowtypes never have a collation */
 
 		pfree(relarrayname);
 	}
@@ -1285,12 +1276,12 @@ heap_create_with_catalog(const char *relname,
 		register_on_commit_action(relid, oncommit);
 
 	/*
-	 * If this is an unlogged relation, it needs an init fork so that it
-	 * can be correctly reinitialized on restart.  Since we're going to
-	 * do an immediate sync, we ony need to xlog this if archiving or
-	 * streaming is enabled.  And the immediate sync is required, because
-	 * otherwise there's no guarantee that this will hit the disk before
-	 * the next checkpoint moves the redo pointer.
+	 * If this is an unlogged relation, it needs an init fork so that it can
+	 * be correctly reinitialized on restart.  Since we're going to do an
+	 * immediate sync, we ony need to xlog this if archiving or streaming is
+	 * enabled.  And the immediate sync is required, because otherwise there's
+	 * no guarantee that this will hit the disk before the next checkpoint
+	 * moves the redo pointer.
 	 */
 	if (relpersistence == RELPERSISTENCE_UNLOGGED)
 	{
@@ -1654,8 +1645,8 @@ heap_drop_with_catalog(Oid relid)
 
 	/*
 	 * There can no longer be anyone *else* touching the relation, but we
-	 * might still have open queries or cursors, or pending trigger events,
-	 * in our own session.
+	 * might still have open queries or cursors, or pending trigger events, in
+	 * our own session.
 	 */
 	CheckTableNotInUse(rel, "DROP TABLE");
 
@@ -1664,8 +1655,8 @@ heap_drop_with_catalog(Oid relid)
 	 */
 	if (rel->rd_rel->relkind == RELKIND_FOREIGN_TABLE)
 	{
-		Relation    rel;
-		HeapTuple   tuple;
+		Relation	rel;
+		HeapTuple	tuple;
 
 		rel = heap_open(ForeignTableRelationId, RowExclusiveLock);
 
@@ -1899,7 +1890,7 @@ StoreRelCheck(Relation rel, char *ccname, Node *expr,
 						  CONSTRAINT_CHECK,		/* Constraint Type */
 						  false,	/* Is Deferrable */
 						  false,	/* Is Deferred */
-						  true,		/* Is Validated */
+						  true, /* Is Validated */
 						  RelationGetRelid(rel),		/* relation */
 						  attNos,		/* attrs in the constraint */
 						  keycount,		/* # attrs in the constraint */
@@ -2569,7 +2560,7 @@ RelationTruncateIndexes(Relation heapRelation)
 
 		/* Initialize the index and rebuild */
 		/* Note: we do not need to re-establish pkey setting */
-		index_build(heapRelation, currentIndex, indexInfo, false);
+		index_build(heapRelation, currentIndex, indexInfo, false, true);
 
 		/* We're done with this index */
 		index_close(currentIndex, NoLock);

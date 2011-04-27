@@ -348,7 +348,7 @@ do_compile(FunctionCallInfo fcinfo,
 	function->fn_xmin = HeapTupleHeaderGetXmin(procTup->t_data);
 	function->fn_tid = procTup->t_self;
 	function->fn_is_trigger = is_trigger;
-	function->fn_input_collation = fcinfo->flinfo->fn_collation;
+	function->fn_input_collation = fcinfo->fncollation;
 	function->fn_cxt = func_cxt;
 	function->out_param_varno = -1;		/* set up for no OUT param */
 	function->resolve_option = plpgsql_variable_conflict;
@@ -414,7 +414,7 @@ do_compile(FunctionCallInfo fcinfo,
 				/* Create datatype info */
 				argdtype = plpgsql_build_datatype(argtypeid,
 												  -1,
-												  function->fn_input_collation);
+											   function->fn_input_collation);
 
 				/* Disallow pseudotype argument */
 				/* (note we already replaced polymorphic types) */
@@ -561,7 +561,7 @@ do_compile(FunctionCallInfo fcinfo,
 					(void) plpgsql_build_variable("$0", 0,
 												  build_datatype(typeTup,
 																 -1,
-																 function->fn_input_collation),
+											   function->fn_input_collation),
 												  true);
 				}
 			}
@@ -602,7 +602,7 @@ do_compile(FunctionCallInfo fcinfo,
 			var = plpgsql_build_variable("tg_when", 0,
 										 plpgsql_build_datatype(TEXTOID,
 																-1,
-																function->fn_input_collation),
+											   function->fn_input_collation),
 										 true);
 			function->tg_when_varno = var->dno;
 
@@ -610,7 +610,7 @@ do_compile(FunctionCallInfo fcinfo,
 			var = plpgsql_build_variable("tg_level", 0,
 										 plpgsql_build_datatype(TEXTOID,
 																-1,
-																function->fn_input_collation),
+											   function->fn_input_collation),
 										 true);
 			function->tg_level_varno = var->dno;
 
@@ -618,7 +618,7 @@ do_compile(FunctionCallInfo fcinfo,
 			var = plpgsql_build_variable("tg_op", 0,
 										 plpgsql_build_datatype(TEXTOID,
 																-1,
-																function->fn_input_collation),
+											   function->fn_input_collation),
 										 true);
 			function->tg_op_varno = var->dno;
 
@@ -666,7 +666,7 @@ do_compile(FunctionCallInfo fcinfo,
 			var = plpgsql_build_variable("tg_argv", 0,
 										 plpgsql_build_datatype(TEXTARRAYOID,
 																-1,
-																function->fn_input_collation),
+											   function->fn_input_collation),
 										 true);
 			function->tg_argv_varno = var->dno;
 
@@ -998,13 +998,13 @@ plpgsql_post_column_ref(ParseState *pstate, ColumnRef *cref, Node *var)
 
 	/*
 	 * If we find a record/row variable but can't match a field name, throw
-	 * error if there was no core resolution for the ColumnRef either.  In
+	 * error if there was no core resolution for the ColumnRef either.	In
 	 * that situation, the reference is inevitably going to fail, and
-	 * complaining about the record/row variable is likely to be more
-	 * on-point than the core parser's error message.  (It's too bad we
-	 * don't have access to transformColumnRef's internal crerr state here,
-	 * as in case of a conflict with a table name this could still be less
-	 * than the most helpful error message possible.)
+	 * complaining about the record/row variable is likely to be more on-point
+	 * than the core parser's error message.  (It's too bad we don't have
+	 * access to transformColumnRef's internal crerr state here, as in case of
+	 * a conflict with a table name this could still be less than the most
+	 * helpful error message possible.)
 	 */
 	myvar = resolve_column_ref(pstate, expr, cref, (var == NULL));
 
@@ -1970,7 +1970,7 @@ build_row_from_class(Oid classOid)
 			var = plpgsql_build_variable(refname, 0,
 								 plpgsql_build_datatype(attrStruct->atttypid,
 														attrStruct->atttypmod,
-														attrStruct->attcollation),
+												   attrStruct->attcollation),
 										 false);
 
 			/* Add the variable to the row */
@@ -2331,7 +2331,7 @@ compute_function_hashkey(FunctionCallInfo fcinfo,
 	}
 
 	/* get input collation, if known */
-	hashkey->inputCollation = fcinfo->flinfo->fn_collation;
+	hashkey->inputCollation = fcinfo->fncollation;
 
 	if (procStruct->pronargs > 0)
 	{

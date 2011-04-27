@@ -530,13 +530,6 @@ standard_ProcessUtility(Node *parsetree,
 												InvalidOid);
 
 						/*
-						 * If "IF NOT EXISTS" was specified and the relation
-						 * already exists, do nothing further.
-						 */
-						if (relOid == InvalidOid)
-							continue;
-
-						/*
 						 * Let AlterTableCreateToastTable decide if this one
 						 * needs a secondary relation too.
 						 */
@@ -559,15 +552,8 @@ standard_ProcessUtility(Node *parsetree,
 						relOid = DefineRelation((CreateStmt *) stmt,
 												RELKIND_FOREIGN_TABLE,
 												InvalidOid);
-
-						/*
-						 * Unless "IF NOT EXISTS" was specified and the
-						 * relation already exists, create the pg_foreign_table
-						 * entry.
-						 */
-						if (relOid != InvalidOid)
-							CreateForeignTable((CreateForeignTableStmt *) stmt,
-												relOid);
+						CreateForeignTable((CreateForeignTableStmt *) stmt,
+										   relOid);
 					}
 					else
 					{
@@ -916,6 +902,7 @@ standard_ProcessUtility(Node *parsetree,
 			break;
 
 		case T_AlterEnumStmt:	/* ALTER TYPE (enum) */
+
 			/*
 			 * We disallow this in transaction blocks, because we can't cope
 			 * with enum OID values getting into indexes and then having their

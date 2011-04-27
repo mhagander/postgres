@@ -121,7 +121,7 @@ static void transformFKConstraints(CreateStmtContext *cxt,
 					   bool skipValidation,
 					   bool isAddConstraint);
 static void transformConstraintAttrs(CreateStmtContext *cxt,
-									 List *constraintList);
+						 List *constraintList);
 static void transformColumnType(CreateStmtContext *cxt, ColumnDef *column);
 static void setSchemaName(char *context_schema, char **stmt_schema_name);
 
@@ -148,12 +148,40 @@ transformCreateStmt(CreateStmt *stmt, const char *queryString)
 	List	   *result;
 	List	   *save_alist;
 	ListCell   *elements;
+	Oid			namespaceid;
 
 	/*
 	 * We must not scribble on the passed-in CreateStmt, so copy it.  (This is
 	 * overkill, but easy.)
 	 */
 	stmt = (CreateStmt *) copyObject(stmt);
+
+	/*
+	 * Look up the creation namespace.  This also checks permissions on the
+	 * target namespace, so that we throw any permissions error as early as
+	 * possible.
+	 */
+	namespaceid = RangeVarGetAndCheckCreationNamespace(stmt->relation);
+
+	/*
+	 * If the relation already exists and the user specified "IF NOT EXISTS",
+	 * bail out with a NOTICE.
+	 */
+	if (stmt->if_not_exists)
+	{
+		Oid		existing_relid;
+
+		existing_relid = get_relname_relid(stmt->relation->relname,
+										   namespaceid);
+		if (existing_relid != InvalidOid)
+		{
+			ereport(NOTICE,
+					(errcode(ERRCODE_DUPLICATE_TABLE),
+					 errmsg("relation \"%s\" already exists, skipping",
+						 stmt->relation->relname)));
+			return NIL;
+		}
+	}
 
 	/*
 	 * If the target relation name isn't schema-qualified, make it so.  This
@@ -164,11 +192,7 @@ transformCreateStmt(CreateStmt *stmt, const char *queryString)
 	 */
 	if (stmt->relation->schemaname == NULL
 		&& stmt->relation->relpersistence != RELPERSISTENCE_TEMP)
-	{
-		Oid			namespaceid = RangeVarGetCreationNamespace(stmt->relation);
-
 		stmt->relation->schemaname = get_namespace_name(namespaceid);
-	}
 
 	/* Set up pstate and CreateStmtContext */
 	pstate = make_parsestate(NULL);
@@ -368,8 +392,8 @@ transformColumnDefinition(CreateStmtContext *cxt, ColumnDef *column)
 		 * If this is ALTER ADD COLUMN, make sure the sequence will be owned
 		 * by the table's owner.  The current user might be someone else
 		 * (perhaps a superuser, or someone who's only a member of the owning
-		 * role), but the SEQUENCE OWNED BY mechanisms will bleat unless
-		 * table and sequence have exactly the same owning role.
+		 * role), but the SEQUENCE OWNED BY mechanisms will bleat unless table
+		 * and sequence have exactly the same owning role.
 		 */
 		if (cxt->rel)
 			seqstmt->ownerId = cxt->rel->rd_rel->relowner;
@@ -732,7 +756,7 @@ transformInhRelation(CreateStmtContext *cxt, InhRelation *inhRelation)
 			/* Copy comment on constraint */
 			if ((inhRelation->options & CREATE_TABLE_LIKE_COMMENTS) &&
 				(comment = GetComment(get_constraint_oid(RelationGetRelid(relation),
-														  n->conname, false),
+														 n->conname, false),
 									  ConstraintRelationId,
 									  0)) != NULL)
 			{
@@ -829,15 +853,10 @@ transformOfType(CreateStmtContext *cxt, TypeName *ofTypename)
 	AssertArg(ofTypename);
 
 	tuple = typenameType(NULL, ofTypename, NULL);
+	check_of_type(tuple);
 	typ = (Form_pg_type) GETSTRUCT(tuple);
 	ofTypeId = HeapTupleGetOid(tuple);
 	ofTypename->typeOid = ofTypeId;		/* cached for later */
-
-	if (typ->typtype != TYPTYPE_COMPOSITE)
-		ereport(ERROR,
-				(errcode(ERRCODE_WRONG_OBJECT_TYPE),
-				 errmsg("type %s is not a composite type",
-						format_type_be(ofTypeId))));
 
 	tupdesc = lookup_rowtype_tupdesc(ofTypeId, -1);
 	for (i = 0; i < tupdesc->natts; i++)
@@ -1390,8 +1409,8 @@ transformIndexConstraint(Constraint *constraint, CreateStmtContext *cxt)
 	/*
 	 * If it's ALTER TABLE ADD CONSTRAINT USING INDEX, look up the index and
 	 * verify it's usable, then extract the implied column name list.  (We
-	 * will not actually need the column name list at runtime, but we need
-	 * it now to check for duplicate column entries below.)
+	 * will not actually need the column name list at runtime, but we need it
+	 * now to check for duplicate column entries below.)
 	 */
 	if (constraint->indexname != NULL)
 	{
@@ -1436,8 +1455,8 @@ transformIndexConstraint(Constraint *constraint, CreateStmtContext *cxt)
 		if (OidIsValid(get_index_constraint(index_oid)))
 			ereport(ERROR,
 					(errcode(ERRCODE_OBJECT_NOT_IN_PREREQUISITE_STATE),
-					 errmsg("index \"%s\" is already associated with a constraint",
-							index_name),
+			   errmsg("index \"%s\" is already associated with a constraint",
+					  index_name),
 					 parser_errposition(cxt->pstate, constraint->location)));
 
 		/* Perform validity checks on the index */
@@ -1482,8 +1501,8 @@ transformIndexConstraint(Constraint *constraint, CreateStmtContext *cxt)
 					 parser_errposition(cxt->pstate, constraint->location)));
 
 		/*
-		 * It's probably unsafe to change a deferred index to non-deferred.
-		 * (A non-constraint index couldn't be deferred anyway, so this case
+		 * It's probably unsafe to change a deferred index to non-deferred. (A
+		 * non-constraint index couldn't be deferred anyway, so this case
 		 * should never occur; no need to sweat, but let's check it.)
 		 */
 		if (!index_form->indimmediate && !constraint->deferrable)
@@ -1494,7 +1513,7 @@ transformIndexConstraint(Constraint *constraint, CreateStmtContext *cxt)
 					 parser_errposition(cxt->pstate, constraint->location)));
 
 		/*
-		 * Insist on it being a btree.  That's the only kind that supports
+		 * Insist on it being a btree.	That's the only kind that supports
 		 * uniqueness at the moment anyway; but we must have an index that
 		 * exactly matches what you'd get from plain ADD CONSTRAINT syntax,
 		 * else dump and reload will produce a different index (breaking
@@ -1514,15 +1533,15 @@ transformIndexConstraint(Constraint *constraint, CreateStmtContext *cxt)
 
 		for (i = 0; i < index_form->indnatts; i++)
 		{
-			int2	attnum = index_form->indkey.values[i];
+			int2		attnum = index_form->indkey.values[i];
 			Form_pg_attribute attform;
-			char   *attname;
-			Oid		defopclass;
+			char	   *attname;
+			Oid			defopclass;
 
 			/*
 			 * We shouldn't see attnum == 0 here, since we already rejected
-			 * expression indexes.  If we do, SystemAttributeDefinition
-			 * will throw an error.
+			 * expression indexes.	If we do, SystemAttributeDefinition will
+			 * throw an error.
 			 */
 			if (attnum > 0)
 			{
@@ -1531,11 +1550,11 @@ transformIndexConstraint(Constraint *constraint, CreateStmtContext *cxt)
 			}
 			else
 				attform = SystemAttributeDefinition(attnum,
-													heap_rel->rd_rel->relhasoids);
+											   heap_rel->rd_rel->relhasoids);
 			attname = pstrdup(NameStr(attform->attname));
 
 			/*
-			 * Insist on default opclass and sort options.  While the index
+			 * Insist on default opclass and sort options.	While the index
 			 * would still work as a constraint with non-default settings, it
 			 * might not provide exactly the same uniqueness semantics as
 			 * you'd get from a normally-created constraint; and there's also
@@ -1549,7 +1568,7 @@ transformIndexConstraint(Constraint *constraint, CreateStmtContext *cxt)
 						(errcode(ERRCODE_WRONG_OBJECT_TYPE),
 						 errmsg("index \"%s\" does not have default sorting behavior", index_name),
 						 errdetail("Cannot create a PRIMARY KEY or UNIQUE constraint using such an index."),
-						 parser_errposition(cxt->pstate, constraint->location)));
+					 parser_errposition(cxt->pstate, constraint->location)));
 
 			constraint->keys = lappend(constraint->keys, makeString(attname));
 		}
@@ -1694,13 +1713,13 @@ transformIndexConstraint(Constraint *constraint, CreateStmtContext *cxt)
 							(errcode(ERRCODE_DUPLICATE_COLUMN),
 							 errmsg("column \"%s\" appears twice in primary key constraint",
 									key),
-							 parser_errposition(cxt->pstate, constraint->location)));
+					 parser_errposition(cxt->pstate, constraint->location)));
 				else
 					ereport(ERROR,
 							(errcode(ERRCODE_DUPLICATE_COLUMN),
 					errmsg("column \"%s\" appears twice in unique constraint",
 						   key),
-							 parser_errposition(cxt->pstate, constraint->location)));
+					 parser_errposition(cxt->pstate, constraint->location)));
 			}
 		}
 
@@ -1743,7 +1762,7 @@ transformFKConstraints(CreateStmtContext *cxt,
 			Constraint *constraint = (Constraint *) lfirst(fkclist);
 
 			constraint->skip_validation = true;
-			constraint->initially_valid  = true;
+			constraint->initially_valid = true;
 		}
 	}
 
@@ -1829,9 +1848,13 @@ transformIndexStmt(IndexStmt *stmt, const char *queryString)
 
 	/* take care of the where clause */
 	if (stmt->whereClause)
+	{
 		stmt->whereClause = transformWhereClause(pstate,
 												 stmt->whereClause,
 												 "WHERE");
+		/* we have to fix its collations too */
+		assign_expr_collations(pstate, stmt->whereClause);
+	}
 
 	/* take care of any index expressions */
 	foreach(l, stmt->indexParams)
@@ -1959,6 +1982,8 @@ transformRuleStmt(RuleStmt *stmt, const char *queryString,
 	*whereClause = transformWhereClause(pstate,
 									  (Node *) copyObject(stmt->whereClause),
 										"WHERE");
+	/* we have to fix its collations too */
+	assign_expr_collations(pstate, *whereClause);
 
 	if (list_length(pstate->p_rtable) != 2)		/* naughty, naughty... */
 		ereport(ERROR,
@@ -2114,18 +2139,18 @@ transformRuleStmt(RuleStmt *stmt, const char *queryString,
 			 * However, they were already in the outer rangetable when we
 			 * analyzed the query, so we have to check.
 			 *
-			 * Note that in the INSERT...SELECT case, we need to examine
-			 * the CTE lists of both top_subqry and sub_qry.
+			 * Note that in the INSERT...SELECT case, we need to examine the
+			 * CTE lists of both top_subqry and sub_qry.
 			 *
-			 * Note that we aren't digging into the body of the query
-			 * looking for WITHs in nested sub-SELECTs.  A WITH down there
-			 * can legitimately refer to OLD/NEW, because it'd be an
+			 * Note that we aren't digging into the body of the query looking
+			 * for WITHs in nested sub-SELECTs.  A WITH down there can
+			 * legitimately refer to OLD/NEW, because it'd be an
 			 * indirect-correlated outer reference.
 			 */
 			if (rangeTableEntry_used((Node *) top_subqry->cteList,
 									 PRS2_OLD_VARNO, 0) ||
 				rangeTableEntry_used((Node *) sub_qry->cteList,
-									  PRS2_OLD_VARNO, 0))
+									 PRS2_OLD_VARNO, 0))
 				ereport(ERROR,
 						(errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
 						 errmsg("cannot refer to OLD within WITH query")));
@@ -2220,12 +2245,13 @@ transformAlterTableStmt(AlterTableStmt *stmt, const char *queryString)
 	lockmode = AlterTableGetLockLevel(stmt->cmds);
 
 	/*
-	 * Acquire appropriate lock on the target relation, which will be held until
-	 * end of transaction.	This ensures any decisions we make here based on
-	 * the state of the relation will still be good at execution. We must get
-	 * lock now because execution will later require it; taking a lower grade lock
-	 * now and trying to upgrade later risks deadlock.  Any new commands we add
-	 * after this must not upgrade the lock level requested here.
+	 * Acquire appropriate lock on the target relation, which will be held
+	 * until end of transaction.  This ensures any decisions we make here
+	 * based on the state of the relation will still be good at execution. We
+	 * must get lock now because execution will later require it; taking a
+	 * lower grade lock now and trying to upgrade later risks deadlock.  Any
+	 * new commands we add after this must not upgrade the lock level
+	 * requested here.
 	 */
 	rel = relation_openrv(stmt->relation, lockmode);
 
@@ -2516,9 +2542,8 @@ transformColumnType(CreateStmtContext *cxt, ColumnDef *column)
 	if (column->collClause)
 	{
 		Form_pg_type typtup = (Form_pg_type) GETSTRUCT(ctype);
-		Oid		collOid;
 
-		collOid = LookupCollation(cxt->pstate,
+		LookupCollation(cxt->pstate,
 								  column->collClause->collname,
 								  column->collClause->location);
 		/* Complain if COLLATE is applied to an uncollatable type */

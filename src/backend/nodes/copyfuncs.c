@@ -581,7 +581,7 @@ _copyForeignScan(ForeignScan *from)
 static FdwPlan *
 _copyFdwPlan(FdwPlan *from)
 {
-	FdwPlan *newnode = makeNode(FdwPlan);
+	FdwPlan    *newnode = makeNode(FdwPlan);
 
 	COPY_SCALAR_FIELD(startup_cost);
 	COPY_SCALAR_FIELD(total_cost);
@@ -1468,7 +1468,7 @@ _copyConvertRowtypeExpr(ConvertRowtypeExpr *from)
 static CollateExpr *
 _copyCollateExpr(CollateExpr *from)
 {
-	CollateExpr   *newnode = makeNode(CollateExpr);
+	CollateExpr *newnode = makeNode(CollateExpr);
 
 	COPY_NODE_FIELD(arg);
 	COPY_SCALAR_FIELD(collOid);
@@ -1951,6 +1951,7 @@ _copyRangeTblEntry(RangeTblEntry *from)
 	COPY_NODE_FIELD(funccoltypmods);
 	COPY_NODE_FIELD(funccolcollations);
 	COPY_NODE_FIELD(values_lists);
+	COPY_NODE_FIELD(values_collations);
 	COPY_STRING_FIELD(ctename);
 	COPY_SCALAR_FIELD(ctelevelsup);
 	COPY_SCALAR_FIELD(self_reference);
@@ -2269,7 +2270,7 @@ _copyTypeCast(TypeCast *from)
 static CollateClause *
 _copyCollateClause(CollateClause *from)
 {
-	CollateClause   *newnode = makeNode(CollateClause);
+	CollateClause *newnode = makeNode(CollateClause);
 
 	COPY_NODE_FIELD(arg);
 	COPY_NODE_FIELD(collname);

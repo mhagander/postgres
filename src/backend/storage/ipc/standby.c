@@ -193,7 +193,7 @@ ResolveRecoveryConflictWithVirtualXIDs(VirtualTransactionId *waitlist,
 		return;
 
 	waitStart = GetCurrentTimestamp();
-	new_status = NULL;		/* we haven't changed the ps display */
+	new_status = NULL;			/* we haven't changed the ps display */
 
 	while (VirtualTransactionIdIsValid(*waitlist))
 	{
@@ -334,7 +334,6 @@ static void
 ResolveRecoveryConflictWithLock(Oid dbOid, Oid relOid)
 {
 	VirtualTransactionId *backends;
-	bool		report_memory_error = false;
 	bool		lock_acquired = false;
 	int			num_attempts = 0;
 	LOCKTAG		locktag;
@@ -354,11 +353,8 @@ ResolveRecoveryConflictWithLock(Oid dbOid, Oid relOid)
 		if (++num_attempts < 3)
 			backends = GetLockConflicts(&locktag, AccessExclusiveLock);
 		else
-		{
 			backends = GetConflictingVirtualXIDs(InvalidTransactionId,
 												 InvalidOid);
-			report_memory_error = true;
-		}
 
 		ResolveRecoveryConflictWithVirtualXIDs(backends,
 											 PROCSIG_RECOVERY_CONFLICT_LOCK);
@@ -963,14 +959,14 @@ void
 LogAccessExclusiveLockPrepare(void)
 {
 	/*
-	 * Ensure that a TransactionId has been assigned to this transaction,
-	 * for two reasons, both related to lock release on the standby.
-	 * First, we must assign an xid so that RecordTransactionCommit() and
+	 * Ensure that a TransactionId has been assigned to this transaction, for
+	 * two reasons, both related to lock release on the standby. First, we
+	 * must assign an xid so that RecordTransactionCommit() and
 	 * RecordTransactionAbort() do not optimise away the transaction
-	 * completion record which recovery relies upon to release locks. It's
-	 * a hack, but for a corner case not worth adding code for into the
-	 * main commit path. Second, must must assign an xid before the lock
-	 * is recorded in shared memory, otherwise a concurrently executing
+	 * completion record which recovery relies upon to release locks. It's a
+	 * hack, but for a corner case not worth adding code for into the main
+	 * commit path. Second, must must assign an xid before the lock is
+	 * recorded in shared memory, otherwise a concurrently executing
 	 * GetRunningTransactionLocks() might see a lock associated with an
 	 * InvalidTransactionId which we later assert cannot happen.
 	 */
