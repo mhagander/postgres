@@ -1350,8 +1350,8 @@ pg_SSPI_recvauth(Port *port)
 		}
 
 		/*
-		 * Copy over our current context with the one we just received.
-		 * if sspictx is NULL it was the first loop and we need to allocate
+		 * Overwrite the current context with the one we just received.
+		 * If sspictx is NULL it was the first loop and we need to allocate
 		 * a buffer for it. On subsequent runs, we can just overwrite the
 		 * buffer contents since the size does not change.
 		 */
