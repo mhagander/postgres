@@ -1212,8 +1212,7 @@ pg_SSPI_recvauth(Port *port)
 	StringInfoData buf;
 	SECURITY_STATUS r;
 	CredHandle	sspicred;
-	CtxtHandle *sspictx = NULL,
-				newctx;
+	CtxtHandle  sspictx;
 	TimeStamp	expiry;
 	ULONG		contextattr;
 	SecBufferDesc inbuf;
@@ -1229,6 +1228,7 @@ pg_SSPI_recvauth(Port *port)
 	DWORD		domainnamesize = sizeof(domainname);
 	SID_NAME_USE accountnameuse;
 	HMODULE		secur32;
+	bool		isfirstcall = true;
 	QUERY_SECURITY_CONTEXT_TOKEN_FN _QuerySecurityContextToken;
 
 	/*
@@ -1309,14 +1309,16 @@ pg_SSPI_recvauth(Port *port)
 			 (unsigned int) buf.len);
 
 		r = AcceptSecurityContext(&sspicred,
-								  sspictx,
+								  (isfirstcall) ? NULL : &sspictx,
 								  &inbuf,
 								  ASC_REQ_ALLOCATE_MEMORY,
 								  SECURITY_NETWORK_DREP,
-								  &newctx,
+								  &sspictx,
 								  &outbuf,
 								  &contextattr,
 								  NULL);
+
+		isfirstcall = false;
 
 		/* input buffer no longer used */
 		pfree(buf.data);
@@ -1339,24 +1341,10 @@ pg_SSPI_recvauth(Port *port)
 
 		if (r != SEC_E_OK && r != SEC_I_CONTINUE_NEEDED)
 		{
-			if (sspictx != NULL)
-			{
-				DeleteSecurityContext(sspictx);
-				free(sspictx);
-			}
+			DeleteSecurityContext(&sspictx);
 			FreeCredentialsHandle(&sspicred);
 			pg_SSPI_error(ERROR,
 						  _("could not accept SSPI security context"), r);
-		}
-
-		if (sspictx == NULL)
-		{
-			sspictx = malloc(sizeof(CtxtHandle));
-			if (sspictx == NULL)
-				ereport(ERROR,
-						(errmsg("out of memory")));
-
-			memcpy(sspictx, &newctx, sizeof(CtxtHandle));
 		}
 
 		if (r == SEC_I_CONTINUE_NEEDED)
@@ -1397,7 +1385,7 @@ pg_SSPI_recvauth(Port *port)
 								 (int) GetLastError())));
 	}
 
-	r = (_QuerySecurityContextToken) (sspictx, &token);
+	r = (_QuerySecurityContextToken) (&sspictx, &token);
 	if (r != SEC_E_OK)
 	{
 		FreeLibrary(secur32);
@@ -1411,8 +1399,7 @@ pg_SSPI_recvauth(Port *port)
 	 * No longer need the security context, everything from here on uses the
 	 * token instead.
 	 */
-	DeleteSecurityContext(sspictx);
-	free(sspictx);
+	DeleteSecurityContext(&sspictx);
 
 	if (!GetTokenInformation(token, TokenUser, NULL, 0, &retlen) && GetLastError() != 122)
 		ereport(ERROR,
