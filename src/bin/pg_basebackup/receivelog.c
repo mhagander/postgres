@@ -148,19 +148,81 @@ ReceiveXlogStream(PGconn *conn, XLogRecPtr startpos, uint32 timeline, char *base
 			/* Position matches, write happens lower down */
 		}
 
-		/* We have a file open in the correct position */
-		if (write(walfile, copybuf + STREAMING_HEADER_SIZE,
-				  r - STREAMING_HEADER_SIZE) != r - STREAMING_HEADER_SIZE)
+		/* Check if the data will cross a WAL file boundary */
+		if (xlogoff + r - STREAMING_HEADER_SIZE > XLOG_SEG_SIZE)
 		{
-			fprintf(stderr, _("%s: could not write %u bytes to WAL file %s: %s\n"),
-					progname,
-					r - STREAMING_HEADER_SIZE,
-					current_walfile_name,
-					strerror(errno));
-			return false;
-		}
+			/*
+			 * Data crosses WAL boundary, so we need to first write what
+			 * we can fit in the first file, and then open a new one.
+			 */
+			int boundary_offset = XLOG_SEG_SIZE - xlogoff;
 
-		/* XXX: callback after each write */
+			fprintf(stderr, "WAL crossing file boundary - size would've been %i, difference %i\n", xlogoff + r - STREAMING_HEADER_SIZE, xlogoff + r - STREAMING_HEADER_SIZE - XLOG_SEG_SIZE);
+
+			/* Write the part that goes in the old file */
+			if (write(walfile, copybuf + STREAMING_HEADER_SIZE,
+					  boundary_offset) != boundary_offset)
+			{
+				fprintf(stderr, _("%s: could not write %u bytes to WAL file %s: %s\n"),
+						progname,
+						boundary_offset,
+						current_walfile_name,
+						strerror(errno));
+				return false;
+			}
+
+			/* Close and rotate the file */
+			fsync(walfile);
+			close(walfile);
+			walfile = -1;
+
+			/*
+			 * Move our current position forward, needed both for the callback
+			 * and to open the correct file on the next run.
+			 */
+			blockstart.xrecoff += boundary_offset;
+			if (segment_finish != NULL)
+			{
+				if (segment_finish(blockstart, timeline))
+					return true;
+			}
+
+			walfile = open_walfile(blockstart, timeline,
+								   basedir, current_walfile_name);
+			if (walfile == -1)
+				return false;
+
+			fprintf(stderr, "Remaining write: %i\n", r - STREAMING_HEADER_SIZE - boundary_offset);
+
+			/* Write the remaining portion */
+			if (write(walfile, copybuf + STREAMING_HEADER_SIZE + boundary_offset,
+					  r - STREAMING_HEADER_SIZE - boundary_offset)
+				!= r - STREAMING_HEADER_SIZE - boundary_offset)
+			{
+				fprintf(stderr, _("%s: could not write %u bytes to WAL file %s: %s\n"),
+						progname,
+						r - STREAMING_HEADER_SIZE - boundary_offset,
+						current_walfile_name,
+						strerror(errno));
+				return false;
+			}
+		}
+		else
+		{
+			/*
+			 * Data fits within current file, so just append it
+			 */
+			if (write(walfile, copybuf + STREAMING_HEADER_SIZE,
+					  r - STREAMING_HEADER_SIZE) != r - STREAMING_HEADER_SIZE)
+			{
+				fprintf(stderr, _("%s: could not write %u bytes to WAL file %s: %s\n"),
+						progname,
+						r - STREAMING_HEADER_SIZE,
+						current_walfile_name,
+						strerror(errno));
+				return false;
+			}
+		}
 
 		/* Check if we are at the end of a segment */
 		if (lseek(walfile, 0, SEEK_CUR) == XLOG_SEG_SIZE)
@@ -176,10 +238,6 @@ ReceiveXlogStream(PGconn *conn, XLogRecPtr startpos, uint32 timeline, char *base
 				 * Callback when the segment finished, and return if it told
 				 * us to.
 				 *
-				 * A block in the wal stream can never cross a segment
-				 * boundary, so we can safely just add the current block size
-				 * to the offset, so the xlog pointer points to what we have
-				 * actually written.
 				 */
 				blockstart.xrecoff += r - STREAMING_HEADER_SIZE;
 				if (segment_finish(blockstart, timeline))
