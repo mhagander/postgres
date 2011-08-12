@@ -55,8 +55,7 @@ open_walfile(XLogRecPtr startpoint, uint32 timeline, char *basedir, char *namebu
 /*
  * Receive a log stream starting at the specified position.
  *
- * Note: The log position *must* be at a log segment change, or we will
- * end up streaming an incomplete file.
+ * Note: The log position *must* be at a log segment start!
  */
 bool
 ReceiveXlogStream(PGconn *conn, XLogRecPtr startpos, uint32 timeline, char *basedir, segment_finish_callback segment_finish)
