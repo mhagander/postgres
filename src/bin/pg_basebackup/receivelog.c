@@ -112,7 +112,7 @@ ReceiveXlogStream(PGconn *conn, XLogRecPtr startpos, uint32 timeline, char *base
 		}
 		if (copybuf[0] != 'w')
 		{
-			fprintf(stderr, _("%s: streaming header corrupt: \"%c\"\n"),
+			fprintf(stderr, _("%s: unrecognized streaming header: \"%c\"\n"),
 					progname, copybuf[0]);
 			return false;
 		}
