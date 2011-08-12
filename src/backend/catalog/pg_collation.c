@@ -26,6 +26,7 @@
 #include "mb/pg_wchar.h"
 #include "utils/builtins.h"
 #include "utils/fmgroids.h"
+#include "utils/rel.h"
 #include "utils/syscache.h"
 #include "utils/tqual.h"
 
@@ -131,7 +132,7 @@ CollationCreate(const char *collname, Oid collnamespace,
 							collowner);
 
 	/* dependency on extension */
-	recordDependencyOnCurrentExtension(&myself);
+	recordDependencyOnCurrentExtension(&myself, false);
 
 	/* Post creation hook for new collation */
 	InvokeObjectAccessHook(OAT_POST_CREATE,

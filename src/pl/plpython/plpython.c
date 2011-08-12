@@ -6,6 +6,56 @@
  *********************************************************************
  */
 
+#include "postgres.h"
+
+/* system stuff */
+#include <unistd.h>
+#include <fcntl.h>
+
+/* postgreSQL stuff */
+#include "catalog/pg_proc.h"
+#include "catalog/pg_type.h"
+#include "commands/trigger.h"
+#include "executor/spi.h"
+#include "funcapi.h"
+#include "fmgr.h"
+#include "mb/pg_wchar.h"
+#include "miscadmin.h"
+#include "nodes/makefuncs.h"
+#include "parser/parse_type.h"
+#include "tcop/tcopprot.h"
+#include "access/transam.h"
+#include "access/xact.h"
+#include "utils/builtins.h"
+#include "utils/hsearch.h"
+#include "utils/lsyscache.h"
+#include "utils/memutils.h"
+#include "utils/rel.h"
+#include "utils/syscache.h"
+#include "utils/typcache.h"
+
+/*
+ * Undefine some things that get (re)defined in the
+ * Python headers. They aren't used below and we've
+ * already included all the headers we need, so this
+ * should be pretty safe.
+ */
+
+#undef _POSIX_C_SOURCE
+#undef _XOPEN_SOURCE
+#undef HAVE_STRERROR
+#undef HAVE_TZNAME
+
+/*
+ * Sometimes python carefully scribbles on our *printf macros.
+ * So we undefine them here and redefine them after it's done its dirty deed.
+ */
+
+#ifdef USE_REPL_SNPRINTF
+#undef snprintf
+#undef vsnprintf
+#endif
+
 #if defined(_MSC_VER) && defined(_DEBUG)
 /* Python uses #pragma to bring in a non-default libpython on VC++ if
  * _DEBUG is defined */
@@ -84,39 +134,29 @@ typedef int Py_ssize_t;
 		PyObject_HEAD_INIT(type) size,
 #endif
 
-#include "postgres.h"
-
-/* system stuff */
-#include <unistd.h>
-#include <fcntl.h>
-
-/* postgreSQL stuff */
-#include "catalog/pg_proc.h"
-#include "catalog/pg_type.h"
-#include "commands/trigger.h"
-#include "executor/spi.h"
-#include "funcapi.h"
-#include "fmgr.h"
-#include "mb/pg_wchar.h"
-#include "miscadmin.h"
-#include "nodes/makefuncs.h"
-#include "parser/parse_type.h"
-#include "tcop/tcopprot.h"
-#include "access/transam.h"
-#include "access/xact.h"
-#include "utils/builtins.h"
-#include "utils/hsearch.h"
-#include "utils/lsyscache.h"
-#include "utils/memutils.h"
-#include "utils/syscache.h"
-#include "utils/typcache.h"
-
 /* define our text domain for translations */
 #undef TEXTDOMAIN
 #define TEXTDOMAIN PG_TEXTDOMAIN("plpython")
 
 #include <compile.h>
 #include <eval.h>
+
+/* put back our snprintf and vsnprintf */
+#ifdef USE_REPL_SNPRINTF
+#ifdef snprintf
+#undef snprintf
+#endif
+#ifdef vsnprintf
+#undef vsnprintf
+#endif
+#ifdef __GNUC__
+#define vsnprintf(...)  pg_vsnprintf(__VA_ARGS__)
+#define snprintf(...)   pg_snprintf(__VA_ARGS__)
+#else
+#define vsnprintf               pg_vsnprintf
+#define snprintf                pg_snprintf
+#endif   /* __GNUC__ */
+#endif   /* USE_REPL_SNPRINTF */
 
 PG_MODULE_MAGIC;
 
@@ -324,14 +364,14 @@ static void PLy_init_plpy(void);
 /* call PyErr_SetString with a vprint interface and translation support */
 static void
 PLy_exception_set(PyObject *, const char *,...)
-__attribute__((format(printf, 2, 3)));
+__attribute__((format(PG_PRINTF_ATTRIBUTE, 2, 3)));
 
 /* same, with pluralized message */
 static void
 PLy_exception_set_plural(PyObject *, const char *, const char *,
 						 unsigned long n,...)
-__attribute__((format(printf, 2, 5)))
-__attribute__((format(printf, 3, 5)));
+__attribute__((format(PG_PRINTF_ATTRIBUTE, 2, 5)))
+__attribute__((format(PG_PRINTF_ATTRIBUTE, 3, 5)));
 
 /* like PLy_exception_set, but conserve more fields from ErrorData */
 static void PLy_spi_exception_set(PyObject *excclass, ErrorData *edata);
@@ -342,7 +382,7 @@ static char *PLy_procedure_name(PLyProcedure *);
 /* some utility functions */
 static void
 PLy_elog(int, const char *,...)
-__attribute__((format(printf, 2, 3)));
+__attribute__((format(PG_PRINTF_ATTRIBUTE, 2, 3)));
 static void PLy_get_spi_error_data(PyObject *exc, char **detail, char **hint, char **query, int *position);
 static void PLy_traceback(char **, char **, int *);
 
@@ -3937,7 +3977,7 @@ PLy_add_exceptions(PyObject *plpy)
 	excmod = PyModule_Create(&PLy_exc_module);
 #endif
 	if (PyModule_AddObject(plpy, "spiexceptions", excmod) < 0)
-		PLy_elog(ERROR, "failed to add the spiexceptions module");
+		PLy_elog(ERROR, "could not add the spiexceptions module");
 
 /*
  * XXX it appears that in some circumstances the reference count of the
@@ -4434,8 +4474,8 @@ PLy_elog(int elevel, const char *fmt,...)
 	PG_TRY();
 	{
 		ereport(elevel,
-				(errmsg("%s", primary ? primary : "no exception data"),
-				 (detail) ? errdetail("%s", detail) : 0,
+				(errmsg_internal("%s", primary ? primary : "no exception data"),
+				 (detail) ? errdetail_internal("%s", detail) : 0,
 				 (tb_depth > 0 && tbmsg) ? errcontext("%s", tbmsg) : 0,
 				 (hint) ? errhint("%s", hint) : 0,
 				 (query) ? internalerrquery(query) : 0,
@@ -4512,8 +4552,8 @@ get_source_line(const char *src, int lineno)
 
 	/*
 	 * Sanity check, next < s if the line was all-whitespace, which should
-	 * never happen if Python reported a frame created on that line, but
-	 * check anyway.
+	 * never happen if Python reported a frame created on that line, but check
+	 * anyway.
 	 */
 	if (next < s)
 		return NULL;
@@ -4680,7 +4720,10 @@ PLy_traceback(char **xmsg, char **tbmsg, int *tb_depth)
 					&tbstr, "\n  PL/Python function \"%s\", line %ld, in %s",
 								 proname, plain_lineno - 1, fname);
 
-			/* function code object was compiled with "<string>" as the filename */
+			/*
+			 * function code object was compiled with "<string>" as the
+			 * filename
+			 */
 			if (PLy_curr_procedure && plain_filename != NULL &&
 				strcmp(plain_filename, "<string>") == 0)
 			{

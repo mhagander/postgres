@@ -1,9 +1,10 @@
 /*-------------------------------------------------------------------------
  *
  * win32_latch.c
- *	  Windows implementation of latches.
+ *	  Routines for inter-process latches
  *
- * See unix_latch.c for information on usage.
+ * See unix_latch.c for header comments for the exported functions;
+ * the API presented here is supposed to be the same as there.
  *
  * The Windows implementation uses Windows events that are inherited by
  * all postmaster child processes.
@@ -23,7 +24,7 @@
 #include <unistd.h>
 
 #include "miscadmin.h"
-#include "replication/walsender.h"
+#include "postmaster/postmaster.h"
 #include "storage/latch.h"
 #include "storage/shmem.h"
 
@@ -81,43 +82,66 @@ DisownLatch(volatile Latch *latch)
 	latch->owner_pid = 0;
 }
 
-bool
-WaitLatch(volatile Latch *latch, long timeout)
+int
+WaitLatch(volatile Latch *latch, int wakeEvents, long timeout)
 {
-	return WaitLatchOrSocket(latch, PGINVALID_SOCKET, false, false, timeout) > 0;
+	return WaitLatchOrSocket(latch, wakeEvents, PGINVALID_SOCKET, timeout);
 }
 
 int
-WaitLatchOrSocket(volatile Latch *latch, SOCKET sock, bool forRead,
-				  bool forWrite, long timeout)
+WaitLatchOrSocket(volatile Latch *latch, int wakeEvents, pgsocket sock,
+				  long timeout)
 {
 	DWORD		rc;
-	HANDLE		events[3];
+	HANDLE		events[4];
 	HANDLE		latchevent;
-	HANDLE		sockevent = WSA_INVALID_EVENT; /* silence compiler */
+	HANDLE		sockevent = WSA_INVALID_EVENT;
 	int			numevents;
 	int			result = 0;
+	int			pmdeath_eventno = 0;
 
+	/* Ignore WL_SOCKET_* events if no valid socket is given */
+	if (sock == PGINVALID_SOCKET)
+		wakeEvents &= ~(WL_SOCKET_READABLE | WL_SOCKET_WRITEABLE);
+
+	Assert(wakeEvents != 0);	/* must have at least one wake event */
+
+	if ((wakeEvents & WL_LATCH_SET) && latch->owner_pid != MyProcPid)
+		elog(ERROR, "cannot wait on a latch owned by another process");
+
+	/* Convert timeout to form used by WaitForMultipleObjects() */
+	if (wakeEvents & WL_TIMEOUT)
+		Assert(timeout >= 0);
+	else
+		timeout = INFINITE;
+
+	/* Construct an array of event handles for WaitforMultipleObjects() */
 	latchevent = latch->event;
 
 	events[0] = latchevent;
 	events[1] = pgwin32_signal_event;
 	numevents = 2;
-	if (sock != PGINVALID_SOCKET && (forRead || forWrite))
+	if ((wakeEvents & WL_SOCKET_READABLE) ||
+		(wakeEvents & WL_SOCKET_WRITEABLE))
 	{
 		int			flags = 0;
 
-		if (forRead)
+		if (wakeEvents & WL_SOCKET_READABLE)
 			flags |= FD_READ;
-		if (forWrite)
+		if (wakeEvents & WL_SOCKET_WRITEABLE)
 			flags |= FD_WRITE;
 
 		sockevent = WSACreateEvent();
 		WSAEventSelect(sock, sockevent, flags);
 		events[numevents++] = sockevent;
 	}
+	if (wakeEvents & WL_POSTMASTER_DEATH)
+	{
+		pmdeath_eventno = numevents;
+		events[numevents++] = PostmasterHandle;
+	}
 
-	for (;;)
+	do
 	{
 		/*
 		 * Reset the event, and check if the latch is set already. If someone
@@ -127,45 +151,64 @@ WaitLatchOrSocket(volatile Latch *latch, SOCKET sock, bool forRead,
 		 */
 		if (!ResetEvent(latchevent))
 			elog(ERROR, "ResetEvent failed: error code %d", (int) GetLastError());
-		if (latch->is_set)
+		if ((wakeEvents & WL_LATCH_SET) && latch->is_set)
 		{
-			result = 1;
+			result |= WL_LATCH_SET;
+			/*
+			 * Leave loop immediately, avoid blocking again. We don't attempt
+			 * to report any other events that might also be satisfied.
+			 */
 			break;
 		}
 
-		rc = WaitForMultipleObjects(numevents, events, FALSE,
-							   (timeout >= 0) ? (timeout / 1000) : INFINITE);
+		rc = WaitForMultipleObjects(numevents, events, FALSE, timeout);
+
 		if (rc == WAIT_FAILED)
 			elog(ERROR, "WaitForMultipleObjects() failed: error code %d", (int) GetLastError());
-		else if (rc == WAIT_TIMEOUT)
-		{
-			result = 0;
-			break;
-		}
+
+		/* Participate in Windows signal emulation */
 		else if (rc == WAIT_OBJECT_0 + 1)
 			pgwin32_dispatch_queued_signals();
-		else if (rc == WAIT_OBJECT_0 + 2)
+
+		else if (rc == WAIT_TIMEOUT)
+		{
+			result |= WL_TIMEOUT;
+		}
+		else if ((wakeEvents & WL_POSTMASTER_DEATH) &&
+				 rc == WAIT_OBJECT_0 + pmdeath_eventno)
+		{
+			/* Postmaster died */
+			result |= WL_POSTMASTER_DEATH;
+		}
+		else if ((wakeEvents & (WL_SOCKET_READABLE | WL_SOCKET_WRITEABLE)) &&
+				 rc == WAIT_OBJECT_0 + 2)	/* socket is at event slot 2 */
 		{
 			WSANETWORKEVENTS resEvents;
-
-			Assert(sock != PGINVALID_SOCKET);
 
 			ZeroMemory(&resEvents, sizeof(resEvents));
 			if (WSAEnumNetworkEvents(sock, sockevent, &resEvents) == SOCKET_ERROR)
 				ereport(FATAL,
-						(errmsg_internal("failed to enumerate network events: %i", (int) GetLastError())));
+						(errmsg_internal("failed to enumerate network events: %d", (int) GetLastError())));
 
-			if ((forRead && resEvents.lNetworkEvents & FD_READ) ||
-				(forWrite && resEvents.lNetworkEvents & FD_WRITE))
-				result = 2;
-			break;
+			if ((wakeEvents & WL_SOCKET_READABLE) &&
+				(resEvents.lNetworkEvents & FD_READ))
+			{
+				result |= WL_SOCKET_READABLE;
+			}
+			if ((wakeEvents & WL_SOCKET_WRITEABLE) &&
+				(resEvents.lNetworkEvents & FD_WRITE))
+			{
+				result |= WL_SOCKET_WRITEABLE;
+			}
 		}
+		/* Otherwise it must be the latch event */
 		else if (rc != WAIT_OBJECT_0)
 			elog(ERROR, "unexpected return code from WaitForMultipleObjects(): %d", (int) rc);
 	}
+	while (result == 0);
 
 	/* Clean up the handle we created for the socket */
-	if (sock != PGINVALID_SOCKET && (forRead || forWrite))
+	if (sockevent != WSA_INVALID_EVENT)
 	{
 		WSAEventSelect(sock, sockevent, 0);
 		WSACloseEvent(sockevent);
@@ -187,15 +230,10 @@ SetLatch(volatile Latch *latch)
 
 	/*
 	 * See if anyone's waiting for the latch. It can be the current process if
-	 * we're in a signal handler. Use a local variable here in case the latch
-	 * is just disowned between the test and the SetEvent call, and event
-	 * field set to NULL.
+	 * we're in a signal handler.
 	 *
-	 * Fetch handle field only once, in case the owner simultaneously disowns
-	 * the latch and clears handle. This assumes that HANDLE is atomic, which
-	 * isn't guaranteed to be true! In practice, it should be, and in the
-	 * worst case we end up calling SetEvent with a bogus handle, and SetEvent
-	 * will return an error with no harm done.
+	 * Use a local variable here just in case somebody changes the event field
+	 * concurrently (which really should not happen).
 	 */
 	handle = latch->event;
 	if (handle)
@@ -212,5 +250,8 @@ SetLatch(volatile Latch *latch)
 void
 ResetLatch(volatile Latch *latch)
 {
+	/* Only the owner should reset the latch */
+	Assert(latch->owner_pid == MyProcPid);
+
 	latch->is_set = false;
 }

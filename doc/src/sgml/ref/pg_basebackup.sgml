@@ -59,7 +59,7 @@ PostgreSQL documentation
   </para>
 
   <para>
-   There can be multiple pg_basebackups running at the same time, but it is
+   There can be multiple <command>pg_basebackup</command>s running at the same time, but it is
    better from a performance point of view to take only one backup, and copy
    the result.
   </para>
@@ -127,7 +127,7 @@ PostgreSQL documentation
             Write the output as tar files in the target directory. The main
             data directory will be written to a file named
             <filename>base.tar</filename>, and all other tablespaces will
-            be named after the tablespace oid.
+            be named after the tablespace OID.
             </para>
            <para>
             If the value <literal>-</literal> (dash) is specified as
@@ -138,8 +138,7 @@ PostgreSQL documentation
            </para>
            </listitem>
          </varlistentry>
-        </variablelist>
-       </para>
+        </variablelist></para>
       </listitem>
      </varlistentry>
 
@@ -196,13 +195,26 @@ PostgreSQL documentation
      </varlistentry>
 
      <varlistentry>
+      <term><option>-z</option></term>
+      <term><option>--gzip</option></term>
+      <listitem>
+       <para>
+        Enables gzip compression of tar file output, with the default
+        compression level. Compression is only available when using
+        the tar format.
+       </para>
+      </listitem>
+     </varlistentry>
+
+     <varlistentry>
       <term><option>-Z <replaceable class="parameter">level</replaceable></option></term>
       <term><option>--compress=<replaceable class="parameter">level</replaceable></option></term>
       <listitem>
        <para>
-        Enables gzip compression of tar file output. Compression is only
-        available when generating tar files, and is not available when sending
-        output to standard output.
+        Enables gzip compression of tar file output, and specifies the
+        compression level (1 through 9, 9 being best
+        compression). Compression is only available when using the tar
+        format.
        </para>
       </listitem>
      </varlistentry>
@@ -262,7 +274,7 @@ PostgreSQL documentation
       <listitem>
        <para>
         Enables verbose mode. Will output some extra steps during startup and
-        shutdown, as well as show the exact filename that is currently being
+        shutdown, as well as show the exact file name that is currently being
         processed if progress reporting is also enabled.
        </para>
       </listitem>
@@ -415,28 +427,28 @@ PostgreSQL documentation
    To create a base backup of the server at <literal>mydbserver</literal>
    and store it in the local directory
    <filename>/usr/local/pgsql/data</filename>:
-   <screen>
-    <prompt>$</prompt> <userinput>pg_basebackup -h mydbserver -D /usr/local/pgsql/data</userinput>
-   </screen>
+<screen>
+<prompt>$</prompt> <userinput>pg_basebackup -h mydbserver -D /usr/local/pgsql/data</userinput>
+</screen>
   </para>
 
   <para>
-   To create a backup of the local server with one maximum compressed
+   To create a backup of the local server with one compressed
    tar file for each tablespace, and store it in the directory
    <filename>backup</filename>, showing a progress report while running:
-   <screen>
-    <prompt>$</prompt> <userinput>pg_basebackup -D backup -Ft -Z9 -P</userinput>
-   </screen>
+<screen>
+<prompt>$</prompt> <userinput>pg_basebackup -D backup -Ft -z -P</userinput>
+</screen>
   </para>
 
   <para>
    To create a backup of a single-tablespace local database and compress
    this with <productname>bzip2</productname>:
-   <screen>
-    <prompt>$</prompt> <userinput>pg_basebackup -D - -Ft | bzip2 &gt; backup.tar.bz2</userinput>
-   </screen>
-   (this command will fail if there are multiple tablespaces in the
-   database)
+<screen>
+<prompt>$</prompt> <userinput>pg_basebackup -D - -Ft | bzip2 &gt; backup.tar.bz2</userinput>
+</screen>
+   (This command will fail if there are multiple tablespaces in the
+   database.)
   </para>
  </refsect1>
 

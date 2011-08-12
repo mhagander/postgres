@@ -324,7 +324,7 @@ CheckMyDatabase(const char *name, bool am_superuser)
 					PGC_INTERNAL, PGC_S_OVERRIDE);
 	/* If we have no other source of client_encoding, use server encoding */
 	SetConfigOption("client_encoding", GetDatabaseEncodingName(),
-					PGC_BACKEND, PGC_S_DEFAULT);
+					PGC_BACKEND, PGC_S_DYNAMIC_DEFAULT);
 
 	/* assign locale variables */
 	collate = NameStr(dbform->datcollate);
@@ -489,7 +489,7 @@ InitPostgres(const char *in_dbname, Oid dboid, const char *username,
 	SharedInvalBackendInit(false);
 
 	if (MyBackendId > MaxBackends || MyBackendId <= 0)
-		elog(FATAL, "bad backend id: %d", MyBackendId);
+		elog(FATAL, "bad backend ID: %d", MyBackendId);
 
 	/* Now that we have a BackendId, we can participate in ProcSignal */
 	ProcSignalInit(MyBackendId);
@@ -630,9 +630,9 @@ InitPostgres(const char *in_dbname, Oid dboid, const char *username,
 	 */
 	if (IsBinaryUpgrade && !am_superuser)
 	{
-			ereport(FATAL,
-					(errcode(ERRCODE_INSUFFICIENT_PRIVILEGE),
-			errmsg("must be superuser to connect in binary upgrade mode")));
+		ereport(FATAL,
+				(errcode(ERRCODE_INSUFFICIENT_PRIVILEGE),
+			 errmsg("must be superuser to connect in binary upgrade mode")));
 	}
 
 	/*

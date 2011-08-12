@@ -302,7 +302,7 @@ exec_command(const char *cmd,
 		char	   *host = PQhost(pset.db);
 
 		if (db == NULL)
-			printf(_("You are not connected.\n"));
+			printf(_("You are currently not connected to a database.\n"));
 		else
 		{
 			if (host == NULL)
@@ -378,10 +378,10 @@ exec_command(const char *cmd,
 				success = describeTablespaces(pattern, show_verbose);
 				break;
 			case 'c':
-				success = listConversions(pattern, show_system);
+				success = listConversions(pattern, show_verbose, show_system);
 				break;
 			case 'C':
-				success = listCasts(pattern);
+				success = listCasts(pattern, show_verbose);
 				break;
 			case 'd':
 				if (strncmp(cmd, "ddp", 3) == 0)
@@ -390,7 +390,7 @@ exec_command(const char *cmd,
 					success = objectDescription(pattern, show_system);
 				break;
 			case 'D':
-				success = listDomains(pattern, show_system);
+				success = listDomains(pattern, show_verbose, show_system);
 				break;
 			case 'f':			/* function subsystem */
 				switch (cmd[2])
@@ -784,8 +784,9 @@ exec_command(const char *cmd,
 	}
 
 
-	/* \i is include file */
-	else if (strcmp(cmd, "i") == 0 || strcmp(cmd, "include") == 0)
+	/* \i and \ir include files */
+	else if (strcmp(cmd, "i") == 0 || strcmp(cmd, "include") == 0
+			|| strcmp(cmd, "ir") == 0 || strcmp(cmd, "include_relative") == 0)
 	{
 		char	   *fname = psql_scan_slash_option(scan_state,
 												   OT_NORMAL, NULL, true);
@@ -797,8 +798,12 @@ exec_command(const char *cmd,
 		}
 		else
 		{
+			bool	include_relative;
+
+			include_relative = (strcmp(cmd, "ir") == 0
+								|| strcmp(cmd, "include_relative") == 0);
 			expand_tilde(&fname);
-			success = (process_file(fname, false) == EXIT_SUCCESS);
+			success = (process_file(fname, false, include_relative) == EXIT_SUCCESS);
 			free(fname);
 		}
 	}
@@ -1658,7 +1663,7 @@ printSSLInfo(void)
 		return;					/* no SSL */
 
 	SSL_get_cipher_bits(ssl, &sslbits);
-	printf(_("SSL connection (cipher: %s, bits: %i)\n"),
+	printf(_("SSL connection (cipher: %s, bits: %d)\n"),
 		   SSL_get_cipher(ssl), sslbits);
 #else
 
@@ -1748,7 +1753,7 @@ static bool
 editFile(const char *fname, int lineno)
 {
 	const char *editorName;
-	const char *editor_lineno_switch = NULL;
+	const char *editor_lineno_arg = NULL;
 	char	   *sys;
 	int			result;
 
@@ -1763,14 +1768,17 @@ editFile(const char *fname, int lineno)
 	if (!editorName)
 		editorName = DEFAULT_EDITOR;
 
-	/* Get line number switch, if we need it. */
+	/* Get line number argument, if we need it. */
 	if (lineno > 0)
 	{
-		editor_lineno_switch = GetVariable(pset.vars,
-										   "EDITOR_LINENUMBER_SWITCH");
-		if (editor_lineno_switch == NULL)
+		editor_lineno_arg = getenv("PSQL_EDITOR_LINENUMBER_ARG");
+#ifdef DEFAULT_EDITOR_LINENUMBER_ARG
+		if (!editor_lineno_arg)
+			editor_lineno_arg = DEFAULT_EDITOR_LINENUMBER_ARG;
+#endif
+		if (!editor_lineno_arg)
 		{
-			psql_error("EDITOR_LINENUMBER_SWITCH variable must be set to specify a line number\n");
+			psql_error("environment variable PSQL_EDITOR_LINENUMBER_ARG must be set to specify a line number\n");
 			return false;
 		}
 	}
@@ -1778,7 +1786,7 @@ editFile(const char *fname, int lineno)
 	/* Allocate sufficient memory for command line. */
 	if (lineno > 0)
 		sys = pg_malloc(strlen(editorName)
-						+ strlen(editor_lineno_switch) + 10		/* for integer */
+						+ strlen(editor_lineno_arg) + 10		/* for integer */
 						+ 1 + strlen(fname) + 10 + 1);
 	else
 		sys = pg_malloc(strlen(editorName) + strlen(fname) + 10 + 1);
@@ -1793,14 +1801,14 @@ editFile(const char *fname, int lineno)
 #ifndef WIN32
 	if (lineno > 0)
 		sprintf(sys, "exec %s %s%d '%s'",
-				editorName, editor_lineno_switch, lineno, fname);
+				editorName, editor_lineno_arg, lineno, fname);
 	else
 		sprintf(sys, "exec %s '%s'",
 				editorName, fname);
 #else
 	if (lineno > 0)
 		sprintf(sys, SYSTEMQUOTE "\"%s\" %s%d \"%s\"" SYSTEMQUOTE,
-				editorName, editor_lineno_switch, lineno, fname);
+				editorName, editor_lineno_arg, lineno, fname);
 	else
 		sprintf(sys, SYSTEMQUOTE "\"%s\" \"%s\"" SYSTEMQUOTE,
 				editorName, fname);
@@ -1847,7 +1855,7 @@ do_edit(const char *filename_arg, PQExpBuffer query_buf,
 		ret = GetTempPath(MAXPGPATH, tmpdir);
 		if (ret == 0 || ret > MAXPGPATH)
 		{
-			psql_error("cannot locate temporary directory: %s",
+			psql_error("could not locate temporary directory: %s\n",
 					   !ret ? strerror(errno) : "");
 			return false;
 		}
@@ -1969,15 +1977,19 @@ do_edit(const char *filename_arg, PQExpBuffer query_buf,
  * process_file
  *
  * Read commands from filename and then them to the main processing loop
- * Handler for \i, but can be used for other things as well.  Returns
+ * Handler for \i and \ir, but can be used for other things as well.  Returns
  * MainLoop() error code.
+ *
+ * If use_relative_path is true and filename is not an absolute path, then open
+ * the file from where the currently processed file (if any) is located.
  */
 int
-process_file(char *filename, bool single_txn)
+process_file(char *filename, bool single_txn, bool use_relative_path)
 {
 	FILE	   *fd;
 	int			result;
 	char	   *oldfilename;
+	char		relpath[MAXPGPATH];
 	PGresult   *res;
 
 	if (!filename)
@@ -1986,6 +1998,24 @@ process_file(char *filename, bool single_txn)
 	if (strcmp(filename, "-") != 0)
 	{
 		canonicalize_path(filename);
+
+		/*
+		 * If we were asked to resolve the pathname relative to the location
+		 * of the currently executing script, and there is one, and this is
+		 * a relative pathname, then prepend all but the last pathname
+		 * component of the current script to this pathname.
+		 */
+		if (use_relative_path && pset.inputfile && !is_absolute_path(filename)
+			&& !has_drive_prefix(filename))
+		{
+			snprintf(relpath, MAXPGPATH, "%s", pset.inputfile);
+			get_parent_directory(relpath);
+			join_path_components(relpath, relpath, filename);
+			canonicalize_path(relpath);
+
+			filename = relpath;
+		}
+
 		fd = fopen(filename, PG_BINARY_R);
 	}
 	else

@@ -59,7 +59,7 @@
 #include "utils/acl.h"
 #include "utils/builtins.h"
 #include "utils/lsyscache.h"
-#include "utils/relcache.h"
+#include "utils/rel.h"
 #include "utils/syscache.h"
 #include "utils/typcache.h"
 
@@ -157,11 +157,12 @@ transformCreateStmt(CreateStmt *stmt, const char *queryString)
 	stmt = (CreateStmt *) copyObject(stmt);
 
 	/*
-	 * Look up the creation namespace.  This also checks permissions on the
+	 * Look up the creation namespace.	This also checks permissions on the
 	 * target namespace, so that we throw any permissions error as early as
 	 * possible.
 	 */
 	namespaceid = RangeVarGetAndCheckCreationNamespace(stmt->relation);
+	RangeVarAdjustRelationPersistence(stmt->relation, namespaceid);
 
 	/*
 	 * If the relation already exists and the user specified "IF NOT EXISTS",
@@ -169,7 +170,7 @@ transformCreateStmt(CreateStmt *stmt, const char *queryString)
 	 */
 	if (stmt->if_not_exists)
 	{
-		Oid		existing_relid;
+		Oid			existing_relid;
 
 		existing_relid = get_relname_relid(stmt->relation->relname,
 										   namespaceid);
@@ -178,7 +179,7 @@ transformCreateStmt(CreateStmt *stmt, const char *queryString)
 			ereport(NOTICE,
 					(errcode(ERRCODE_DUPLICATE_TABLE),
 					 errmsg("relation \"%s\" already exists, skipping",
-						 stmt->relation->relname)));
+							stmt->relation->relname)));
 			return NIL;
 		}
 	}
@@ -307,7 +308,14 @@ transformColumnDefinition(CreateStmtContext *cxt, ColumnDef *column)
 	{
 		char	   *typname = strVal(linitial(column->typeName->names));
 
-		if (strcmp(typname, "serial") == 0 ||
+		if (strcmp(typname, "smallserial") == 0 ||
+			strcmp(typname, "serial2") == 0)
+		{
+			is_serial = true;
+			column->typeName->names = NIL;
+			column->typeName->typeOid = INT2OID;
+		}
+		else if (strcmp(typname, "serial") == 0 ||
 			strcmp(typname, "serial4") == 0)
 		{
 			is_serial = true;
@@ -367,7 +375,10 @@ transformColumnDefinition(CreateStmtContext *cxt, ColumnDef *column)
 		if (cxt->rel)
 			snamespaceid = RelationGetNamespace(cxt->rel);
 		else
+		{
 			snamespaceid = RangeVarGetCreationNamespace(cxt->relation);
+			RangeVarAdjustRelationPersistence(cxt->relation, snamespaceid);
+		}
 		snamespace = get_namespace_name(snamespaceid);
 		sname = ChooseRelationName(cxt->relation->relname,
 								   column->colname,
@@ -547,6 +558,31 @@ transformColumnDefinition(CreateStmtContext *cxt, ColumnDef *column)
 					 constraint->contype);
 				break;
 		}
+	}
+
+	/*
+	 * Generate ALTER FOREIGN TABLE ALTER COLUMN statement which adds 
+	 * per-column foreign data wrapper options for this column.
+	 */
+	if (column->fdwoptions != NIL)
+	{
+		AlterTableStmt *stmt;
+		AlterTableCmd  *cmd;
+
+		cmd = makeNode(AlterTableCmd);
+		cmd->subtype = AT_AlterColumnGenericOptions;
+		cmd->name = column->colname;
+		cmd->def = (Node *) column->fdwoptions;
+		cmd->behavior = DROP_RESTRICT;
+		cmd->missing_ok = false;
+
+		stmt = makeNode(AlterTableStmt);
+		stmt->relation = cxt->relation;
+		stmt->cmds = NIL;
+		stmt->relkind = OBJECT_FOREIGN_TABLE;
+		stmt->cmds = lappend(stmt->cmds, cmd);
+
+		cxt->alist = lappend(cxt->alist, stmt);
 	}
 }
 
@@ -845,7 +881,6 @@ static void
 transformOfType(CreateStmtContext *cxt, TypeName *ofTypename)
 {
 	HeapTuple	tuple;
-	Form_pg_type typ;
 	TupleDesc	tupdesc;
 	int			i;
 	Oid			ofTypeId;
@@ -854,7 +889,6 @@ transformOfType(CreateStmtContext *cxt, TypeName *ofTypename)
 
 	tuple = typenameType(NULL, ofTypename, NULL);
 	check_of_type(tuple);
-	typ = (Form_pg_type) GETSTRUCT(tuple);
 	ofTypeId = HeapTupleGetOid(tuple);
 	ofTypename->typeOid = ofTypeId;		/* cached for later */
 
@@ -1483,21 +1517,21 @@ transformIndexConstraint(Constraint *constraint, CreateStmtContext *cxt)
 			ereport(ERROR,
 					(errcode(ERRCODE_WRONG_OBJECT_TYPE),
 					 errmsg("\"%s\" is not a unique index", index_name),
-					 errdetail("Cannot create a PRIMARY KEY or UNIQUE constraint using such an index."),
+					 errdetail("Cannot create a primary key or unique constraint using such an index."),
 					 parser_errposition(cxt->pstate, constraint->location)));
 
 		if (RelationGetIndexExpressions(index_rel) != NIL)
 			ereport(ERROR,
 					(errcode(ERRCODE_WRONG_OBJECT_TYPE),
 					 errmsg("index \"%s\" contains expressions", index_name),
-					 errdetail("Cannot create a PRIMARY KEY or UNIQUE constraint using such an index."),
+					 errdetail("Cannot create a primary key or unique constraint using such an index."),
 					 parser_errposition(cxt->pstate, constraint->location)));
 
 		if (RelationGetIndexPredicate(index_rel) != NIL)
 			ereport(ERROR,
 					(errcode(ERRCODE_WRONG_OBJECT_TYPE),
 					 errmsg("\"%s\" is a partial index", index_name),
-					 errdetail("Cannot create a PRIMARY KEY or UNIQUE constraint using such an index."),
+					 errdetail("Cannot create a primary key or unique constraint using such an index."),
 					 parser_errposition(cxt->pstate, constraint->location)));
 
 		/*
@@ -1522,7 +1556,7 @@ transformIndexConstraint(Constraint *constraint, CreateStmtContext *cxt)
 		if (index_rel->rd_rel->relam != get_am_oid(DEFAULT_INDEX_TYPE, false))
 			ereport(ERROR,
 					(errcode(ERRCODE_WRONG_OBJECT_TYPE),
-					 errmsg("index \"%s\" is not a b-tree", index_name),
+					 errmsg("index \"%s\" is not a btree", index_name),
 					 parser_errposition(cxt->pstate, constraint->location)));
 
 		/* Must get indclass the hard way */
@@ -1567,7 +1601,7 @@ transformIndexConstraint(Constraint *constraint, CreateStmtContext *cxt)
 				ereport(ERROR,
 						(errcode(ERRCODE_WRONG_OBJECT_TYPE),
 						 errmsg("index \"%s\" does not have default sorting behavior", index_name),
-						 errdetail("Cannot create a PRIMARY KEY or UNIQUE constraint using such an index."),
+						 errdetail("Cannot create a primary key or unique constraint using such an index."),
 					 parser_errposition(cxt->pstate, constraint->location)));
 
 			constraint->keys = lappend(constraint->keys, makeString(attname));
@@ -1753,7 +1787,8 @@ transformFKConstraints(CreateStmtContext *cxt,
 
 	/*
 	 * If CREATE TABLE or adding a column with NULL default, we can safely
-	 * skip validation of the constraint.
+	 * skip validation of FK constraints, and nonetheless mark them valid.
+	 * (This will override any user-supplied NOT VALID flag.)
 	 */
 	if (skipValidation)
 	{
@@ -2412,8 +2447,8 @@ transformAlterTableStmt(AlterTableStmt *stmt, const char *queryString)
  * and detect inconsistent/misplaced constraint attributes.
  *
  * NOTE: currently, attributes are only supported for FOREIGN KEY, UNIQUE,
- * and PRIMARY KEY constraints, but someday they ought to be supported
- * for other constraint types.
+ * EXCLUSION, and PRIMARY KEY constraints, but someday they ought to be
+ * supported for other constraint types.
  */
 static void
 transformConstraintAttrs(CreateStmtContext *cxt, List *constraintList)
@@ -2544,8 +2579,8 @@ transformColumnType(CreateStmtContext *cxt, ColumnDef *column)
 		Form_pg_type typtup = (Form_pg_type) GETSTRUCT(ctype);
 
 		LookupCollation(cxt->pstate,
-								  column->collClause->collname,
-								  column->collClause->location);
+						column->collClause->collname,
+						column->collClause->location);
 		/* Complain if COLLATE is applied to an uncollatable type */
 		if (!OidIsValid(typtup->typcollation))
 			ereport(ERROR,

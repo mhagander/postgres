@@ -425,6 +425,8 @@ int			log_min_duration_statement = -1;
 int			log_temp_files = -1;
 int			trace_recovery_messages = LOG;
 
+int			temp_file_limit = -1;
+
 int			num_temp_buffers = 1024;
 
 char	   *data_directory;
@@ -502,6 +504,7 @@ const char *const GucContext_Names[] =
 const char *const GucSource_Names[] =
 {
 	 /* PGC_S_DEFAULT */ "default",
+	 /* PGC_S_DYNAMIC_DEFAULT */ "default",
 	 /* PGC_S_ENV_VAR */ "environment variable",
 	 /* PGC_S_FILE */ "configuration file",
 	 /* PGC_S_ARGV */ "command line",
@@ -534,6 +537,8 @@ const char *const config_group_names[] =
 	gettext_noop("Resource Usage"),
 	/* RESOURCES_MEM */
 	gettext_noop("Resource Usage / Memory"),
+	/* RESOURCES_DISK */
+	gettext_noop("Resource Usage / Disk"),
 	/* RESOURCES_KERNEL */
 	gettext_noop("Resource Usage / Kernel Resources"),
 	/* RESOURCES_VACUUM_DELAY */
@@ -550,10 +555,14 @@ const char *const config_group_names[] =
 	gettext_noop("Write-Ahead Log / Checkpoints"),
 	/* WAL_ARCHIVING */
 	gettext_noop("Write-Ahead Log / Archiving"),
-	/* WAL_REPLICATION */
-	gettext_noop("Write-Ahead Log / Streaming Replication"),
-	/* WAL_STANDBY_SERVERS */
-	gettext_noop("Write-Ahead Log / Standby Servers"),
+	/* REPLICATION */
+	gettext_noop("Replication"),
+	/* REPLICATION_SENDING */
+	gettext_noop("Replication / Sending Servers"),
+	/* REPLICATION_MASTER */
+	gettext_noop("Replication / Master Server"),
+	/* REPLICATION_STANDBY */
+	gettext_noop("Replication / Standby Servers"),
 	/* QUERY_TUNING */
 	gettext_noop("Query Tuning"),
 	/* QUERY_TUNING_METHOD */
@@ -824,16 +833,6 @@ static struct config_bool ConfigureNamesBool[] =
 		NULL, NULL, NULL
 	},
 	{
-		{"silent_mode", PGC_POSTMASTER, LOGGING_WHERE,
-			gettext_noop("Runs the server silently."),
-			gettext_noop("If this parameter is set, the server will automatically run in the "
-				 "background and any controlling terminals are dissociated.")
-		},
-		&SilentMode,
-		false,
-		NULL, NULL, NULL
-	},
-	{
 		{"log_checkpoints", PGC_SIGHUP, LOGGING_WHAT,
 			gettext_noop("Logs each checkpoint."),
 			NULL
@@ -886,7 +885,7 @@ static struct config_bool ConfigureNamesBool[] =
 	},
 	{
 		{"restart_after_crash", PGC_SIGHUP, ERROR_HANDLING_OPTIONS,
-			gettext_noop("Reinitialize after backend crash."),
+			gettext_noop("Reinitialize server after backend crash."),
 			NULL
 		},
 		&restart_after_crash,
@@ -1366,7 +1365,7 @@ static struct config_bool ConfigureNamesBool[] =
 	},
 
 	{
-		{"hot_standby", PGC_POSTMASTER, WAL_STANDBY_SERVERS,
+		{"hot_standby", PGC_POSTMASTER, REPLICATION_STANDBY,
 			gettext_noop("Allows connections and queries during recovery."),
 			NULL
 		},
@@ -1376,8 +1375,8 @@ static struct config_bool ConfigureNamesBool[] =
 	},
 
 	{
-		{"hot_standby_feedback", PGC_SIGHUP, WAL_STANDBY_SERVERS,
-			gettext_noop("Allows feedback from a hot standby primary that will avoid query conflicts."),
+		{"hot_standby_feedback", PGC_SIGHUP, REPLICATION_STANDBY,
+			gettext_noop("Allows feedback from a hot standby to the primary that will avoid query conflicts."),
 			NULL
 		},
 		&hot_standby_feedback,
@@ -1531,8 +1530,8 @@ static struct config_int ConfigureNamesInt[] =
 	},
 
 	{
-		/* This is PGC_SIGHUP so all backends have the same value. */
-		{"deadlock_timeout", PGC_SIGHUP, LOCK_MANAGEMENT,
+		/* This is PGC_SUSET to prevent hiding from log_lock_waits. */
+		{"deadlock_timeout", PGC_SUSET, LOCK_MANAGEMENT,
 			gettext_noop("Sets the time to wait on a lock before checking for deadlock."),
 			NULL,
 			GUC_UNIT_MS
@@ -1543,7 +1542,7 @@ static struct config_int ConfigureNamesInt[] =
 	},
 
 	{
-		{"max_standby_archive_delay", PGC_SIGHUP, WAL_STANDBY_SERVERS,
+		{"max_standby_archive_delay", PGC_SIGHUP, REPLICATION_STANDBY,
 			gettext_noop("Sets the maximum delay before canceling queries when a hot standby server is processing archived WAL data."),
 			NULL,
 			GUC_UNIT_MS
@@ -1554,7 +1553,7 @@ static struct config_int ConfigureNamesInt[] =
 	},
 
 	{
-		{"max_standby_streaming_delay", PGC_SIGHUP, WAL_STANDBY_SERVERS,
+		{"max_standby_streaming_delay", PGC_SIGHUP, REPLICATION_STANDBY,
 			gettext_noop("Sets the maximum delay before canceling queries when a hot standby server is processing streamed WAL data."),
 			NULL,
 			GUC_UNIT_MS
@@ -1565,8 +1564,8 @@ static struct config_int ConfigureNamesInt[] =
 	},
 
 	{
-		{"wal_receiver_status_interval", PGC_SIGHUP, WAL_STANDBY_SERVERS,
-			gettext_noop("Sets the maximum interval between WAL receiver status reports to the master."),
+		{"wal_receiver_status_interval", PGC_SIGHUP, REPLICATION_STANDBY,
+			gettext_noop("Sets the maximum interval between WAL receiver status reports to the primary."),
 			NULL,
 			GUC_UNIT_S
 		},
@@ -1698,6 +1697,17 @@ static struct config_int ConfigureNamesInt[] =
 		&max_stack_depth,
 		100, 100, MAX_KILOBYTES,
 		check_max_stack_depth, assign_max_stack_depth, NULL
+	},
+
+	{
+		{"temp_file_limit", PGC_SUSET, RESOURCES_DISK,
+			gettext_noop("Limits the total size of all temp files used by each session."),
+			gettext_noop("-1 means no limit."),
+			GUC_UNIT_KB
+		},
+		&temp_file_limit,
+		-1, -1, INT_MAX,
+		NULL, NULL, NULL
 	},
 
 	{
@@ -1850,7 +1860,7 @@ static struct config_int ConfigureNamesInt[] =
 	},
 
 	{
-		{"vacuum_defer_cleanup_age", PGC_SIGHUP, WAL_REPLICATION,
+		{"vacuum_defer_cleanup_age", PGC_SIGHUP, REPLICATION_MASTER,
 			gettext_noop("Number of transactions by which VACUUM and HOT cleanup should be deferred, if any."),
 			NULL
 		},
@@ -1910,7 +1920,7 @@ static struct config_int ConfigureNamesInt[] =
 	},
 
 	{
-		{"wal_keep_segments", PGC_SIGHUP, WAL_REPLICATION,
+		{"wal_keep_segments", PGC_SIGHUP, REPLICATION_SENDING,
 			gettext_noop("Sets the number of WAL files held for standby servers."),
 			NULL
 		},
@@ -1978,7 +1988,7 @@ static struct config_int ConfigureNamesInt[] =
 
 	{
 		/* see max_connections */
-		{"max_wal_senders", PGC_POSTMASTER, WAL_REPLICATION,
+		{"max_wal_senders", PGC_POSTMASTER, REPLICATION_SENDING,
 			gettext_noop("Sets the maximum number of simultaneously running WAL sender processes."),
 			NULL
 		},
@@ -1988,18 +1998,7 @@ static struct config_int ConfigureNamesInt[] =
 	},
 
 	{
-		{"wal_sender_delay", PGC_SIGHUP, WAL_REPLICATION,
-			gettext_noop("WAL sender sleep time between WAL replications."),
-			NULL,
-			GUC_UNIT_MS
-		},
-		&WalSndDelay,
-		1000, 1, 10000,
-		NULL, NULL, NULL
-	},
-
-	{
-		{"replication_timeout", PGC_SIGHUP, WAL_REPLICATION,
+		{"replication_timeout", PGC_SIGHUP, REPLICATION_SENDING,
 			gettext_noop("Sets the maximum time to wait for WAL replication."),
 			NULL,
 			GUC_UNIT_MS
@@ -2963,8 +2962,8 @@ static struct config_string ConfigureNamesString[] =
 	},
 
 	{
-		{"synchronous_standby_names", PGC_SIGHUP, WAL_REPLICATION,
-			gettext_noop("List of potential standby names to synchronise with."),
+		{"synchronous_standby_names", PGC_SIGHUP, REPLICATION_MASTER,
+			gettext_noop("List of names of potential synchronous standbys."),
 			NULL,
 			GUC_LIST_INPUT
 		},
@@ -3269,6 +3268,7 @@ static int	GUCNestLevel = 0;	/* 1 when in main transaction */
 
 static int	guc_var_compare(const void *a, const void *b);
 static int	guc_name_compare(const char *namea, const char *nameb);
+static void InitializeGUCOptionsFromEnvironment(void);
 static void InitializeOneGUCOption(struct config_generic * gconf);
 static void push_old_value(struct config_generic * gconf, GucAction action);
 static void ReportGUCOption(struct config_generic * record);
@@ -3812,8 +3812,6 @@ void
 InitializeGUCOptions(void)
 {
 	int			i;
-	char	   *env;
-	long		stack_rlimit;
 
 	/*
 	 * Before log_line_prefix could possibly receive a nonempty setting, make
@@ -3852,9 +3850,25 @@ InitializeGUCOptions(void)
 
 	/*
 	 * For historical reasons, some GUC parameters can receive defaults from
-	 * environment variables.  Process those settings.	NB: if you add or
-	 * remove anything here, see also ProcessConfigFile().
+	 * environment variables.  Process those settings.
 	 */
+	InitializeGUCOptionsFromEnvironment();
+}
+
+/*
+ * Assign any GUC values that can come from the server's environment.
+ *
+ * This is called from InitializeGUCOptions, and also from ProcessConfigFile
+ * to deal with the possibility that a setting has been removed from
+ * postgresql.conf and should now get a value from the environment.
+ * (The latter is a kludge that should probably go away someday; if so,
+ * fold this back into InitializeGUCOptions.)
+ */
+static void
+InitializeGUCOptionsFromEnvironment(void)
+{
+	char	   *env;
+	long		stack_rlimit;
 
 	env = getenv("PGPORT");
 	if (env != NULL)
@@ -5820,8 +5834,11 @@ SetConfigOption(const char *name, const char *value,
 
 
 /*
- * Fetch the current value of the option `name'. If the option doesn't exist,
- * throw an ereport and don't return.
+ * Fetch the current value of the option `name', as a string.
+ *
+ * If the option doesn't exist, return NULL if missing_ok is true (NOTE that
+ * this cannot be distinguished from a string variable with a NULL value!),
+ * otherwise throw an ereport and don't return.
  *
  * If restrict_superuser is true, we also enforce that only superusers can
  * see GUC_SUPERUSER_ONLY variables.  This should only be passed as true
@@ -5831,16 +5848,21 @@ SetConfigOption(const char *name, const char *value,
  * valid until the next call to configuration related functions.
  */
 const char *
-GetConfigOption(const char *name, bool restrict_superuser)
+GetConfigOption(const char *name, bool missing_ok, bool restrict_superuser)
 {
 	struct config_generic *record;
 	static char buffer[256];
 
 	record = find_option(name, false, ERROR);
 	if (record == NULL)
+	{
+		if (missing_ok)
+			return NULL;
 		ereport(ERROR,
 				(errcode(ERRCODE_UNDEFINED_OBJECT),
-			   errmsg("unrecognized configuration parameter \"%s\"", name)));
+				 errmsg("unrecognized configuration parameter \"%s\"",
+						name)));
+	}
 	if (restrict_superuser &&
 		(record->flags & GUC_SUPERUSER_ONLY) &&
 		!superuser())
@@ -6334,6 +6356,7 @@ define_custom_variable(struct config_generic * variable)
 	switch (pHolder->gen.source)
 	{
 		case PGC_S_DEFAULT:
+		case PGC_S_DYNAMIC_DEFAULT:
 		case PGC_S_ENV_VAR:
 		case PGC_S_FILE:
 		case PGC_S_ARGV:
@@ -7958,11 +7981,11 @@ call_bool_check_hook(struct config_bool * conf, bool *newval, void **extra,
 		ereport(elevel,
 				(errcode(GUC_check_errcode_value),
 				 GUC_check_errmsg_string ?
-				 errmsg("%s", GUC_check_errmsg_string) :
+				 errmsg_internal("%s", GUC_check_errmsg_string) :
 				 errmsg("invalid value for parameter \"%s\": %d",
 						conf->gen.name, (int) *newval),
 				 GUC_check_errdetail_string ?
-				 errdetail("%s", GUC_check_errdetail_string) : 0,
+				 errdetail_internal("%s", GUC_check_errdetail_string) : 0,
 				 GUC_check_errhint_string ?
 				 errhint("%s", GUC_check_errhint_string) : 0));
 		/* Flush any strings created in ErrorContext */
@@ -7992,11 +8015,11 @@ call_int_check_hook(struct config_int * conf, int *newval, void **extra,
 		ereport(elevel,
 				(errcode(GUC_check_errcode_value),
 				 GUC_check_errmsg_string ?
-				 errmsg("%s", GUC_check_errmsg_string) :
+				 errmsg_internal("%s", GUC_check_errmsg_string) :
 				 errmsg("invalid value for parameter \"%s\": %d",
 						conf->gen.name, *newval),
 				 GUC_check_errdetail_string ?
-				 errdetail("%s", GUC_check_errdetail_string) : 0,
+				 errdetail_internal("%s", GUC_check_errdetail_string) : 0,
 				 GUC_check_errhint_string ?
 				 errhint("%s", GUC_check_errhint_string) : 0));
 		/* Flush any strings created in ErrorContext */
@@ -8026,11 +8049,11 @@ call_real_check_hook(struct config_real * conf, double *newval, void **extra,
 		ereport(elevel,
 				(errcode(GUC_check_errcode_value),
 				 GUC_check_errmsg_string ?
-				 errmsg("%s", GUC_check_errmsg_string) :
+				 errmsg_internal("%s", GUC_check_errmsg_string) :
 				 errmsg("invalid value for parameter \"%s\": %g",
 						conf->gen.name, *newval),
 				 GUC_check_errdetail_string ?
-				 errdetail("%s", GUC_check_errdetail_string) : 0,
+				 errdetail_internal("%s", GUC_check_errdetail_string) : 0,
 				 GUC_check_errhint_string ?
 				 errhint("%s", GUC_check_errhint_string) : 0));
 		/* Flush any strings created in ErrorContext */
@@ -8060,11 +8083,11 @@ call_string_check_hook(struct config_string * conf, char **newval, void **extra,
 		ereport(elevel,
 				(errcode(GUC_check_errcode_value),
 				 GUC_check_errmsg_string ?
-				 errmsg("%s", GUC_check_errmsg_string) :
+				 errmsg_internal("%s", GUC_check_errmsg_string) :
 				 errmsg("invalid value for parameter \"%s\": \"%s\"",
 						conf->gen.name, *newval ? *newval : ""),
 				 GUC_check_errdetail_string ?
-				 errdetail("%s", GUC_check_errdetail_string) : 0,
+				 errdetail_internal("%s", GUC_check_errdetail_string) : 0,
 				 GUC_check_errhint_string ?
 				 errhint("%s", GUC_check_errhint_string) : 0));
 		/* Flush any strings created in ErrorContext */
@@ -8094,12 +8117,12 @@ call_enum_check_hook(struct config_enum * conf, int *newval, void **extra,
 		ereport(elevel,
 				(errcode(GUC_check_errcode_value),
 				 GUC_check_errmsg_string ?
-				 errmsg("%s", GUC_check_errmsg_string) :
+				 errmsg_internal("%s", GUC_check_errmsg_string) :
 				 errmsg("invalid value for parameter \"%s\": \"%s\"",
 						conf->gen.name,
 						config_enum_lookup_by_value(conf, *newval)),
 				 GUC_check_errdetail_string ?
-				 errdetail("%s", GUC_check_errdetail_string) : 0,
+				 errdetail_internal("%s", GUC_check_errdetail_string) : 0,
 				 GUC_check_errhint_string ?
 				 errhint("%s", GUC_check_errhint_string) : 0));
 		/* Flush any strings created in ErrorContext */
@@ -8217,7 +8240,7 @@ check_temp_buffers(int *newval, void **extra, GucSource source)
 	 */
 	if (NLocBuffer && NLocBuffer != *newval)
 	{
-		GUC_check_errdetail("\"temp_buffers\" cannot be changed after any temp tables have been accessed in the session.");
+		GUC_check_errdetail("\"temp_buffers\" cannot be changed after any temporary tables have been accessed in the session.");
 		return false;
 	}
 	return true;
@@ -8420,15 +8443,13 @@ assign_timezone_abbreviations(const char *newval, void *extra)
  *
  * This is called after initial loading of postgresql.conf.  If no
  * timezone_abbreviations setting was found therein, select default.
+ * If a non-default value is already installed, nothing will happen.
  */
 void
 pg_timezone_abbrev_initialize(void)
 {
-	if (timezone_abbreviations_string == NULL)
-	{
-		SetConfigOption("timezone_abbreviations", "Default",
-						PGC_POSTMASTER, PGC_S_DEFAULT);
-	}
+	SetConfigOption("timezone_abbreviations", "Default",
+					PGC_POSTMASTER, PGC_S_DYNAMIC_DEFAULT);
 }
 
 static const char *

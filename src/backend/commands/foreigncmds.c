@@ -165,8 +165,18 @@ transformGenericOptions(Oid catalogId,
 
 	result = optionListToArray(resultOptions);
 
-	if (OidIsValid(fdwvalidator) && DatumGetPointer(result) != NULL)
-		OidFunctionCall2(fdwvalidator, result, ObjectIdGetDatum(catalogId));
+	if (OidIsValid(fdwvalidator))
+	{
+		Datum	valarg = result;
+
+		/*
+		 * Pass a null options list as an empty array, so that validators
+		 * don't have to be declared non-strict to handle the case.
+		 */
+		if (DatumGetPointer(valarg) == NULL)
+			valarg = PointerGetDatum(construct_empty_array(TEXTOID));
+		OidFunctionCall2(fdwvalidator, valarg, ObjectIdGetDatum(catalogId));
+	}
 
 	return result;
 }
@@ -505,7 +515,7 @@ CreateForeignDataWrapper(CreateFdwStmt *stmt)
 	recordDependencyOnOwner(ForeignDataWrapperRelationId, fdwId, ownerId);
 
 	/* dependency on extension */
-	recordDependencyOnCurrentExtension(&myself);
+	recordDependencyOnCurrentExtension(&myself, false);
 
 	/* Post creation hook for new foreign data wrapper */
 	InvokeObjectAccessHook(OAT_POST_CREATE,
@@ -847,7 +857,7 @@ CreateForeignServer(CreateForeignServerStmt *stmt)
 	recordDependencyOnOwner(ForeignServerRelationId, srvId, ownerId);
 
 	/* dependency on extension */
-	recordDependencyOnCurrentExtension(&myself);
+	recordDependencyOnCurrentExtension(&myself, false);
 
 	/* Post creation hook for new foreign server */
 	InvokeObjectAccessHook(OAT_POST_CREATE, ForeignServerRelationId, srvId, 0);
@@ -1127,7 +1137,7 @@ CreateUserMapping(CreateUserMappingStmt *stmt)
 	}
 
 	/* dependency on extension */
-	recordDependencyOnCurrentExtension(&myself);
+	recordDependencyOnCurrentExtension(&myself, false);
 
 	/* Post creation hook for new user mapping */
 	InvokeObjectAccessHook(OAT_POST_CREATE, UserMappingRelationId, umId, 0);

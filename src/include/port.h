@@ -34,6 +34,7 @@ extern bool pg_set_block(pgsocket sock);
 
 /* Portable path handling for Unix/Win32 (in path.c) */
 
+extern bool has_drive_prefix(const char *filename);
 extern char *first_dir_separator(const char *filename);
 extern char *last_dir_separator(const char *filename);
 extern char *first_path_var_separator(const char *pathlist);
@@ -197,20 +198,20 @@ extern int	pg_vsnprintf(char *str, size_t count, const char *fmt, va_list args);
 extern int
 pg_snprintf(char *str, size_t count, const char *fmt,...)
 /* This extension allows gcc to check the format string */
-__attribute__((format(printf, 3, 4)));
+__attribute__((format(PG_PRINTF_ATTRIBUTE, 3, 4)));
 extern int
 pg_sprintf(char *str, const char *fmt,...)
 /* This extension allows gcc to check the format string */
-__attribute__((format(printf, 2, 3)));
+__attribute__((format(PG_PRINTF_ATTRIBUTE, 2, 3)));
 extern int	pg_vfprintf(FILE *stream, const char *fmt, va_list args);
 extern int
 pg_fprintf(FILE *stream, const char *fmt,...)
 /* This extension allows gcc to check the format string */
-__attribute__((format(printf, 2, 3)));
+__attribute__((format(PG_PRINTF_ATTRIBUTE, 2, 3)));
 extern int
 pg_printf(const char *fmt,...)
 /* This extension allows gcc to check the format string */
-__attribute__((format(printf, 1, 2)));
+__attribute__((format(PG_PRINTF_ATTRIBUTE, 1, 2)));
 
 /*
  *	The GCC-specific code below prevents the __attribute__(... 'printf')
@@ -379,12 +380,9 @@ extern off_t ftello(FILE *stream);
 #endif
 #endif
 
-#ifndef HAVE_ERAND48
-/* we assume all of these are present or missing together */
-extern double erand48(unsigned short xseed[3]);
-extern long lrand48(void);
-extern void srand48(long seed);
-#endif
+extern double pg_erand48(unsigned short xseed[3]);
+extern long pg_lrand48(void);
+extern void pg_srand48(long seed);
 
 #ifndef HAVE_FSEEKO
 #define fseeko(a, b, c) fseek(a, b, c)
@@ -393,6 +391,10 @@ extern void srand48(long seed);
 
 #ifndef HAVE_GETOPT
 extern int	getopt(int nargc, char *const * nargv, const char *ostr);
+#endif
+
+#if !defined(HAVE_GETPEEREID) && !defined(WIN32)
+extern int	getpeereid(int sock, uid_t *uid, gid_t *gid);
 #endif
 
 #ifndef HAVE_ISINF

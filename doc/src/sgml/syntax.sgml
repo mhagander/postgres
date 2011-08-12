@@ -972,7 +972,7 @@ CAST ( '<replaceable>string</replaceable>' AS <replaceable>type</replaceable> )
   </sect2>
 
   <sect2 id="sql-precedence">
-   <title>Lexical Precedence</title>
+   <title>Operator Precedence</title>
 
    <indexterm zone="sql-precedence">
     <primary>operator</primary>
@@ -1039,9 +1039,9 @@ SELECT (5 !) - 6;
       </row>
 
       <row>
-       <entry><token>-</token></entry>
+       <entry><token>+</token> <token>-</token></entry>
        <entry>right</entry>
-       <entry>unary minus</entry>
+       <entry>unary plus, unary minus</entry>
       </row>
 
       <row>
@@ -1065,7 +1065,7 @@ SELECT (5 !) - 6;
       <row>
        <entry><token>IS</token></entry>
        <entry></entry>
-       <entry><literal>IS TRUE</>, <literal>IS FALSE</>, <literal>IS UNKNOWN</>, <literal>IS NULL</></entry>
+       <entry><literal>IS TRUE</>, <literal>IS FALSE</>, <literal>IS NULL</>, etc</entry>
       </row>
 
       <row>
@@ -1806,7 +1806,7 @@ UNBOUNDED FOLLOWING
     The syntaxes using <literal>*</> are used for calling parameter-less
     aggregate functions as window functions, for example
     <literal>count(*) OVER (PARTITION BY x ORDER BY y)</>.
-    <literal>*</> is customarily not used for non-aggregate window functions.
+    The asterisk (<literal>*</>) is customarily not used for non-aggregate window functions.
     Aggregate window functions, unlike normal aggregate functions, do not
     allow <literal>DISTINCT</> or <literal>ORDER BY</> to be used within the
     function argument list.

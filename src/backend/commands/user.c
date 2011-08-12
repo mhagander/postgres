@@ -24,6 +24,7 @@
 #include "catalog/pg_db_role_setting.h"
 #include "commands/comment.h"
 #include "commands/dbcommands.h"
+#include "commands/seclabel.h"
 #include "commands/user.h"
 #include "libpq/md5.h"
 #include "miscadmin.h"
@@ -953,7 +954,7 @@ DropRole(DropRoleStmt *stmt)
 					(errcode(ERRCODE_DEPENDENT_OBJECTS_STILL_EXIST),
 					 errmsg("role \"%s\" cannot be dropped because some objects depend on it",
 							role),
-					 errdetail("%s", detail),
+					 errdetail_internal("%s", detail),
 					 errdetail_log("%s", detail_log)));
 
 		/*
@@ -1000,9 +1001,10 @@ DropRole(DropRoleStmt *stmt)
 		systable_endscan(sscan);
 
 		/*
-		 * Remove any comments on this role.
+		 * Remove any comments or security labels on this role.
 		 */
 		DeleteSharedComments(roleid, AuthIdRelationId);
+		DeleteSharedSecurityLabel(roleid, AuthIdRelationId);
 
 		/*
 		 * Remove settings for this role.

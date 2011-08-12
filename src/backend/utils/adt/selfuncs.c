@@ -120,6 +120,7 @@
 #include "utils/lsyscache.h"
 #include "utils/nabstime.h"
 #include "utils/pg_locale.h"
+#include "utils/rel.h"
 #include "utils/selfuncs.h"
 #include "utils/spccache.h"
 #include "utils/syscache.h"
@@ -291,12 +292,12 @@ var_eq_const(VariableStatData *vardata, Oid operator,
 				/* be careful to apply operator right way 'round */
 				if (varonleft)
 					match = DatumGetBool(FunctionCall2Coll(&eqproc,
-														   DEFAULT_COLLATION_OID,
+													   DEFAULT_COLLATION_OID,
 														   values[i],
 														   constval));
 				else
 					match = DatumGetBool(FunctionCall2Coll(&eqproc,
-														   DEFAULT_COLLATION_OID,
+													   DEFAULT_COLLATION_OID,
 														   constval,
 														   values[i]));
 				if (match)
@@ -1185,7 +1186,7 @@ patternsel(PG_FUNCTION_ARGS, Pattern_Type ptype, bool negate)
 	}
 
 	/*
-	 * Divide pattern into fixed prefix and remainder.  XXX we have to assume
+	 * Divide pattern into fixed prefix and remainder.	XXX we have to assume
 	 * default collation here, because we don't have access to the actual
 	 * input collation for the operator.  FIXME ...
 	 */
@@ -2403,9 +2404,9 @@ eqjoinsel_semi(Oid operator,
 		 * before doing the division.
 		 *
 		 * Crude as the above is, it's completely useless if we don't have
-		 * reliable ndistinct values for both sides.  Hence, if either nd1
-		 * or nd2 is default, punt and assume half of the uncertain rows
-		 * have join partners.
+		 * reliable ndistinct values for both sides.  Hence, if either nd1 or
+		 * nd2 is default, punt and assume half of the uncertain rows have
+		 * join partners.
 		 */
 		if (nd1 != DEFAULT_NUM_DISTINCT && nd2 != DEFAULT_NUM_DISTINCT)
 		{
@@ -3089,7 +3090,9 @@ estimate_num_groups(PlannerInfo *root, List *groupExprs, double input_rows)
 		 * PlaceHolderVar doesn't change the number of groups, which boils
 		 * down to ignoring the possible addition of nulls to the result set).
 		 */
-		varshere = pull_var_clause(groupexpr, PVC_RECURSE_PLACEHOLDERS);
+		varshere = pull_var_clause(groupexpr,
+								   PVC_RECURSE_AGGREGATES,
+								   PVC_RECURSE_PLACEHOLDERS);
 
 		/*
 		 * If we find any variable-free GROUP BY item, then either it is a
@@ -4779,7 +4782,7 @@ get_actual_variable_range(PlannerInfo *root, VariableStatData *vardata,
  * Check whether char is a letter (and, hence, subject to case-folding)
  *
  * In multibyte character sets, we can't use isalpha, and it does not seem
- * worth trying to convert to wchar_t to use iswalpha.  Instead, just assume
+ * worth trying to convert to wchar_t to use iswalpha.	Instead, just assume
  * any multibyte char is potentially case-varying.
  */
 static int
@@ -4823,7 +4826,7 @@ like_fixed_prefix(Const *patt_const, bool case_insensitive, Oid collation,
 	int			pos,
 				match_pos;
 	bool		is_multibyte = (pg_database_encoding_max_length() > 1);
-	pg_locale_t	locale = 0;
+	pg_locale_t locale = 0;
 	bool		locale_is_c = false;
 
 	/* the right-hand const is type text or bytea */
@@ -4834,7 +4837,7 @@ like_fixed_prefix(Const *patt_const, bool case_insensitive, Oid collation,
 		if (typeid == BYTEAOID)
 			ereport(ERROR,
 					(errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
-		   errmsg("case insensitive matching not supported on type bytea")));
+			errmsg("case insensitive matching not supported on type bytea")));
 
 		/* If case-insensitive, we need locale info */
 		if (lc_ctype_is_c(collation))
@@ -4891,7 +4894,7 @@ like_fixed_prefix(Const *patt_const, bool case_insensitive, Oid collation,
 
 		/* Stop if case-varying character (it's sort of a wildcard) */
 		if (case_insensitive &&
-			pattern_char_isalpha(patt[pos], is_multibyte, locale, locale_is_c))
+		  pattern_char_isalpha(patt[pos], is_multibyte, locale, locale_is_c))
 			break;
 
 		match[match_pos++] = patt[pos];
@@ -4938,7 +4941,7 @@ regex_fixed_prefix(Const *patt_const, bool case_insensitive, Oid collation,
 	char	   *rest;
 	Oid			typeid = patt_const->consttype;
 	bool		is_multibyte = (pg_database_encoding_max_length() > 1);
-	pg_locale_t	locale = 0;
+	pg_locale_t locale = 0;
 	bool		locale_is_c = false;
 
 	/*
@@ -5050,7 +5053,7 @@ regex_fixed_prefix(Const *patt_const, bool case_insensitive, Oid collation,
 
 		/* Stop if case-varying character (it's sort of a wildcard) */
 		if (case_insensitive &&
-			pattern_char_isalpha(patt[pos], is_multibyte, locale, locale_is_c))
+		  pattern_char_isalpha(patt[pos], is_multibyte, locale, locale_is_c))
 			break;
 
 		/*

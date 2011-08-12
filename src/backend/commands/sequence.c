@@ -427,8 +427,8 @@ AlterSequence(AlterSeqStmt *stmt)
 	FormData_pg_sequence new;
 	List	   *owned_by;
 
-	/* open and AccessShareLock sequence */
-	relid = RangeVarGetRelid(stmt->sequence, false);
+	/* Open and lock sequence. */
+	relid = RangeVarGetRelid(stmt->sequence, AccessShareLock, false, false);
 	init_sequence(relid, &elm, &seqrel);
 
 	/* allow ALTER to sequence owner only */
@@ -507,7 +507,16 @@ nextval(PG_FUNCTION_ARGS)
 	Oid			relid;
 
 	sequence = makeRangeVarFromNameList(textToQualifiedNameList(seqin));
-	relid = RangeVarGetRelid(sequence, false);
+
+	/*
+	 * XXX: This is not safe in the presence of concurrent DDL, but
+	 * acquiring a lock here is more expensive than letting nextval_internal
+	 * do it, since the latter maintains a cache that keeps us from hitting
+	 * the lock manager more than once per transaction.  It's not clear
+	 * whether the performance penalty is material in practice, but for now,
+	 * we do it this way.
+	 */
+	relid = RangeVarGetRelid(sequence, NoLock, false, false);
 
 	PG_RETURN_INT64(nextval_internal(relid));
 }
@@ -1075,6 +1084,22 @@ read_info(SeqTable elm, Relation rel, Buffer *buf)
 	lp = PageGetItemId(page, FirstOffsetNumber);
 	Assert(ItemIdIsNormal(lp));
 	tuple.t_data = (HeapTupleHeader) PageGetItem(page, lp);
+
+	/*
+	 * Previous releases of Postgres neglected to prevent SELECT FOR UPDATE on
+	 * a sequence, which would leave a non-frozen XID in the sequence tuple's
+	 * xmax, which eventually leads to clog access failures or worse. If we
+	 * see this has happened, clean up after it.  We treat this like a hint
+	 * bit update, ie, don't bother to WAL-log it, since we can certainly do
+	 * this again if the update gets lost.
+	 */
+	if (HeapTupleHeaderGetXmax(tuple.t_data) != InvalidTransactionId)
+	{
+		HeapTupleHeaderSetXmax(tuple.t_data, InvalidTransactionId);
+		tuple.t_data->t_infomask &= ~HEAP_XMAX_COMMITTED;
+		tuple.t_data->t_infomask |= HEAP_XMAX_INVALID;
+		SetBufferCommitInfoNeedsSave(*buf);
+	}
 
 	seq = (Form_pg_sequence) GETSTRUCT(&tuple);
 

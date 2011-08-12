@@ -246,6 +246,7 @@ pull_up_sublinks_jointree_recurse(PlannerInfo *root, Node *jtnode,
 		 * as a sublink that is executed only for row pairs that meet the
 		 * other join conditions.  Fixing this seems to require considerable
 		 * restructuring of the executor, but maybe someday it can happen.
+		 * (See also the comparable case in pull_up_sublinks_qual_recurse.)
 		 *
 		 * We don't expect to see any pre-existing JOIN_SEMI or JOIN_ANTI
 		 * nodes here.
@@ -318,6 +319,7 @@ pull_up_sublinks_qual_recurse(PlannerInfo *root, Node *node,
 	{
 		SubLink    *sublink = (SubLink *) node;
 		JoinExpr   *j;
+		Relids		child_rels;
 
 		/* Is it a convertible ANY or EXISTS clause? */
 		if (sublink->subLinkType == ANY_SUBLINK)
@@ -326,7 +328,16 @@ pull_up_sublinks_qual_recurse(PlannerInfo *root, Node *node,
 											available_rels);
 			if (j)
 			{
-				/* Yes, insert the new join node into the join tree */
+				/* Yes; recursively process what we pulled up */
+				j->rarg = pull_up_sublinks_jointree_recurse(root,
+															j->rarg,
+															&child_rels);
+				/* Any inserted joins get stacked onto j->rarg */
+				j->quals = pull_up_sublinks_qual_recurse(root,
+														 j->quals,
+														 child_rels,
+														 &j->rarg);
+				/* Now insert the new join node into the join tree */
 				j->larg = *jtlink;
 				*jtlink = (Node *) j;
 				/* and return NULL representing constant TRUE */
@@ -339,7 +350,16 @@ pull_up_sublinks_qual_recurse(PlannerInfo *root, Node *node,
 											   available_rels);
 			if (j)
 			{
-				/* Yes, insert the new join node into the join tree */
+				/* Yes; recursively process what we pulled up */
+				j->rarg = pull_up_sublinks_jointree_recurse(root,
+															j->rarg,
+															&child_rels);
+				/* Any inserted joins get stacked onto j->rarg */
+				j->quals = pull_up_sublinks_qual_recurse(root,
+														 j->quals,
+														 child_rels,
+														 &j->rarg);
+				/* Now insert the new join node into the join tree */
 				j->larg = *jtlink;
 				*jtlink = (Node *) j;
 				/* and return NULL representing constant TRUE */
@@ -363,7 +383,28 @@ pull_up_sublinks_qual_recurse(PlannerInfo *root, Node *node,
 												   available_rels);
 				if (j)
 				{
-					/* Yes, insert the new join node into the join tree */
+					/*
+					 * For the moment, refrain from recursing underneath NOT.
+					 * As in pull_up_sublinks_jointree_recurse, recursing here
+					 * would result in inserting a join underneath an ANTI
+					 * join with which it could not commute, and that could
+					 * easily lead to a worse plan than what we've
+					 * historically generated.
+					 */
+#ifdef NOT_USED
+					/* Yes; recursively process what we pulled up */
+					Relids		child_rels;
+
+					j->rarg = pull_up_sublinks_jointree_recurse(root,
+																j->rarg,
+																&child_rels);
+					/* Any inserted joins get stacked onto j->rarg */
+					j->quals = pull_up_sublinks_qual_recurse(root,
+															 j->quals,
+															 child_rels,
+															 &j->rarg);
+#endif
+					/* Now insert the new join node into the join tree */
 					j->larg = *jtlink;
 					*jtlink = (Node *) j;
 					/* and return NULL representing constant TRUE */
@@ -1370,6 +1411,12 @@ pullup_replace_vars_callback(Var *var,
 				/* Simple Vars always escape being wrapped */
 				wrap = false;
 			}
+			else if (newnode && IsA(newnode, PlaceHolderVar) &&
+					 ((PlaceHolderVar *) newnode)->phlevelsup == 0)
+			{
+				/* No need to wrap a PlaceHolderVar with another one, either */
+				wrap = false;
+			}
 			else if (rcon->wrap_non_vars)
 			{
 				/* Wrap all non-Vars in a PlaceHolderVar */
@@ -1379,10 +1426,16 @@ pullup_replace_vars_callback(Var *var,
 			{
 				/*
 				 * If it contains a Var of current level, and does not contain
-				 * any non-strict constructs, then it's certainly nullable and
-				 * we don't need to insert a PlaceHolderVar.  (Note: in future
-				 * maybe we should insert PlaceHolderVars anyway, when a tlist
-				 * item is expensive to evaluate?
+				 * any non-strict constructs, then it's certainly nullable so
+				 * we don't need to insert a PlaceHolderVar.
+				 *
+				 * This analysis could be tighter: in particular, a non-strict
+				 * construct hidden within a lower-level PlaceHolderVar is not
+				 * reason to add another PHV.  But for now it doesn't seem
+				 * worth the code to be more exact.
+				 *
+				 * Note: in future maybe we should insert a PlaceHolderVar
+				 * anyway, if the tlist item is expensive to evaluate?
 				 */
 				if (contain_vars_of_level((Node *) newnode, 0) &&
 					!contain_nonstrict_functions((Node *) newnode))

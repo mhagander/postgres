@@ -52,8 +52,9 @@
 #include "utils/builtins.h"
 #include "utils/fmgroids.h"
 #include "utils/lsyscache.h"
-#include "utils/tqual.h"
+#include "utils/rel.h"
 #include "utils/syscache.h"
+#include "utils/tqual.h"
 #include "utils/typcache.h"
 #include "utils/xml.h"
 
@@ -384,8 +385,9 @@ pg_get_viewdef_name(PG_FUNCTION_ARGS)
 	RangeVar   *viewrel;
 	Oid			viewoid;
 
+	/* Look up view name.  Can't lock it - we might not have privileges. */
 	viewrel = makeRangeVarFromNameList(textToQualifiedNameList(viewname));
-	viewoid = RangeVarGetRelid(viewrel, false);
+	viewoid = RangeVarGetRelid(viewrel, NoLock, false, false);
 
 	PG_RETURN_TEXT_P(string_to_text(pg_get_viewdef_worker(viewoid, 0)));
 }
@@ -402,8 +404,10 @@ pg_get_viewdef_name_ext(PG_FUNCTION_ARGS)
 	Oid			viewoid;
 
 	prettyFlags = pretty ? PRETTYFLAG_PAREN | PRETTYFLAG_INDENT : 0;
+
+	/* Look up view name.  Can't lock it - we might not have privileges. */
 	viewrel = makeRangeVarFromNameList(textToQualifiedNameList(viewname));
-	viewoid = RangeVarGetRelid(viewrel, false);
+	viewoid = RangeVarGetRelid(viewrel, NoLock, false, false);
 
 	PG_RETURN_TEXT_P(string_to_text(pg_get_viewdef_worker(viewoid, prettyFlags)));
 }
@@ -1372,6 +1376,8 @@ pg_get_constraintdef_worker(Oid constraintId, bool fullCommand,
 		appendStringInfo(&buf, " DEFERRABLE");
 	if (conForm->condeferred)
 		appendStringInfo(&buf, " INITIALLY DEFERRED");
+	if (!conForm->convalidated)
+		appendStringInfoString(&buf, " NOT VALID");
 
 	/* Cleanup */
 	ReleaseSysCache(tup);
@@ -1564,9 +1570,9 @@ pg_get_serial_sequence(PG_FUNCTION_ARGS)
 	SysScanDesc scan;
 	HeapTuple	tup;
 
-	/* Get the OID of the table */
+	/* Look up table name.  Can't lock it - we might not have privileges. */
 	tablerv = makeRangeVarFromNameList(textToQualifiedNameList(tablename));
-	tableOid = RangeVarGetRelid(tablerv, false);
+	tableOid = RangeVarGetRelid(tablerv, NoLock, false, false);
 
 	/* Get the number of the column */
 	column = text_to_cstring(columnname);
@@ -5187,50 +5193,36 @@ get_rule_expr(Node *node, deparse_context *context,
 					CaseWhen   *when = (CaseWhen *) lfirst(temp);
 					Node	   *w = (Node *) when->expr;
 
-					if (!PRETTY_INDENT(context))
-						appendStringInfoChar(buf, ' ');
-					appendContextKeyword(context, "WHEN ",
-										 0, 0, 0);
 					if (caseexpr->arg)
 					{
 						/*
 						 * The parser should have produced WHEN clauses of the
-						 * form "CaseTestExpr = RHS"; we want to show just the
-						 * RHS.  If the user wrote something silly like "CASE
-						 * boolexpr WHEN TRUE THEN ...", then the optimizer's
-						 * simplify_boolean_equality() may have reduced this
-						 * to just "CaseTestExpr" or "NOT CaseTestExpr", for
-						 * which we have to show "TRUE" or "FALSE".  We have
-						 * also to consider the possibility that an implicit
-						 * coercion was inserted between the CaseTestExpr and
-						 * the operator.
+						 * form "CaseTestExpr = RHS", possibly with an
+						 * implicit coercion inserted above the CaseTestExpr.
+						 * For accurate decompilation of rules it's essential
+						 * that we show just the RHS.  However in an
+						 * expression that's been through the optimizer, the
+						 * WHEN clause could be almost anything (since the
+						 * equality operator could have been expanded into an
+						 * inline function).  If we don't recognize the form
+						 * of the WHEN clause, just punt and display it as-is.
 						 */
 						if (IsA(w, OpExpr))
 						{
 							List	   *args = ((OpExpr *) w)->args;
-							Node	   *rhs;
 
-							Assert(list_length(args) == 2);
-							Assert(IsA(strip_implicit_coercions(linitial(args)),
-									   CaseTestExpr));
-							rhs = (Node *) lsecond(args);
-							get_rule_expr(rhs, context, false);
+							if (list_length(args) == 2 &&
+								IsA(strip_implicit_coercions(linitial(args)),
+									CaseTestExpr))
+								w = (Node *) lsecond(args);
 						}
-						else if (IsA(strip_implicit_coercions(w),
-									 CaseTestExpr))
-							appendStringInfo(buf, "TRUE");
-						else if (not_clause(w))
-						{
-							Assert(IsA(strip_implicit_coercions((Node *) get_notclausearg((Expr *) w)),
-									   CaseTestExpr));
-							appendStringInfo(buf, "FALSE");
-						}
-						else
-							elog(ERROR, "unexpected CASE WHEN clause: %d",
-								 (int) nodeTag(w));
 					}
-					else
-						get_rule_expr(w, context, false);
+
+					if (!PRETTY_INDENT(context))
+						appendStringInfoChar(buf, ' ');
+					appendContextKeyword(context, "WHEN ",
+										 0, 0, 0);
+					get_rule_expr(w, context, false);
 					appendStringInfo(buf, " THEN ");
 					get_rule_expr((Node *) when->result, context, true);
 				}
@@ -5243,6 +5235,19 @@ get_rule_expr(Node *node, deparse_context *context,
 					appendStringInfoChar(buf, ' ');
 				appendContextKeyword(context, "END",
 									 -PRETTYINDENT_VAR, 0, 0);
+			}
+			break;
+
+		case T_CaseTestExpr:
+			{
+				/*
+				 * Normally we should never get here, since for expressions
+				 * that can contain this node type we attempt to avoid
+				 * recursing to it.  But in an optimized expression we might
+				 * be unable to avoid that (see comments for CaseExpr).  If we
+				 * do see one, print it as CASE_TEST_EXPR.
+				 */
+				appendStringInfo(buf, "CASE_TEST_EXPR");
 			}
 			break;
 

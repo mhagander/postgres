@@ -58,8 +58,7 @@
  * Error Reporting:
  *		Use write_stderr() only for reporting "interactive" errors
  *		(essentially, bogus arguments on the command line).  Once the
- *		postmaster is launched, use ereport().	In particular, don't use
- *		write_stderr() for anything that occurs after pmdaemonize.
+ *		postmaster is launched, use ereport().
  *
  *-------------------------------------------------------------------------
  */
@@ -192,7 +191,6 @@ static int	SendStop = false;
 
 /* still more option variables */
 bool		EnableSSL = false;
-bool		SilentMode = false; /* silent_mode */
 
 int			PreAuthDelay = 0;
 int			AuthenticationTimeout = 60;
@@ -326,7 +324,6 @@ static DNSServiceRef bonjour_sdref = NULL;
  */
 static void getInstallationPaths(const char *argv0);
 static void checkDataDir(void);
-static void pmdaemonize(void);
 static Port *ConnCreate(int serverFd);
 static void ConnFree(Port *port);
 static void reset_shared(int port);
@@ -371,6 +368,7 @@ static int	CountChildren(int target);
 static bool CreateOptsFile(int argc, char *argv[], char *fullprogname);
 static pid_t StartChildProcess(AuxProcType type);
 static void StartAutovacuumWorker(void);
+static void InitPostmasterDeathWatchHandle(void);
 
 #ifdef EXEC_BACKEND
 
@@ -386,8 +384,6 @@ typedef struct
 	HANDLE		procHandle;
 	DWORD		procId;
 } win32_deadchild_waitinfo;
-
-HANDLE		PostmasterHandle;
 #endif
 
 static pid_t backend_forkexec(Port *port);
@@ -442,6 +438,7 @@ typedef struct
 	HANDLE		initial_signal_pipe;
 	HANDLE		syslogPipe[2];
 #else
+	int			postmaster_alive_fds[2];
 	int			syslogPipe[2];
 #endif
 	char		my_exec_path[MAXPGPATH];
@@ -472,6 +469,16 @@ static void ShmemBackendArrayRemove(Backend *bn);
 #define EXIT_STATUS_0(st)  ((st) == 0)
 #define EXIT_STATUS_1(st)  (WIFEXITED(st) && WEXITSTATUS(st) == 1)
 
+#ifndef WIN32
+/*
+ * File descriptors for pipe used to monitor if postmaster is alive.
+ * First is POSTMASTER_FD_WATCH, second is POSTMASTER_FD_OWN.
+ */
+int postmaster_alive_fds[2] = { -1, -1 };
+#else
+/* Process handle of postmaster used for the same purpose on Windows */
+HANDLE		PostmasterHandle;
+#endif
 
 /*
  * Postmaster main entry point
@@ -766,7 +773,7 @@ PostmasterMain(int argc, char *argv[])
 		char	  **p;
 
 		ereport(DEBUG3,
-				(errmsg_internal("%s: PostmasterMain: initial environ dump:",
+				(errmsg_internal("%s: PostmasterMain: initial environment dump:",
 								 progname)));
 		ereport(DEBUG3,
 			 (errmsg_internal("-----------------------------------------")));
@@ -776,15 +783,6 @@ PostmasterMain(int argc, char *argv[])
 		ereport(DEBUG3,
 			 (errmsg_internal("-----------------------------------------")));
 	}
-
-	/*
-	 * Fork away from controlling terminal, if silent_mode specified.
-	 *
-	 * Must do this before we grab any interlock files, else the interlocks
-	 * will show the wrong PID.
-	 */
-	if (SilentMode)
-		pmdaemonize();
 
 	/*
 	 * Create lockfile for data directory.
@@ -974,8 +972,13 @@ PostmasterMain(int argc, char *argv[])
 	 */
 	BackendList = DLNewList();
 
-#ifdef WIN32
+	/*
+	 * Initialize pipe (or process handle on Windows) that allows children to
+	 * wake up from sleep on postmaster death.
+	 */
+	InitPostmasterDeathWatchHandle();
 
+#ifdef WIN32
 	/*
 	 * Initialize I/O completion port used to deliver list of dead children.
 	 */
@@ -983,21 +986,6 @@ PostmasterMain(int argc, char *argv[])
 	if (win32ChildQueue == NULL)
 		ereport(FATAL,
 		   (errmsg("could not create I/O completion port for child queue")));
-
-	/*
-	 * Set up a handle that child processes can use to check whether the
-	 * postmaster is still running.
-	 */
-	if (DuplicateHandle(GetCurrentProcess(),
-						GetCurrentProcess(),
-						GetCurrentProcess(),
-						&PostmasterHandle,
-						0,
-						TRUE,
-						DUPLICATE_SAME_ACCESS) == 0)
-		ereport(FATAL,
-				(errmsg_internal("could not duplicate postmaster handle: error code %d",
-								 (int) GetLastError())));
 #endif
 
 	/*
@@ -1024,6 +1012,11 @@ PostmasterMain(int argc, char *argv[])
 			fprintf(fpidfile, "%d\n", MyProcPid);
 			fclose(fpidfile);
 			/* Should we remove the pid file on postmaster exit? */
+
+			/* Make PID file world readable */
+			if (chmod(external_pid_file, S_IRUSR | S_IWUSR | S_IRGRP | S_IROTH) != 0)
+				write_stderr("%s: could not change permissions of external PID file \"%s\": %s\n",
+							 progname, external_pid_file, strerror(errno));
 		}
 		else
 			write_stderr("%s: could not write external PID file \"%s\": %s\n",
@@ -1265,105 +1258,6 @@ checkDataDir(void)
 	FreeFile(fp);
 }
 
-
-/*
- * Fork away from the controlling terminal (silent_mode option)
- *
- * Since this requires disconnecting from stdin/stdout/stderr (in case they're
- * linked to the terminal), we re-point stdin to /dev/null and stdout/stderr
- * to "postmaster.log" in the data directory, where we're already chdir'd.
- */
-static void
-pmdaemonize(void)
-{
-#ifndef WIN32
-	const char *pmlogname = "postmaster.log";
-	int			dvnull;
-	int			pmlog;
-	pid_t		pid;
-	int			res;
-
-	/*
-	 * Make sure we can open the files we're going to redirect to.  If this
-	 * fails, we want to complain before disconnecting.  Mention the full path
-	 * of the logfile in the error message, even though we address it by
-	 * relative path.
-	 */
-	dvnull = open(DEVNULL, O_RDONLY, 0);
-	if (dvnull < 0)
-	{
-		write_stderr("%s: could not open file \"%s\": %s\n",
-					 progname, DEVNULL, strerror(errno));
-		ExitPostmaster(1);
-	}
-	pmlog = open(pmlogname, O_CREAT | O_WRONLY | O_APPEND, S_IRUSR | S_IWUSR);
-	if (pmlog < 0)
-	{
-		write_stderr("%s: could not open log file \"%s/%s\": %s\n",
-					 progname, DataDir, pmlogname, strerror(errno));
-		ExitPostmaster(1);
-	}
-
-	/*
-	 * Okay to fork.
-	 */
-	pid = fork_process();
-	if (pid == (pid_t) -1)
-	{
-		write_stderr("%s: could not fork background process: %s\n",
-					 progname, strerror(errno));
-		ExitPostmaster(1);
-	}
-	else if (pid)
-	{							/* parent */
-		/* Parent should just exit, without doing any atexit cleanup */
-		_exit(0);
-	}
-
-	MyProcPid = PostmasterPid = getpid();		/* reset PID vars to child */
-
-	MyStartTime = time(NULL);
-
-	/*
-	 * Some systems use setsid() to dissociate from the TTY's process group,
-	 * while on others it depends on stdin/stdout/stderr.  Do both if
-	 * possible.
-	 */
-#ifdef HAVE_SETSID
-	if (setsid() < 0)
-	{
-		write_stderr("%s: could not dissociate from controlling TTY: %s\n",
-					 progname, strerror(errno));
-		ExitPostmaster(1);
-	}
-#endif
-
-	/*
-	 * Reassociate stdin/stdout/stderr.  fork_process() cleared any pending
-	 * output, so this should be safe.	The only plausible error is EINTR,
-	 * which just means we should retry.
-	 */
-	do
-	{
-		res = dup2(dvnull, 0);
-	} while (res < 0 && errno == EINTR);
-	close(dvnull);
-	do
-	{
-		res = dup2(pmlog, 1);
-	} while (res < 0 && errno == EINTR);
-	do
-	{
-		res = dup2(pmlog, 2);
-	} while (res < 0 && errno == EINTR);
-	close(pmlog);
-#else							/* WIN32 */
-	/* not supported */
-	elog(FATAL, "silent_mode is not supported under Windows");
-#endif   /* WIN32 */
-}
-
-
 /*
  * Main idle loop of postmaster
  */
@@ -1486,10 +1380,10 @@ ServerLoop(void)
 			WalWriterPID = StartWalWriter();
 
 		/*
-		 *	If we have lost the autovacuum launcher, try to start a new one.
-		 *	We don't want autovacuum to run in binary upgrade mode because
-		 *	autovacuum might update relfrozenxid for empty tables before
-		 *	the physical files are put in place.
+		 * If we have lost the autovacuum launcher, try to start a new one. We
+		 * don't want autovacuum to run in binary upgrade mode because
+		 * autovacuum might update relfrozenxid for empty tables before the
+		 * physical files are put in place.
 		 */
 		if (!IsBinaryUpgrade && AutoVacPID == 0 &&
 			(AutoVacuumingActive() || start_autovac_launcher) &&
@@ -2071,6 +1965,19 @@ ClosePostmasterPorts(bool am_syslogger)
 {
 	int			i;
 
+#ifndef WIN32
+	/*
+	 * Close the write end of postmaster death watch pipe. It's important to
+	 * do this as early as possible, so that if postmaster dies, others won't
+	 * think that it's still running because we're holding the pipe open.
+	 */
+	if (close(postmaster_alive_fds[POSTMASTER_FD_OWN]))
+		ereport(FATAL,
+			(errcode_for_file_access(),
+			 errmsg_internal("could not close postmaster death monitoring pipe in child process: %m")));
+	postmaster_alive_fds[POSTMASTER_FD_OWN] = -1;
+#endif
+
 	/* Close the listen sockets */
 	for (i = 0; i < MAXLISTEN; i++)
 	{
@@ -2408,6 +2315,25 @@ reaper(SIGNAL_ARGS)
 			FatalError = false;
 			ReachedNormalRunning = true;
 			pmState = PM_RUN;
+
+			/*
+			 * Kill any walsenders to force the downstream standby(s) to
+			 * reread the timeline history file, adjust their timelines and
+			 * establish replication connections again. This is required
+			 * because the timeline of cascading standby is not consistent
+			 * with that of cascaded one just after failover. We LOG this
+			 * message since we need to leave a record to explain this
+			 * disconnection.
+			 *
+			 * XXX should avoid the need for disconnection. When we do,
+			 * am_cascading_walsender should be replaced with RecoveryInProgress()
+			 */
+			if (max_wal_senders > 0)
+			{
+				ereport(LOG,
+						(errmsg("terminating all walsender processes to force cascaded standby(s) to update timeline and reconnect")));
+				SignalSomeChildren(SIGUSR2, BACKEND_TYPE_WALSND);
+			}
 
 			/*
 			 * Crank up the background writer, if we didn't do that already
@@ -3304,7 +3230,7 @@ BackendStartup(Port *port)
 	/* in parent, successful fork */
 	ereport(DEBUG2,
 			(errmsg_internal("forked new backend, pid=%d socket=%d",
-							 (int) pid, port->sock)));
+							 (int) pid, (int) port->sock)));
 
 	/*
 	 * Everything's been successful, it's safe to add this backend to our list
@@ -3431,14 +3357,14 @@ BackendInitialize(Port *port)
 	if (pg_getnameinfo_all(&port->raddr.addr, port->raddr.salen,
 						   remote_host, sizeof(remote_host),
 						   remote_port, sizeof(remote_port),
-					   (log_hostname ? 0 : NI_NUMERICHOST) | NI_NUMERICSERV))
+					   (log_hostname ? 0 : NI_NUMERICHOST) | NI_NUMERICSERV) != 0)
 	{
 		int			ret = pg_getnameinfo_all(&port->raddr.addr, port->raddr.salen,
 											 remote_host, sizeof(remote_host),
 											 remote_port, sizeof(remote_port),
 											 NI_NUMERICHOST | NI_NUMERICSERV);
 
-		if (ret)
+		if (ret != 0)
 			ereport(WARNING,
 					(errmsg_internal("pg_getnameinfo_all() failed: %s",
 									 gai_strerror(ret))));
@@ -4685,7 +4611,6 @@ MaxLivePostmasterChildren(void)
 extern slock_t *ShmemLock;
 extern LWLock *LWLockArray;
 extern slock_t *ProcStructLock;
-extern PROC_HDR *ProcGlobal;
 extern PGPROC *AuxiliaryProcs;
 extern PMSignalData *PMSignalState;
 extern pgsocket pgStatSock;
@@ -4749,6 +4674,9 @@ save_backend_variables(BackendParameters *param, Port *port,
 								 pgwin32_create_signal_listener(childPid),
 								 childProcess))
 		return false;
+#else
+	memcpy(&param->postmaster_alive_fds, &postmaster_alive_fds,
+		   sizeof(postmaster_alive_fds));
 #endif
 
 	memcpy(&param->syslogPipe, &syslogPipe, sizeof(syslogPipe));
@@ -4809,7 +4737,7 @@ write_inheritable_socket(InheritableSocket *dest, SOCKET src, pid_t childpid)
 		{
 			ereport(LOG,
 					(errmsg("could not duplicate socket %d for use in backend: error code %d",
-							src, WSAGetLastError())));
+							(int) src, WSAGetLastError())));
 			return false;
 		}
 	}
@@ -4964,6 +4892,9 @@ restore_backend_variables(BackendParameters *param, Port *port)
 #ifdef WIN32
 	PostmasterHandle = param->PostmasterHandle;
 	pgwin32_initial_signal_pipe = param->initial_signal_pipe;
+#else
+	memcpy(&postmaster_alive_fds, &param->postmaster_alive_fds,
+		   sizeof(postmaster_alive_fds));
 #endif
 
 	memcpy(&syslogPipe, &param->syslogPipe, sizeof(syslogPipe));
@@ -5085,3 +5016,54 @@ pgwin32_deadchild_callback(PVOID lpParameter, BOOLEAN TimerOrWaitFired)
 }
 
 #endif   /* WIN32 */
+
+/*
+ * Initialize one and only handle for monitoring postmaster death.
+ *
+ * Called once in the postmaster, so that child processes can subsequently
+ * monitor if their parent is dead.
+ */
+static void
+InitPostmasterDeathWatchHandle(void)
+{
+#ifndef WIN32
+	/*
+	 * Create a pipe. Postmaster holds the write end of the pipe open
+	 * (POSTMASTER_FD_OWN), and children hold the read end. Children can
+	 * pass the read file descriptor to select() to wake up in case postmaster
+	 * dies, or check for postmaster death with a (read() == 0). Children must
+	 * close the write end as soon as possible after forking, because EOF
+	 * won't be signaled in the read end until all processes have closed the
+	 * write fd. That is taken care of in ClosePostmasterPorts().
+	 */
+	Assert(MyProcPid == PostmasterPid);
+	if (pipe(postmaster_alive_fds))
+		ereport(FATAL,
+				(errcode_for_file_access(),
+				 errmsg_internal("could not create pipe to monitor postmaster death: %m")));
+
+	/*
+	 * Set O_NONBLOCK to allow testing for the fd's presence with a read()
+	 * call.
+	 */
+	if (fcntl(postmaster_alive_fds[POSTMASTER_FD_WATCH], F_SETFL, O_NONBLOCK))
+		ereport(FATAL,
+				(errcode_for_socket_access(),
+				 errmsg_internal("could not set postmaster death monitoring pipe to non-blocking mode: %m")));
+
+#else
+	/*
+	 * On Windows, we use a process handle for the same purpose.
+	 */
+	if (DuplicateHandle(GetCurrentProcess(),
+						GetCurrentProcess(),
+						GetCurrentProcess(),
+						&PostmasterHandle,
+						0,
+						TRUE,
+						DUPLICATE_SAME_ACCESS) == 0)
+		ereport(FATAL,
+				(errmsg_internal("could not duplicate postmaster handle: error code %d",
+								 (int) GetLastError())));
+#endif   /* WIN32 */
+}

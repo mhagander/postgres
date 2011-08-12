@@ -282,7 +282,7 @@ pg_ctl start -l logfile
    Different systems have different conventions for starting up daemons
    at boot time. Many systems have a file
    <filename>/etc/rc.local</filename> or
-   <filename>/etc/rc.d/rc.local</filename>. Others use
+   <filename>/etc/rc.d/rc.local</filename>. Others use <filename>init.d</filename> or
    <filename>rc.d</> directories. Whatever you do, the server must be
    run by the <productname>PostgreSQL</productname> user account
    <emphasis>and not by root</emphasis> or any other user. Therefore you
@@ -329,7 +329,8 @@ fi
 <programlisting>
 /usr/local/pgsql/bin/pg_ctl start -l logfile -D /usr/local/pgsql/data
 </programlisting>
-      to <filename>/etc/rc.d/rc.local</filename> or look at the file
+      to <filename>/etc/rc.d/rc.local</filename>
+      or <filename>/etc/rc.local</filename> or look at the file
       <filename>contrib/start-scripts/linux</filename> in the
       <productname>PostgreSQL</productname> source distribution.
      </para>
@@ -1662,7 +1663,7 @@ $ <userinput>kill -INT `head -1 /usr/local/pgsql/data/postmaster.pid`</userinput
 <userinput>/etc/rc.d/init.d/postgresql stop</userinput>
 </screen>
       See <xref linkend="runtime"> for details about starting and
-      stoping the server.
+      stopping the server.
      </para>
     </step>
 
@@ -2097,12 +2098,11 @@ pg_dumpall -p 5432 | psql -d postgres -p 5433
 
   <sect2 id="ssl-server-files">
    <title>SSL Server File Usage</title>
-  <para>
-   The files <filename>server.key</>, <filename>server.crt</>,
-   <filename>root.crt</filename>, and <filename>root.crl</filename>
-   are only examined during server start; so you must restart
-   the server for changes in them to take effect.
-  </para>
+
+   <para>
+    <xref linkend="ssl-file-usage"> summarizes the files that are
+    relevant to the SSL setup on the server.
+   </para>
 
   <table id="ssl-file-usage">
    <title>SSL Server File Usage</title>
@@ -2146,6 +2146,13 @@ pg_dumpall -p 5432 | psql -d postgres -p 5433
     </tbody>
    </tgroup>
   </table>
+
+   <para>
+    The files <filename>server.key</>, <filename>server.crt</>,
+    <filename>root.crt</filename>, and <filename>root.crl</filename>
+    are only examined during server start; so you must restart
+    the server for changes in them to take effect.
+   </para>
   </sect2>
 
   <sect2 id="ssl-certificate-creation">

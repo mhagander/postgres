@@ -46,7 +46,7 @@ report_status(eLogType type, const char *fmt,...)
  *		if(( message = flarbFiles(fileCount)) == NULL)
  *		  report_status(PG_REPORT, "ok" );
  *		else
- *		  pg_log(PG_FATAL, "failed - %s", message );
+ *		  pg_log(PG_FATAL, "failed - %s\n", message );
  */
 void
 prep_status(const char *fmt,...)
@@ -97,8 +97,7 @@ pg_log(eLogType type, char *fmt,...)
 			break;
 
 		case PG_FATAL:
-			printf("%s", "\n");
-			printf("%s", _(message));
+			printf("\n%s", _(message));
 			printf("Failure, exiting\n");
 			exit(1);
 			break;
@@ -231,7 +230,7 @@ getErrorText(int errNum)
 #ifdef WIN32
 	_dosmaperr(GetLastError());
 #endif
-	return strdup(strerror(errNum));
+	return pg_strdup(strerror(errNum));
 }
 
 
@@ -244,4 +243,41 @@ unsigned int
 str2uint(const char *str)
 {
 	return strtoul(str, NULL, 10);
+}
+
+
+/*
+ *	pg_putenv()
+ *
+ *	This is like putenv(), but takes two arguments.
+ *	It also does unsetenv() if val is NULL.
+ */
+void
+pg_putenv(const char *var, const char *val)
+{
+	if (val)
+	{
+#ifndef WIN32
+		char	   *envstr = (char *) pg_malloc(strlen(var) +
+												strlen(val) + 2);
+
+		sprintf(envstr, "%s=%s", var, val);
+		putenv(envstr);
+
+		/*
+		 * Do not free envstr because it becomes part of the environment on
+		 * some operating systems.	See port/unsetenv.c::unsetenv.
+		 */
+#else
+		SetEnvironmentVariableA(var, val);
+#endif
+	}
+	else
+	{
+#ifndef WIN32
+		unsetenv(var);
+#else
+		SetEnvironmentVariableA(var, "");
+#endif
+	}
 }

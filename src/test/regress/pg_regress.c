@@ -126,17 +126,17 @@ static void
 header(const char *fmt,...)
 /* This extension allows gcc to check the format string for consistency with
    the supplied arguments. */
-__attribute__((format(printf, 1, 2)));
+__attribute__((format(PG_PRINTF_ATTRIBUTE, 1, 2)));
 static void
 status(const char *fmt,...)
 /* This extension allows gcc to check the format string for consistency with
    the supplied arguments. */
-__attribute__((format(printf, 1, 2)));
+__attribute__((format(PG_PRINTF_ATTRIBUTE, 1, 2)));
 static void
 psql_command(const char *database, const char *query,...)
 /* This extension allows gcc to check the format string for consistency with
    the supplied arguments. */
-__attribute__((format(printf, 2, 3)));
+__attribute__((format(PG_PRINTF_ATTRIBUTE, 2, 3)));
 
 #ifdef WIN32
 typedef BOOL (WINAPI * __CreateRestrictedToken) (HANDLE, DWORD, DWORD, PSID_AND_ATTRIBUTES, DWORD, PLUID_AND_ATTRIBUTES, DWORD, PSID_AND_ATTRIBUTES, PHANDLE);
@@ -2140,9 +2140,9 @@ regression_main(int argc, char *argv[], init_function ifunc, test_function tfunc
 #ifndef WIN32_ONLY_COMPILER
 			snprintf(buf, sizeof(buf),
 					 SYSTEMQUOTE "\"%s\" -C \"%s/%s\" DESTDIR=\"%s/install\" install >> \"%s/log/install.log\" 2>&1" SYSTEMQUOTE,
-					 makeprog, top_builddir, sl->str, temp_install, outputdir);
+				   makeprog, top_builddir, sl->str, temp_install, outputdir);
 #else
-			fprintf(stderr, _("\n%s: --extra-install option not supported on this platform\n", progname));
+			fprintf(stderr, _("\n%s: --extra-install option not supported on this platform\n"), progname);
 			exit_nicely(2);
 #endif
 
@@ -2310,7 +2310,7 @@ regression_main(int argc, char *argv[], init_function ifunc, test_function tfunc
 #else
 #define ULONGPID(x) (unsigned long) (x)
 #endif
-		printf(_("running on port %d with pid %lu\n"),
+		printf(_("running on port %d with PID %lu\n"),
 			   port, ULONGPID(postmaster_pid));
 	}
 	else

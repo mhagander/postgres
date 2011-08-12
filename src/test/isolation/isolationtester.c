@@ -5,25 +5,45 @@
  *		Runs an isolation test specified by a spec file.
  */
 
+#include "postgres_fe.h"
+
 #ifdef WIN32
 #include <windows.h>
 #endif
 
-#include <stddef.h>
-#include <stdio.h>
-#include <stdlib.h>
-#include <string.h>
+#ifndef WIN32
+#include <sys/time.h>
+#include <unistd.h>
+#endif   /* ! WIN32 */
+
+#ifdef HAVE_SYS_SELECT_H
+#include <sys/select.h>
+#endif
+
 #include "libpq-fe.h"
+#include "pqexpbuffer.h"
 
 #include "isolationtester.h"
 
+#define PREP_WAITING "isolationtester_waiting"
+
+/*
+ * conns[0] is the global setup, teardown, and watchdog connection.  Additional
+ * connections represent spec-defined sessions.
+ */
 static PGconn **conns = NULL;
+static const char **backend_pids = NULL;
 static int	nconns = 0;
 
 static void run_all_permutations(TestSpec * testspec);
-static void run_all_permutations_recurse(TestSpec * testspec, int nsteps, Step ** steps);
+static void run_all_permutations_recurse(TestSpec * testspec, int nsteps,
+							 Step ** steps);
 static void run_named_permutations(TestSpec * testspec);
 static void run_permutation(TestSpec * testspec, int nsteps, Step ** steps);
+
+#define STEP_NONBLOCK	0x1 /* return 0 as soon as cmd waits for a lock */
+#define STEP_RETRY		0x2 /* this is a retry of a previously-waiting cmd */
+static bool try_complete_step(Step *step, int flags);
 
 static int	step_qsort_cmp(const void *a, const void *b);
 static int	step_bsearch_cmp(const void *a, const void *b);
@@ -47,6 +67,8 @@ main(int argc, char **argv)
 	const char *conninfo;
 	TestSpec   *testspec;
 	int			i;
+	PGresult   *res;
+	PQExpBufferData wait_query;
 
 	/*
 	 * If the user supplies a parameter on the command line, use it as the
@@ -63,13 +85,15 @@ main(int argc, char **argv)
 	testspec = &parseresult;
 	printf("Parsed test spec with %d sessions\n", testspec->nsessions);
 
-	/* Establish connections to the database, one for each session */
-	nconns = testspec->nsessions;
+	/*
+	 * Establish connections to the database, one for each session and an extra
+	 * for lock wait detection and global work.
+	 */
+	nconns = 1 + testspec->nsessions;
 	conns = calloc(nconns, sizeof(PGconn *));
-	for (i = 0; i < testspec->nsessions; i++)
+	backend_pids = calloc(nconns, sizeof(*backend_pids));
+	for (i = 0; i < nconns; i++)
 	{
-		PGresult   *res;
-
 		conns[i] = PQconnectdb(conninfo);
 		if (PQstatus(conns[i]) != CONNECTION_OK)
 		{
@@ -89,6 +113,27 @@ main(int argc, char **argv)
 			exit_nicely();
 		}
 		PQclear(res);
+
+		/* Get the backend pid for lock wait checking. */
+		res = PQexec(conns[i], "SELECT pg_backend_pid()");
+		if (PQresultStatus(res) == PGRES_TUPLES_OK)
+		{
+			if (PQntuples(res) == 1 && PQnfields(res) == 1)
+				backend_pids[i] = strdup(PQgetvalue(res, 0, 0));
+			else
+			{
+				fprintf(stderr, "backend pid query returned %d rows and %d columns, expected 1 row and 1 column",
+						PQntuples(res), PQnfields(res));
+				exit_nicely();
+			}
+		}
+		else
+		{
+			fprintf(stderr, "backend pid query failed: %s",
+					PQerrorMessage(conns[i]));
+			exit_nicely();
+		}
+		PQclear(res);
 	}
 
 	/* Set the session index fields in steps. */
@@ -100,6 +145,96 @@ main(int argc, char **argv)
 		for (stepindex = 0; stepindex < session->nsteps; stepindex++)
 			session->steps[stepindex]->session = i;
 	}
+
+	/*
+	 * Build the query we'll use to detect lock contention among sessions in
+	 * the test specification.  Most of the time, we could get away with
+	 * simply checking whether a session is waiting for *any* lock: we don't
+	 * exactly expect concurrent use of test tables.  However, autovacuum will
+	 * occasionally take AccessExclusiveLock to truncate a table, and we must
+	 * ignore that transient wait.
+	 */
+	initPQExpBuffer(&wait_query);
+	appendPQExpBufferStr(&wait_query,
+						 "SELECT 1 FROM pg_locks holder, pg_locks waiter "
+						 "WHERE NOT waiter.granted AND waiter.pid = $1 "
+						 "AND holder.granted "
+						 "AND holder.pid <> $1 AND holder.pid IN (");
+	/* The spec syntax requires at least one session; assume that here. */
+	appendPQExpBuffer(&wait_query, "%s", backend_pids[1]);
+	for (i = 2; i < nconns; i++)
+		appendPQExpBuffer(&wait_query, ", %s", backend_pids[i]);
+	appendPQExpBufferStr(&wait_query,
+						 ") "
+
+						 "AND holder.mode = ANY (CASE waiter.mode "
+						 "WHEN 'AccessShareLock' THEN ARRAY["
+						 "'AccessExclusiveLock'] "
+						 "WHEN 'RowShareLock' THEN ARRAY["
+						 "'ExclusiveLock',"
+						 "'AccessExclusiveLock'] "
+						 "WHEN 'RowExclusiveLock' THEN ARRAY["
+						 "'ShareLock',"
+						 "'ShareRowExclusiveLock',"
+						 "'ExclusiveLock',"
+						 "'AccessExclusiveLock'] "
+						 "WHEN 'ShareUpdateExclusiveLock' THEN ARRAY["
+						 "'ShareUpdateExclusiveLock',"
+						 "'ShareLock',"
+						 "'ShareRowExclusiveLock',"
+						 "'ExclusiveLock',"
+						 "'AccessExclusiveLock'] "
+						 "WHEN 'ShareLock' THEN ARRAY["
+						 "'RowExclusiveLock',"
+						 "'ShareUpdateExclusiveLock',"
+						 "'ShareRowExclusiveLock',"
+						 "'ExclusiveLock',"
+						 "'AccessExclusiveLock'] "
+						 "WHEN 'ShareRowExclusiveLock' THEN ARRAY["
+						 "'RowExclusiveLock',"
+						 "'ShareUpdateExclusiveLock',"
+						 "'ShareLock',"
+						 "'ShareRowExclusiveLock',"
+						 "'ExclusiveLock',"
+						 "'AccessExclusiveLock'] "
+						 "WHEN 'ExclusiveLock' THEN ARRAY["
+						 "'RowShareLock',"
+						 "'RowExclusiveLock',"
+						 "'ShareUpdateExclusiveLock',"
+						 "'ShareLock',"
+						 "'ShareRowExclusiveLock',"
+						 "'ExclusiveLock',"
+						 "'AccessExclusiveLock'] "
+						 "WHEN 'AccessExclusiveLock' THEN ARRAY["
+						 "'AccessShareLock',"
+						 "'RowShareLock',"
+						 "'RowExclusiveLock',"
+						 "'ShareUpdateExclusiveLock',"
+						 "'ShareLock',"
+						 "'ShareRowExclusiveLock',"
+						 "'ExclusiveLock',"
+						 "'AccessExclusiveLock'] END) "
+
+						 "AND holder.locktype IS NOT DISTINCT FROM waiter.locktype "
+						 "AND holder.database IS NOT DISTINCT FROM waiter.database "
+						 "AND holder.relation IS NOT DISTINCT FROM waiter.relation "
+						 "AND holder.page IS NOT DISTINCT FROM waiter.page "
+						 "AND holder.tuple IS NOT DISTINCT FROM waiter.tuple "
+						 "AND holder.virtualxid IS NOT DISTINCT FROM waiter.virtualxid "
+						 "AND holder.transactionid IS NOT DISTINCT FROM waiter.transactionid "
+						 "AND holder.classid IS NOT DISTINCT FROM waiter.classid "
+						 "AND holder.objid IS NOT DISTINCT FROM waiter.objid "
+						 "AND holder.objsubid IS NOT DISTINCT FROM waiter.objsubid ");
+
+	res = PQprepare(conns[0], PREP_WAITING, wait_query.data, 0, NULL);
+	if (PQresultStatus(res) != PGRES_COMMAND_OK)
+	{
+		fprintf(stderr, "prepare of lock wait query failed: %s",
+				PQerrorMessage(conns[0]));
+		exit_nicely();
+	}
+	PQclear(res);
+	termPQExpBuffer(&wait_query);
 
 	/*
 	 * Run the permutations specified in the spec, or all if none were
@@ -256,6 +391,7 @@ run_permutation(TestSpec * testspec, int nsteps, Step ** steps)
 {
 	PGresult   *res;
 	int			i;
+	Step	   *waiting = NULL;
 
 	printf("\nstarting permutation:");
 	for (i = 0; i < nsteps; i++)
@@ -279,12 +415,12 @@ run_permutation(TestSpec * testspec, int nsteps, Step ** steps)
 	{
 		if (testspec->sessions[i]->setupsql)
 		{
-			res = PQexec(conns[i], testspec->sessions[i]->setupsql);
+			res = PQexec(conns[i + 1], testspec->sessions[i]->setupsql);
 			if (PQresultStatus(res) != PGRES_COMMAND_OK)
 			{
 				fprintf(stderr, "setup of session %s failed: %s",
 						testspec->sessions[i]->name,
-						PQerrorMessage(conns[0]));
+						PQerrorMessage(conns[i + 1]));
 				exit_nicely();
 			}
 			PQclear(res);
@@ -294,44 +430,43 @@ run_permutation(TestSpec * testspec, int nsteps, Step ** steps)
 	/* Perform steps */
 	for (i = 0; i < nsteps; i++)
 	{
-		Step	   *step = steps[i];
+		Step *step = steps[i];
 
-		printf("step %s: %s\n", step->name, step->sql);
-		res = PQexec(conns[step->session], step->sql);
-
-		switch (PQresultStatus(res))
+		if (!PQsendQuery(conns[1 + step->session], step->sql))
 		{
-			case PGRES_COMMAND_OK:
-				break;
-
-			case PGRES_TUPLES_OK:
-				printResultSet(res);
-				break;
-
-			case PGRES_FATAL_ERROR:
-				/* Detail may contain xid values, so just show primary. */
-				printf("%s:  %s\n", PQresultErrorField(res, PG_DIAG_SEVERITY),
-					   PQresultErrorField(res, PG_DIAG_MESSAGE_PRIMARY));
-				break;
-
-			default:
-				printf("unexpected result status: %s\n",
-					   PQresStatus(PQresultStatus(res)));
+			fprintf(stdout, "failed to send query: %s\n",
+					PQerrorMessage(conns[1 + step->session]));
+			exit_nicely();
 		}
-		PQclear(res);
+
+		if (waiting != NULL)
+		{
+			/* Some other step is already waiting: just block. */
+			try_complete_step(step, 0);
+
+			/* See if this step unblocked the waiting step. */
+			if (!try_complete_step(waiting, STEP_NONBLOCK | STEP_RETRY))
+				waiting = NULL;
+		}
+		else if (try_complete_step(step, STEP_NONBLOCK))
+			waiting = step;
 	}
+
+	/* Finish any waiting query. */
+	if (waiting != NULL)
+		try_complete_step(waiting, STEP_RETRY);
 
 	/* Perform per-session teardown */
 	for (i = 0; i < testspec->nsessions; i++)
 	{
 		if (testspec->sessions[i]->teardownsql)
 		{
-			res = PQexec(conns[i], testspec->sessions[i]->teardownsql);
+			res = PQexec(conns[i + 1], testspec->sessions[i]->teardownsql);
 			if (PQresultStatus(res) != PGRES_COMMAND_OK)
 			{
 				fprintf(stderr, "teardown of session %s failed: %s",
 						testspec->sessions[i]->name,
-						PQerrorMessage(conns[0]));
+						PQerrorMessage(conns[i + 1]));
 				/* don't exit on teardown failure */
 			}
 			PQclear(res);
@@ -351,6 +486,103 @@ run_permutation(TestSpec * testspec, int nsteps, Step ** steps)
 		}
 		PQclear(res);
 	}
+}
+
+/*
+ * Our caller already sent the query associated with this step.  Wait for it
+ * to either complete or (if given the STEP_NONBLOCK flag) to block while
+ * waiting for a lock.  We assume that any lock wait will persist until we
+ * have executed additional steps in the permutation.
+ *
+ * When calling this function on behalf of a given step for a second or later
+ * time, pass the STEP_RETRY flag.  This only affects the messages printed.
+ *
+ * If the STEP_NONBLOCK flag was specified and the query is waiting to acquire
+ * a lock, returns true.  Otherwise, returns false.
+ */
+static bool
+try_complete_step(Step *step, int flags)
+{
+	PGconn	   *conn = conns[1 + step->session];
+	fd_set		read_set;
+	struct timeval timeout;
+	int			sock = PQsocket(conn);
+	int			ret;
+	PGresult   *res;
+
+	FD_ZERO(&read_set);
+
+	while (flags & STEP_NONBLOCK && PQisBusy(conn))
+	{
+		FD_SET(sock, &read_set);
+		timeout.tv_sec = 0;
+		timeout.tv_usec = 10000;	/* Check for lock waits every 10ms. */
+
+		ret = select(sock + 1, &read_set, NULL, NULL, &timeout);
+		if (ret < 0)	/* error in select() */
+		{
+			fprintf(stderr, "select failed: %s\n", strerror(errno));
+			exit_nicely();
+		}
+		else if (ret == 0)	/* select() timeout: check for lock wait */
+		{
+			int			ntuples;
+
+			res = PQexecPrepared(conns[0], PREP_WAITING, 1,
+								 &backend_pids[step->session + 1],
+								 NULL, NULL, 0);
+			if (PQresultStatus(res) != PGRES_TUPLES_OK)
+			{
+				fprintf(stderr, "lock wait query failed: %s",
+						PQerrorMessage(conn));
+				exit_nicely();
+			}
+			ntuples = PQntuples(res);
+			PQclear(res);
+
+			if (ntuples >= 1)	/* waiting to acquire a lock */
+			{
+				if (!(flags & STEP_RETRY))
+					printf("step %s: %s <waiting ...>\n",
+						   step->name, step->sql);
+				return true;
+			}
+			/* else, not waiting: give it more time */
+		}
+		else if (!PQconsumeInput(conn)) /* select(): data available */
+		{
+			fprintf(stderr, "PQconsumeInput failed: %s", PQerrorMessage(conn));
+			exit_nicely();
+		}
+	}
+
+	if (flags & STEP_RETRY)
+		printf("step %s: <... completed>\n", step->name);
+	else
+		printf("step %s: %s\n", step->name, step->sql);
+
+	while ((res = PQgetResult(conn)))
+	{
+		switch (PQresultStatus(res))
+		{
+			case PGRES_COMMAND_OK:
+				break;
+			case PGRES_TUPLES_OK:
+				printResultSet(res);
+				break;
+			case PGRES_FATAL_ERROR:
+				/* Detail may contain xid values, so just show primary. */
+				printf("%s:  %s\n", PQresultErrorField(res, PG_DIAG_SEVERITY),
+					   PQresultErrorField(res, PG_DIAG_MESSAGE_PRIMARY));
+				break;
+			default:
+				printf("unexpected result status: %s\n",
+					   PQresStatus(PQresultStatus(res)));
+		}
+		PQclear(res);
+	}
+
+	return false;
 }
 
 static void

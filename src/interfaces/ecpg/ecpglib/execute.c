@@ -478,7 +478,7 @@ sprintf_double_value(char *ptr, double value, const char *delim)
 			sprintf(ptr, "%s%s", "Infinity", delim);
 	}
 	else
-		sprintf(ptr, "%.14g%s", value, delim);
+		sprintf(ptr, "%.15g%s", value, delim);
 }
 
 static void
@@ -494,7 +494,7 @@ sprintf_float_value(char *ptr, float value, const char *delim)
 			sprintf(ptr, "%s%s", "Infinity", delim);
 	}
 	else
-		sprintf(ptr, "%.14g%s", value, delim);
+		sprintf(ptr, "%.15g%s", value, delim);
 }
 
 bool
@@ -1698,7 +1698,7 @@ ecpg_execute(struct statement * stmt)
 	notify = PQnotifies(stmt->connection->connection);
 	if (notify)
 	{
-		ecpg_log("ecpg_execute on line %d: asynchronous notification of \"%s\" from backend pid %d received\n",
+		ecpg_log("ecpg_execute on line %d: asynchronous notification of \"%s\" from backend PID %d received\n",
 				 stmt->lineno, notify->relname, notify->be_pid);
 		PQfreemem(notify);
 	}

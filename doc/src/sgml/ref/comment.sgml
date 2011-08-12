@@ -23,11 +23,10 @@ PostgreSQL documentation
 <synopsis>
 COMMENT ON
 {
-  TABLE <replaceable class="PARAMETER">object_name</replaceable> |
-  COLUMN <replaceable class="PARAMETER">table_name</replaceable>.<replaceable class="PARAMETER">column_name</replaceable> |
   AGGREGATE <replaceable class="PARAMETER">agg_name</replaceable> (<replaceable class="PARAMETER">agg_type</replaceable> [, ...] ) |
   CAST (<replaceable>source_type</replaceable> AS <replaceable>target_type</replaceable>) |
   COLLATION <replaceable class="PARAMETER">object_name</replaceable> |
+  COLUMN <replaceable class="PARAMETER">relation_name</replaceable>.<replaceable class="PARAMETER">column_name</replaceable> |
   CONSTRAINT <replaceable class="PARAMETER">constraint_name</replaceable> ON <replaceable class="PARAMETER">table_name</replaceable> |
   CONVERSION <replaceable class="PARAMETER">object_name</replaceable> |
   DATABASE <replaceable class="PARAMETER">object_name</replaceable> |
@@ -47,6 +46,7 @@ COMMENT ON
   SCHEMA <replaceable class="PARAMETER">object_name</replaceable> |
   SEQUENCE <replaceable class="PARAMETER">object_name</replaceable> |
   SERVER <replaceable class="PARAMETER">object_name</replaceable> |
+  TABLE <replaceable class="PARAMETER">object_name</replaceable> |
   TABLESPACE <replaceable class="PARAMETER">object_name</replaceable> |
   TEXT SEARCH CONFIGURATION <replaceable class="PARAMETER">object_name</replaceable> |
   TEXT SEARCH DICTIONARY <replaceable class="PARAMETER">object_name</replaceable> |
@@ -98,7 +98,7 @@ COMMENT ON
   <variablelist>
    <varlistentry>
     <term><replaceable class="parameter">object_name</replaceable></term>
-    <term><replaceable class="parameter">table_name.column_name</replaceable></term>
+    <term><replaceable class="parameter">relation_name</replaceable>.<replaceable>column_name</replaceable></term>
     <term><replaceable class="parameter">agg_name</replaceable></term>
     <term><replaceable class="parameter">constraint_name</replaceable></term>
     <term><replaceable class="parameter">function_name</replaceable></term>
@@ -111,6 +111,9 @@ COMMENT ON
       aggregates, collations, conversions, domains, foreign tables, functions,
       indexes, operators, operator classes, operator families, sequences,
       text search objects, types, and views can be schema-qualified.
+      When commenting on a column,
+      <replaceable class="parameter">relation_name</replaceable> must refer
+      to a table, view, composite type, or foreign table.
      </para>
     </listitem>
    </varlistentry>
@@ -265,8 +268,11 @@ COMMENT ON CAST (text AS int4) IS 'Allow casts from text to int4';
 COMMENT ON COLLATION "fr_CA" IS 'Canadian French';
 COMMENT ON COLUMN my_table.my_column IS 'Employee ID number';
 COMMENT ON CONVERSION my_conv IS 'Conversion to UTF8';
+COMMENT ON CONSTRAINT bar_col_cons ON bar IS 'Constrains column col';
 COMMENT ON DATABASE my_database IS 'Development Database';
 COMMENT ON DOMAIN my_domain IS 'Email Address Domain';
+COMMENT ON EXTENSION hstore IS 'implements the hstore data type';
+COMMENT ON FOREIGN DATA WRAPPER mywrapper IS 'my foreign data wrapper';
 COMMENT ON FOREIGN TABLE my_foreign_table IS 'Employee Information in other database';
 COMMENT ON FUNCTION my_function (timestamp) IS 'Returns Roman Numeral';
 COMMENT ON INDEX my_index IS 'Enforces uniqueness on employee ID';
@@ -280,6 +286,7 @@ COMMENT ON ROLE my_role IS 'Administration group for finance tables';
 COMMENT ON RULE my_rule ON my_table IS 'Logs updates of employee records';
 COMMENT ON SCHEMA my_schema IS 'Departmental data';
 COMMENT ON SEQUENCE my_sequence IS 'Used to generate primary keys';
+COMMENT ON SERVER myserver IS 'my foreign server';
 COMMENT ON TABLE my_schema.my_table IS 'Employee Information';
 COMMENT ON TABLESPACE my_tablespace IS 'Tablespace for indexes';
 COMMENT ON TEXT SEARCH CONFIGURATION my_config IS 'Special word filtering';
@@ -289,8 +296,7 @@ COMMENT ON TEXT SEARCH TEMPLATE snowball IS 'Snowball stemmer';
 COMMENT ON TRIGGER my_trigger ON my_table IS 'Used for RI';
 COMMENT ON TYPE complex IS 'Complex number data type';
 COMMENT ON VIEW my_view IS 'View of departmental costs';
-</programlisting>
-  </para>
+</programlisting></para>
  </refsect1>
 
  <refsect1>

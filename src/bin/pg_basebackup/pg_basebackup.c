@@ -88,23 +88,24 @@ get_gz_error(gzFile *gzf)
 static void
 usage(void)
 {
-	printf(_("%s takes base backups of running PostgreSQL servers\n\n"),
+	printf(_("%s takes a base backup of a running PostgreSQL server.\n\n"),
 		   progname);
 	printf(_("Usage:\n"));
 	printf(_("  %s [OPTION]...\n"), progname);
 	printf(_("\nOptions controlling the output:\n"));
-	printf(_("  -D, --pgdata=directory    receive base backup into directory\n"));
-	printf(_("  -F, --format=p|t          output format (plain, tar)\n"));
-	printf(_("  -x, --xlog=fetch|stream   include required WAL files in backup\n"));
-	printf(_("  -Z, --compress=0-9        compress tar output\n"));
+	printf(_("  -D, --pgdata=DIRECTORY   receive base backup into directory\n"));
+	printf(_("  -F, --format=p|t         output format (plain, tar)\n"));
+	printf(_("  -x, --xlog=fetch|stream  include required WAL files in backup\n"));
+	printf(_("  -z, --gzip               compress tar output\n"));
+	printf(_("  -Z, --compress=0-9       compress tar output with given compression level\n"));
 	printf(_("\nGeneral options:\n"));
 	printf(_("  -c, --checkpoint=fast|spread\n"
-		  "                            set fast or spread checkpointing\n"));
-	printf(_("  -l, --label=label         set backup label\n"));
-	printf(_("  -P, --progress            show progress information\n"));
-	printf(_("  -v, --verbose             output verbose messages\n"));
-	printf(_("  -?, --help                show this help, then exit\n"));
-	printf(_("  -V, --version             output version information, then exit\n"));
+		   "                           set fast or spread checkpointing\n"));
+	printf(_("  -l, --label=LABEL        set backup label\n"));
+	printf(_("  -P, --progress           show progress information\n"));
+	printf(_("  -v, --verbose            output verbose messages\n"));
+	printf(_("  --help                   show this help, then exit\n"));
+	printf(_("  --version                output version information, then exit\n"));
 	printf(_("\nConnection options:\n"));
 	printf(_("  -h, --host=HOSTNAME      database server host or socket directory\n"));
 	printf(_("  -p, --port=PORT          database server port number\n"));
@@ -375,18 +376,18 @@ progress_report(int tablespacenum, char *fn)
 			 * call)
 			 */
 			fprintf(stderr,
-					INT64_FORMAT "/" INT64_FORMAT " kB (100%%) %i/%i tablespaces %35s\r",
+					INT64_FORMAT "/" INT64_FORMAT " kB (100%%) %d/%d tablespaces %35s\r",
 					totaldone / 1024, totalsize,
 					tablespacenum, tablespacecount, "");
 		else
 			fprintf(stderr,
-					INT64_FORMAT "/" INT64_FORMAT " kB (%i%%) %i/%i tablespaces (%-30.30s)\r",
+					INT64_FORMAT "/" INT64_FORMAT " kB (%d%%) %d/%d tablespaces (%-30.30s)\r",
 					totaldone / 1024, totalsize,
 					percent,
 					tablespacenum, tablespacecount, fn);
 	}
 	else
-		fprintf(stderr, INT64_FORMAT "/" INT64_FORMAT " kB (%i%%) %i/%i tablespaces\r",
+		fprintf(stderr, INT64_FORMAT "/" INT64_FORMAT " kB (%d%%) %d/%d tablespaces\r",
 				totaldone / 1024, totalsize,
 				percent,
 				tablespacenum, tablespacecount);
@@ -420,17 +421,32 @@ ReceiveTarFile(PGconn *conn, PGresult *res, int rownum)
 		 * Base tablespaces
 		 */
 		if (strcmp(basedir, "-") == 0)
-			tarfile = stdout;
+		{
+#ifdef HAVE_LIBZ
+			if (compresslevel != 0)
+			{
+				ztarfile = gzdopen(dup(fileno(stdout)), "wb");
+				if (gzsetparams(ztarfile, compresslevel, Z_DEFAULT_STRATEGY) != Z_OK)
+				{
+					fprintf(stderr, _("%s: could not set compression level %d: %s\n"),
+							progname, compresslevel, get_gz_error(ztarfile));
+					disconnect_and_exit(1);
+				}
+			}
+			else
+#endif
+				tarfile = stdout;
+		}
 		else
 		{
 #ifdef HAVE_LIBZ
-			if (compresslevel > 0)
+			if (compresslevel != 0)
 			{
 				snprintf(fn, sizeof(fn), "%s/base.tar.gz", basedir);
 				ztarfile = gzopen(fn, "wb");
 				if (gzsetparams(ztarfile, compresslevel, Z_DEFAULT_STRATEGY) != Z_OK)
 				{
-					fprintf(stderr, _("%s: could not set compression level %i: %s\n"),
+					fprintf(stderr, _("%s: could not set compression level %d: %s\n"),
 							progname, compresslevel, get_gz_error(ztarfile));
 					disconnect_and_exit(1);
 				}
@@ -448,13 +464,13 @@ ReceiveTarFile(PGconn *conn, PGresult *res, int rownum)
 		 * Specific tablespace
 		 */
 #ifdef HAVE_LIBZ
-		if (compresslevel > 0)
+		if (compresslevel != 0)
 		{
 			snprintf(fn, sizeof(fn), "%s/%s.tar.gz", basedir, PQgetvalue(res, rownum, 0));
 			ztarfile = gzopen(fn, "wb");
 			if (gzsetparams(ztarfile, compresslevel, Z_DEFAULT_STRATEGY) != Z_OK)
 			{
-				fprintf(stderr, _("%s: could not set compression level %i: %s\n"),
+				fprintf(stderr, _("%s: could not set compression level %d: %s\n"),
 						progname, compresslevel, get_gz_error(ztarfile));
 				disconnect_and_exit(1);
 			}
@@ -468,7 +484,7 @@ ReceiveTarFile(PGconn *conn, PGresult *res, int rownum)
 	}
 
 #ifdef HAVE_LIBZ
-	if (compresslevel > 0)
+	if (compresslevel != 0)
 	{
 		if (!ztarfile)
 		{
@@ -496,7 +512,7 @@ ReceiveTarFile(PGconn *conn, PGresult *res, int rownum)
 	res = PQgetResult(conn);
 	if (PQresultStatus(res) != PGRES_COPY_OUT)
 	{
-		fprintf(stderr, _("%s: could not get COPY data stream: %s\n"),
+		fprintf(stderr, _("%s: could not get COPY data stream: %s"),
 				progname, PQerrorMessage(conn));
 		disconnect_and_exit(1);
 	}
@@ -543,7 +559,14 @@ ReceiveTarFile(PGconn *conn, PGresult *res, int rownum)
 				}
 			}
 
-			if (strcmp(basedir, "-") != 0)
+			if (strcmp(basedir, "-") == 0)
+			{
+#ifdef HAVE_LIBZ
+				if (ztarfile)
+					gzclose(ztarfile);
+#endif
+			}
+			else
 			{
 #ifdef HAVE_LIBZ
 				if (ztarfile != NULL)
@@ -557,7 +580,7 @@ ReceiveTarFile(PGconn *conn, PGresult *res, int rownum)
 		}
 		else if (r == -2)
 		{
-			fprintf(stderr, _("%s: could not read COPY data: %s\n"),
+			fprintf(stderr, _("%s: could not read COPY data: %s"),
 					progname, PQerrorMessage(conn));
 			disconnect_and_exit(1);
 		}
@@ -621,7 +644,7 @@ ReceiveAndUnpackTarFile(PGconn *conn, PGresult *res, int rownum)
 	res = PQgetResult(conn);
 	if (PQresultStatus(res) != PGRES_COPY_OUT)
 	{
-		fprintf(stderr, _("%s: could not get COPY data stream: %s\n"),
+		fprintf(stderr, _("%s: could not get COPY data stream: %s"),
 				progname, PQerrorMessage(conn));
 		disconnect_and_exit(1);
 	}
@@ -650,7 +673,7 @@ ReceiveAndUnpackTarFile(PGconn *conn, PGresult *res, int rownum)
 		}
 		else if (r == -2)
 		{
-			fprintf(stderr, _("%s: could not read COPY data: %s\n"),
+			fprintf(stderr, _("%s: could not read COPY data: %s"),
 					progname, PQerrorMessage(conn));
 			disconnect_and_exit(1);
 		}
@@ -664,7 +687,7 @@ ReceiveAndUnpackTarFile(PGconn *conn, PGresult *res, int rownum)
 			 */
 			if (r != 512)
 			{
-				fprintf(stderr, _("%s: Invalid tar block header size: %i\n"),
+				fprintf(stderr, _("%s: invalid tar block header size: %d\n"),
 						progname, r);
 				disconnect_and_exit(1);
 			}
@@ -672,7 +695,7 @@ ReceiveAndUnpackTarFile(PGconn *conn, PGresult *res, int rownum)
 
 			if (sscanf(copybuf + 124, "%11o", &current_len_left) != 1)
 			{
-				fprintf(stderr, _("%s: could not parse file size!\n"),
+				fprintf(stderr, _("%s: could not parse file size\n"),
 						progname);
 				disconnect_and_exit(1);
 			}
@@ -680,7 +703,7 @@ ReceiveAndUnpackTarFile(PGconn *conn, PGresult *res, int rownum)
 			/* Set permissions on the file */
 			if (sscanf(&copybuf[100], "%07o ", &filemode) != 1)
 			{
-				fprintf(stderr, _("%s: could not parse file mode!\n"),
+				fprintf(stderr, _("%s: could not parse file mode\n"),
 						progname);
 				disconnect_and_exit(1);
 			}
@@ -736,14 +759,14 @@ ReceiveAndUnpackTarFile(PGconn *conn, PGresult *res, int rownum)
 					if (symlink(&copybuf[157], fn) != 0)
 					{
 						fprintf(stderr,
-								_("%s: could not create symbolic link from %s to %s: %s\n"),
+								_("%s: could not create symbolic link from \"%s\" to \"%s\": %s\n"),
 								progname, fn, &copybuf[157], strerror(errno));
 						disconnect_and_exit(1);
 					}
 				}
 				else
 				{
-					fprintf(stderr, _("%s: unknown link indicator \"%c\"\n"),
+					fprintf(stderr, _("%s: unrecognized link indicator \"%c\"\n"),
 							progname, copybuf[156]);
 					disconnect_and_exit(1);
 				}
@@ -821,7 +844,7 @@ ReceiveAndUnpackTarFile(PGconn *conn, PGresult *res, int rownum)
 
 	if (file != NULL)
 	{
-		fprintf(stderr, _("%s: last file was never finished!\n"), progname);
+		fprintf(stderr, _("%s: COPY stream ended before last file was finished\n"), progname);
 		disconnect_and_exit(1);
 	}
 
@@ -878,7 +901,7 @@ BaseBackup(void)
 
 	if (PQsendQuery(conn, current_path) == 0)
 	{
-		fprintf(stderr, _("%s: could not start base backup: %s\n"),
+		fprintf(stderr, _("%s: could not send base backup command: %s"),
 				progname, PQerrorMessage(conn));
 		disconnect_and_exit(1);
 	}
@@ -889,13 +912,13 @@ BaseBackup(void)
 	res = PQgetResult(conn);
 	if (PQresultStatus(res) != PGRES_TUPLES_OK)
 	{
-		fprintf(stderr, _("%s: could not initiate base backup: %s\n"),
+		fprintf(stderr, _("%s: could not initiate base backup: %s"),
 				progname, PQerrorMessage(conn));
 		disconnect_and_exit(1);
 	}
 	if (PQntuples(res) != 1)
 	{
-		fprintf(stderr, _("%s: no start point returned from server.\n"),
+		fprintf(stderr, _("%s: no start point returned from server\n"),
 				progname);
 		disconnect_and_exit(1);
 	}
@@ -911,13 +934,13 @@ BaseBackup(void)
 	res = PQgetResult(conn);
 	if (PQresultStatus(res) != PGRES_TUPLES_OK)
 	{
-		fprintf(stderr, _("%s: could not get backup header: %s\n"),
+		fprintf(stderr, _("%s: could not get backup header: %s"),
 				progname, PQerrorMessage(conn));
 		disconnect_and_exit(1);
 	}
 	if (PQntuples(res) < 1)
 	{
-		fprintf(stderr, _("%s: no data returned from server.\n"), progname);
+		fprintf(stderr, _("%s: no data returned from server\n"), progname);
 		disconnect_and_exit(1);
 	}
 
@@ -945,7 +968,7 @@ BaseBackup(void)
 	 */
 	if (format == 't' && strcmp(basedir, "-") == 0 && PQntuples(res) > 1)
 	{
-		fprintf(stderr, _("%s: can only write single tablespace to stdout, database has %i.\n"),
+		fprintf(stderr, _("%s: can only write single tablespace to stdout, database has %d\n"),
 				progname, PQntuples(res));
 		disconnect_and_exit(1);
 	}
@@ -986,13 +1009,13 @@ BaseBackup(void)
 	res = PQgetResult(conn);
 	if (PQresultStatus(res) != PGRES_TUPLES_OK)
 	{
-		fprintf(stderr, _("%s: could not get end xlog position from server.\n"),
+		fprintf(stderr, _("%s: could not get WAL end position from server\n"),
 				progname);
 		disconnect_and_exit(1);
 	}
 	if (PQntuples(res) != 1)
 	{
-		fprintf(stderr, _("%s: no end point returned from server.\n"),
+		fprintf(stderr, _("%s: no WAL end position returned from server\n"),
 				progname);
 		disconnect_and_exit(1);
 	}
@@ -1004,7 +1027,7 @@ BaseBackup(void)
 	res = PQgetResult(conn);
 	if (PQresultStatus(res) != PGRES_COMMAND_OK)
 	{
-		fprintf(stderr, _("%s: final receive failed: %s\n"),
+		fprintf(stderr, _("%s: final receive failed: %s"),
 				progname, PQerrorMessage(conn));
 		disconnect_and_exit(1);
 	}
@@ -1098,7 +1121,7 @@ BaseBackup(void)
 	PQfinish(conn);
 
 	if (verbose)
-		fprintf(stderr, "%s: base backup completed.\n", progname);
+		fprintf(stderr, "%s: base backup completed\n", progname);
 }
 
 
@@ -1112,6 +1135,7 @@ main(int argc, char **argv)
 		{"format", required_argument, NULL, 'F'},
 		{"checkpoint", required_argument, NULL, 'c'},
 		{"xlog", required_argument, NULL, 'x'},
+		{"gzip", no_argument, NULL, 'z'},
 		{"compress", required_argument, NULL, 'Z'},
 		{"label", required_argument, NULL, 'l'},
 		{"host", required_argument, NULL, 'h'},
@@ -1145,7 +1169,7 @@ main(int argc, char **argv)
 		}
 	}
 
-	while ((c = getopt_long(argc, argv, "D:F:l:Z:c:h:p:U:x:wWvP",
+	while ((c = getopt_long(argc, argv, "D:F:x:l:zZ:c:h:p:U:wWvP",
 							long_options, &option_index)) != -1)
 	{
 		switch (c)
@@ -1183,6 +1207,13 @@ main(int argc, char **argv)
 			case 'l':
 				label = xstrdup(optarg);
 				break;
+			case 'z':
+#ifdef HAVE_LIBZ
+				compresslevel = Z_DEFAULT_COMPRESSION;
+#else
+				compresslevel = 1;		/* will be rejected below */
+#endif
+				break;
 			case 'Z':
 				compresslevel = atoi(optarg);
 				if (compresslevel <= 0 || compresslevel > 9)
@@ -1208,12 +1239,6 @@ main(int argc, char **argv)
 				dbhost = xstrdup(optarg);
 				break;
 			case 'p':
-				if (atoi(optarg) <= 0)
-				{
-					fprintf(stderr, _("%s: invalid port number \"%s\"\n"),
-							progname, optarg);
-					exit(1);
-				}
 				dbport = xstrdup(optarg);
 				break;
 			case 'U':
@@ -1269,7 +1294,7 @@ main(int argc, char **argv)
 	/*
 	 * Mutually exclusive arguments
 	 */
-	if (format == 'p' && compresslevel > 0)
+	if (format == 'p' && compresslevel != 0)
 	{
 		fprintf(stderr,
 				_("%s: only tar mode backups can be compressed\n"),
@@ -1294,14 +1319,6 @@ main(int argc, char **argv)
 	{
 		fprintf(stderr,
 				_("%s: this build does not support compression\n"),
-				progname);
-		exit(1);
-	}
-#else
-	if (compresslevel > 0 && strcmp(basedir, "-") == 0)
-	{
-		fprintf(stderr,
-				_("%s: compression is not supported on standard output\n"),
 				progname);
 		exit(1);
 	}

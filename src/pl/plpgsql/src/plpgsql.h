@@ -120,13 +120,18 @@ enum
 };
 
 /* ----------
- * GET DIAGNOSTICS system attrs
+ * GET DIAGNOSTICS information items
  * ----------
  */
 enum
 {
 	PLPGSQL_GETDIAG_ROW_COUNT,
-	PLPGSQL_GETDIAG_RESULT_OID
+	PLPGSQL_GETDIAG_RESULT_OID,
+	PLPGSQL_GETDIAG_ERROR_CONTEXT,
+	PLPGSQL_GETDIAG_ERROR_DETAIL,
+	PLPGSQL_GETDIAG_ERROR_HINT,
+	PLPGSQL_GETDIAG_RETURNED_SQLSTATE,
+	PLPGSQL_GETDIAG_MESSAGE_TEXT
 };
 
 /* --------
@@ -376,6 +381,7 @@ typedef struct
 {								/* Get Diagnostics statement		*/
 	int			cmd_type;
 	int			lineno;
+	bool		is_stacked;		/* STACKED or CURRENT diagnostics area? */
 	List	   *diag_items;		/* List of PLpgSQL_diag_item */
 } PLpgSQL_stmt_getdiag;
 
@@ -905,8 +911,9 @@ extern void plpgsql_subxact_cb(SubXactEvent event, SubTransactionId mySubid,
 				   SubTransactionId parentSubid, void *arg);
 extern Oid exec_get_datum_type(PLpgSQL_execstate *estate,
 					PLpgSQL_datum *datum);
-extern Oid exec_get_datum_collation(PLpgSQL_execstate *estate,
-						 PLpgSQL_datum *datum);
+extern void exec_get_datum_type_info(PLpgSQL_execstate *estate,
+						 PLpgSQL_datum *datum,
+						 Oid *typeid, int32 *typmod, Oid *collation);
 
 /* ----------
  * Functions for namespace handling in pl_funcs.c
@@ -928,6 +935,7 @@ extern PLpgSQL_nsitem *plpgsql_ns_lookup_label(PLpgSQL_nsitem *ns_cur,
  * ----------
  */
 extern const char *plpgsql_stmt_typename(PLpgSQL_stmt *stmt);
+extern const char *plpgsql_getdiag_kindname(int kind);
 extern void plpgsql_free_function_memory(PLpgSQL_function *func);
 extern void plpgsql_dumptree(PLpgSQL_function *func);
 

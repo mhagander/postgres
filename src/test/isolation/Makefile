@@ -6,11 +6,14 @@ subdir = src/test/isolation
 top_builddir = ../../..
 include $(top_builddir)/src/Makefile.global
 
+# where to find psql for testing an existing installation
+PSQLDIR = $(bindir)
+
 ifeq ($(PORTNAME), win32)
 LDLIBS += -lws2_32
 endif
 
-override CPPFLAGS := -I$(srcdir) -I$(libpq_srcdir) $(CPPFLAGS)
+override CPPFLAGS := -I$(srcdir) -I$(libpq_srcdir) -I$(srcdir)/../regress $(CPPFLAGS)
 override LDLIBS := $(libpq_pgport) $(LDLIBS)
 
 OBJS =  specparse.o isolationtester.o
@@ -64,13 +67,18 @@ endif
 clean distclean:
 	rm -f isolationtester$(X) pg_isolation_regress$(X) $(OBJS) isolation_main.o
 	rm -f pg_regress.o
-	rm -rf results
+	rm -rf $(pg_regress_clean_files)
 
 maintainer-clean: distclean
 	rm -f specparse.c specscanner.c
 
 installcheck: all
-	./pg_isolation_regress --inputdir=$(srcdir) --schedule=$(srcdir)/isolation_schedule
+	./pg_isolation_regress --psqldir='$(PSQLDIR)' --inputdir=$(srcdir) --schedule=$(srcdir)/isolation_schedule
 
-check: all
-	./pg_isolation_regress --temp-install=./tmp_check --inputdir=$(srcdir) --top-builddir=$(top_builddir) --schedule=$(srcdir)/isolation_schedule
+# We can't support "make check" because isolationtester requires libpq, and
+# in fact (on typical platforms using shared libraries) requires libpq to
+# already be installed.  You could run "make install" and then run a check
+# using a temp installation, but there seems little point in that.
+check:
+	@echo "'make check' is not supported."
+	@echo "Install PostgreSQL, then 'make installcheck' instead."

@@ -1,6 +1,6 @@
 <!-- doc/src/sgml/pgtrgm.sgml -->
 
-<sect1 id="pgtrgm">
+<sect1 id="pgtrgm" xreflabel="pg_trgm">
  <title>pg_trgm</title>
 
  <indexterm zone="pgtrgm">
@@ -42,6 +42,12 @@
 
  <sect2>
   <title>Functions and Operators</title>
+
+  <para>
+   The functions provided by the <filename>pg_trgm</filename> module
+   are shown in <xref linkend="pgtrgm-func-table">, the operators
+   in <xref linkend="pgtrgm-op-table">.
+  </para>
 
   <table id="pgtrgm-func-table">
    <title><filename>pg_trgm</filename> Functions</title>

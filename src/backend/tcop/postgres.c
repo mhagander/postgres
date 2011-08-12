@@ -179,7 +179,7 @@ static int	UseNewLine = 1;		/* Use newlines query delimiters (the default) */
 static int	UseNewLine = 0;		/* Use EOF as query delimiters */
 #endif   /* TCOP_DONTUSENEWLINE */
 
-/* whether or not, and why, we were cancelled by conflict with recovery */
+/* whether or not, and why, we were canceled by conflict with recovery */
 static bool RecoveryConflictPending = false;
 static bool RecoveryConflictRetryable = true;
 static ProcSignalReason RecoveryConflictReason;
@@ -2643,10 +2643,11 @@ die(SIGNAL_ARGS)
 			InterruptHoldoffCount--;
 			ProcessInterrupts();
 		}
-
-		/* Interrupt any sync rep wait which is currently in progress. */
-		SetLatch(&(MyProc->waitLatch));
 	}
+
+	/* If we're still here, waken anything waiting on the process latch */
+	if (MyProc)
+		SetLatch(&MyProc->procLatch);
 
 	errno = save_errno;
 }
@@ -2684,10 +2685,11 @@ StatementCancelHandler(SIGNAL_ARGS)
 			InterruptHoldoffCount--;
 			ProcessInterrupts();
 		}
-
-		/* Interrupt any sync rep wait which is currently in progress. */
-		SetLatch(&(MyProc->waitLatch));
 	}
+
+	/* If we're still here, waken anything waiting on the process latch */
+	if (MyProc)
+		SetLatch(&MyProc->procLatch);
 
 	errno = save_errno;
 }
@@ -2696,6 +2698,7 @@ StatementCancelHandler(SIGNAL_ARGS)
 void
 FloatExceptionHandler(SIGNAL_ARGS)
 {
+	/* We're not returning, so no need to save errno */
 	ereport(ERROR,
 			(errcode(ERRCODE_FLOATING_POINT_EXCEPTION),
 			 errmsg("floating-point exception"),
@@ -2708,7 +2711,13 @@ FloatExceptionHandler(SIGNAL_ARGS)
 static void
 SigHupHandler(SIGNAL_ARGS)
 {
+	int			save_errno = errno;
+
 	got_SIGHUP = true;
+	if (MyProc)
+		SetLatch(&MyProc->procLatch);
+
+	errno = save_errno;
 }
 
 /*
@@ -4294,7 +4303,7 @@ ShowUsage(const char *title)
 
 	ereport(LOG,
 			(errmsg_internal("%s", title),
-			 errdetail("%s", str.data)));
+			 errdetail_internal("%s", str.data)));
 
 	pfree(str.data);
 }

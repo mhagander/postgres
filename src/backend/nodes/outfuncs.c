@@ -1976,6 +1976,7 @@ _outIndexStmt(StringInfo str, IndexStmt *node)
 	WRITE_NODE_FIELD(whereClause);
 	WRITE_NODE_FIELD(excludeOpNames);
 	WRITE_OID_FIELD(indexOid);
+	WRITE_OID_FIELD(oldNode);
 	WRITE_BOOL_FIELD(unique);
 	WRITE_BOOL_FIELD(primary);
 	WRITE_BOOL_FIELD(isconstraint);
@@ -2101,6 +2102,7 @@ _outColumnDef(StringInfo str, ColumnDef *node)
 	WRITE_NODE_FIELD(collClause);
 	WRITE_OID_FIELD(collOid);
 	WRITE_NODE_FIELD(constraints);
+	WRITE_NODE_FIELD(fdwoptions);
 }
 
 static void

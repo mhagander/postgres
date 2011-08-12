@@ -952,7 +952,7 @@ MarkBufferDirty(Buffer buffer)
 	volatile BufferDesc *bufHdr;
 
 	if (!BufferIsValid(buffer))
-		elog(ERROR, "bad buffer id: %d", buffer);
+		elog(ERROR, "bad buffer ID: %d", buffer);
 
 	if (BufferIsLocal(buffer))
 	{
@@ -1834,7 +1834,10 @@ BufferGetTag(Buffer buffer, RelFileNode *rnode, ForkNumber *forknum,
  * written.)
  *
  * If the caller has an smgr reference for the buffer's relation, pass it
- * as the second parameter.  If not, pass NULL.
+ * as the second parameter.  If not, pass NULL.  In the latter case, the
+ * relation will be marked as "transient" so that the corresponding
+ * kernel-level file descriptors are closed when the current transaction ends,
+ * if any.
  */
 static void
 FlushBuffer(volatile BufferDesc *buf, SMgrRelation reln)
@@ -1856,9 +1859,12 @@ FlushBuffer(volatile BufferDesc *buf, SMgrRelation reln)
 	errcontext.previous = error_context_stack;
 	error_context_stack = &errcontext;
 
-	/* Find smgr relation for buffer */
+	/* Find smgr relation for buffer, and mark it as transient */
 	if (reln == NULL)
+	{
 		reln = smgropen(buf->tag.rnode, InvalidBackendId);
+		smgrsettransient(reln);
+	}
 
 	TRACE_POSTGRESQL_BUFFER_FLUSH_START(buf->tag.forkNum,
 										buf->tag.blockNum,
@@ -2192,7 +2198,7 @@ ReleaseBuffer(Buffer buffer)
 	volatile BufferDesc *bufHdr;
 
 	if (!BufferIsValid(buffer))
-		elog(ERROR, "bad buffer id: %d", buffer);
+		elog(ERROR, "bad buffer ID: %d", buffer);
 
 	ResourceOwnerForgetBuffer(CurrentResourceOwner, buffer);
 
@@ -2264,7 +2270,7 @@ SetBufferCommitInfoNeedsSave(Buffer buffer)
 	volatile BufferDesc *bufHdr;
 
 	if (!BufferIsValid(buffer))
-		elog(ERROR, "bad buffer id: %d", buffer);
+		elog(ERROR, "bad buffer ID: %d", buffer);
 
 	if (BufferIsLocal(buffer))
 	{
@@ -2443,10 +2449,11 @@ LockBufferForCleanup(Buffer buffer)
 		/* Wait to be signaled by UnpinBuffer() */
 		if (InHotStandby)
 		{
-			/* Share the bufid that Startup process waits on */
+			/* Publish the bufid that Startup process waits on */
 			SetStartupBufferPinWaitBufId(buffer - 1);
 			/* Set alarm and then wait to be signaled by UnpinBuffer() */
 			ResolveRecoveryConflictWithBufferPin();
+			/* Reset the published bufid */
 			SetStartupBufferPinWaitBufId(-1);
 		}
 		else
@@ -2459,7 +2466,7 @@ LockBufferForCleanup(Buffer buffer)
 
 /*
  * Check called from RecoveryConflictInterrupt handler when Startup
- * process requests cancelation of all pin holders that are blocking it.
+ * process requests cancellation of all pin holders that are blocking it.
  */
 bool
 HoldingBufferPinThatDelaysRecovery(void)

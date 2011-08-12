@@ -118,7 +118,8 @@ typedef enum TBlockState
 	/* subtransaction states */
 	TBLOCK_SUBBEGIN,			/* starting a subtransaction */
 	TBLOCK_SUBINPROGRESS,		/* live subtransaction */
-	TBLOCK_SUBEND,				/* RELEASE received */
+	TBLOCK_SUBRELEASE,			/* RELEASE received */
+	TBLOCK_SUBCOMMIT,			/* COMMIT received while TBLOCK_SUBINPROGRESS */
 	TBLOCK_SUBABORT,			/* failed subxact, awaiting ROLLBACK */
 	TBLOCK_SUBABORT_END,		/* failed subxact, ROLLBACK received */
 	TBLOCK_SUBABORT_PENDING,	/* live subxact, ROLLBACK received */
@@ -272,7 +273,7 @@ static TransactionId RecordTransactionAbort(bool isSubXact);
 static void StartTransaction(void);
 
 static void StartSubTransaction(void);
-static void CommitSubTransaction(void);
+static void CommitSubTransaction(bool isTopLevel);
 static void AbortSubTransaction(void);
 static void CleanupSubTransaction(void);
 static void PushTransaction(void);
@@ -453,6 +454,13 @@ AssignTransactionId(TransactionState s)
 
 	if (isSubXact)
 		SubTransSetParent(s->transactionId, s->parent->transactionId, false);
+
+	/*
+	 * If it's a top-level transaction, the predicate locking system needs to
+	 * be told about it too.
+	 */
+	if (!isSubXact)
+		RegisterPredicateLockingXid(s->transactionId);
 
 	/*
 	 * Acquire lock on the transaction XID.  (We assume this cannot block.) We
@@ -955,24 +963,8 @@ RecordTransactionCommit(void)
 		/*
 		 * Begin commit critical section and insert the commit XLOG record.
 		 */
-		XLogRecData rdata[4];
-		int			lastrdata = 0;
-		xl_xact_commit xlrec;
-
 		/* Tell bufmgr and smgr to prepare for commit */
 		BufmgrCommit();
-
-		/*
-		 * Set flags required for recovery processing of commits.
-		 */
-		xlrec.xinfo = 0;
-		if (RelcacheInitFileInval)
-			xlrec.xinfo |= XACT_COMPLETION_UPDATE_RELCACHE_FILE;
-		if (forceSyncCommit)
-			xlrec.xinfo |= XACT_COMPLETION_FORCE_SYNC_COMMIT;
-
-		xlrec.dbId = MyDatabaseId;
-		xlrec.tsId = MyDatabaseTableSpace;
 
 		/*
 		 * Mark ourselves as within our "commit critical section".	This
@@ -995,43 +987,88 @@ RecordTransactionCommit(void)
 		MyProc->inCommit = true;
 
 		SetCurrentTransactionStopTimestamp();
-		xlrec.xact_time = xactStopTimestamp;
-		xlrec.nrels = nrels;
-		xlrec.nsubxacts = nchildren;
-		xlrec.nmsgs = nmsgs;
-		rdata[0].data = (char *) (&xlrec);
-		rdata[0].len = MinSizeOfXactCommit;
-		rdata[0].buffer = InvalidBuffer;
-		/* dump rels to delete */
-		if (nrels > 0)
-		{
-			rdata[0].next = &(rdata[1]);
-			rdata[1].data = (char *) rels;
-			rdata[1].len = nrels * sizeof(RelFileNode);
-			rdata[1].buffer = InvalidBuffer;
-			lastrdata = 1;
-		}
-		/* dump committed child Xids */
-		if (nchildren > 0)
-		{
-			rdata[lastrdata].next = &(rdata[2]);
-			rdata[2].data = (char *) children;
-			rdata[2].len = nchildren * sizeof(TransactionId);
-			rdata[2].buffer = InvalidBuffer;
-			lastrdata = 2;
-		}
-		/* dump shared cache invalidation messages */
-		if (nmsgs > 0)
-		{
-			rdata[lastrdata].next = &(rdata[3]);
-			rdata[3].data = (char *) invalMessages;
-			rdata[3].len = nmsgs * sizeof(SharedInvalidationMessage);
-			rdata[3].buffer = InvalidBuffer;
-			lastrdata = 3;
-		}
-		rdata[lastrdata].next = NULL;
 
-		(void) XLogInsert(RM_XACT_ID, XLOG_XACT_COMMIT, rdata);
+		/*
+		 * Do we need the long commit record? If not, use the compact format.
+		 */
+		if (nrels > 0 || nmsgs > 0 || RelcacheInitFileInval || forceSyncCommit)
+		{
+			XLogRecData rdata[4];
+			int			lastrdata = 0;
+			xl_xact_commit xlrec;
+			/*
+			 * Set flags required for recovery processing of commits.
+			 */
+			xlrec.xinfo = 0;
+			if (RelcacheInitFileInval)
+				xlrec.xinfo |= XACT_COMPLETION_UPDATE_RELCACHE_FILE;
+			if (forceSyncCommit)
+				xlrec.xinfo |= XACT_COMPLETION_FORCE_SYNC_COMMIT;
+
+			xlrec.dbId = MyDatabaseId;
+			xlrec.tsId = MyDatabaseTableSpace;
+
+			xlrec.xact_time = xactStopTimestamp;
+			xlrec.nrels = nrels;
+			xlrec.nsubxacts = nchildren;
+			xlrec.nmsgs = nmsgs;
+			rdata[0].data = (char *) (&xlrec);
+			rdata[0].len = MinSizeOfXactCommit;
+			rdata[0].buffer = InvalidBuffer;
+			/* dump rels to delete */
+			if (nrels > 0)
+			{
+				rdata[0].next = &(rdata[1]);
+				rdata[1].data = (char *) rels;
+				rdata[1].len = nrels * sizeof(RelFileNode);
+				rdata[1].buffer = InvalidBuffer;
+				lastrdata = 1;
+			}
+			/* dump committed child Xids */
+			if (nchildren > 0)
+			{
+				rdata[lastrdata].next = &(rdata[2]);
+				rdata[2].data = (char *) children;
+				rdata[2].len = nchildren * sizeof(TransactionId);
+				rdata[2].buffer = InvalidBuffer;
+				lastrdata = 2;
+			}
+			/* dump shared cache invalidation messages */
+			if (nmsgs > 0)
+			{
+				rdata[lastrdata].next = &(rdata[3]);
+				rdata[3].data = (char *) invalMessages;
+				rdata[3].len = nmsgs * sizeof(SharedInvalidationMessage);
+				rdata[3].buffer = InvalidBuffer;
+				lastrdata = 3;
+			}
+			rdata[lastrdata].next = NULL;
+
+			(void) XLogInsert(RM_XACT_ID, XLOG_XACT_COMMIT, rdata);
+		}
+		else
+		{
+			XLogRecData rdata[2];
+			int			lastrdata = 0;
+			xl_xact_commit_compact	xlrec;
+			xlrec.xact_time = xactStopTimestamp;
+			xlrec.nsubxacts = nchildren;
+			rdata[0].data = (char *) (&xlrec);
+			rdata[0].len = MinSizeOfXactCommitCompact;
+			rdata[0].buffer = InvalidBuffer;
+			/* dump committed child Xids */
+			if (nchildren > 0)
+			{
+				rdata[0].next = &(rdata[1]);
+				rdata[1].data = (char *) children;
+				rdata[1].len = nchildren * sizeof(TransactionId);
+				rdata[1].buffer = InvalidBuffer;
+				lastrdata = 1;
+			}
+			rdata[lastrdata].next = NULL;
+
+			(void) XLogInsert(RM_XACT_ID, XLOG_XACT_COMMIT_COMPACT, rdata);
+		}
 	}
 
 	/*
@@ -2406,7 +2443,8 @@ StartTransactionCommand(void)
 		case TBLOCK_BEGIN:
 		case TBLOCK_SUBBEGIN:
 		case TBLOCK_END:
-		case TBLOCK_SUBEND:
+		case TBLOCK_SUBRELEASE:
+		case TBLOCK_SUBCOMMIT:
 		case TBLOCK_ABORT_END:
 		case TBLOCK_SUBABORT_END:
 		case TBLOCK_ABORT_PENDING:
@@ -2536,17 +2574,32 @@ CommitTransactionCommand(void)
 			break;
 
 			/*
-			 * We were issued a COMMIT or RELEASE command, so we end the
+			 * We were issued a RELEASE command, so we end the
 			 * current subtransaction and return to the parent transaction.
-			 * The parent might be ended too, so repeat till we are all the
-			 * way out or find an INPROGRESS transaction.
+			 * The parent might be ended too, so repeat till we find an
+			 * INPROGRESS transaction or subtransaction.
 			 */
-		case TBLOCK_SUBEND:
+		case TBLOCK_SUBRELEASE:
 			do
 			{
-				CommitSubTransaction();
+				CommitSubTransaction(false);
 				s = CurrentTransactionState;	/* changed by pop */
-			} while (s->blockState == TBLOCK_SUBEND);
+			} while (s->blockState == TBLOCK_SUBRELEASE);
+
+			Assert(s->blockState == TBLOCK_INPROGRESS ||
+				   s->blockState == TBLOCK_SUBINPROGRESS);
+			break;
+
+			/*
+			 * We were issued a COMMIT, so we end the current subtransaction
+			 * hierarchy and perform final commit.
+			 */
+		case TBLOCK_SUBCOMMIT:
+			do
+			{
+				CommitSubTransaction(true);
+				s = CurrentTransactionState;	/* changed by pop */
+			} while (s->blockState == TBLOCK_SUBCOMMIT);
 			/* If we had a COMMIT command, finish off the main xact too */
 			if (s->blockState == TBLOCK_END)
 			{
@@ -2561,10 +2614,8 @@ CommitTransactionCommand(void)
 				s->blockState = TBLOCK_DEFAULT;
 			}
 			else
-			{
-				Assert(s->blockState == TBLOCK_INPROGRESS ||
-					   s->blockState == TBLOCK_SUBINPROGRESS);
-			}
+				elog(ERROR, "CommitTransactionCommand: unexpected state %s",
+					 BlockStateAsString(s->blockState));
 			break;
 
 			/*
@@ -2778,7 +2829,8 @@ AbortCurrentTransaction(void)
 			 * applies if we get a failure while ending a subtransaction.
 			 */
 		case TBLOCK_SUBBEGIN:
-		case TBLOCK_SUBEND:
+		case TBLOCK_SUBRELEASE:
+		case TBLOCK_SUBCOMMIT:
 		case TBLOCK_SUBABORT_PENDING:
 		case TBLOCK_SUBRESTART:
 			AbortSubTransaction();
@@ -3086,7 +3138,8 @@ BeginTransactionBlock(void)
 		case TBLOCK_BEGIN:
 		case TBLOCK_SUBBEGIN:
 		case TBLOCK_END:
-		case TBLOCK_SUBEND:
+		case TBLOCK_SUBRELEASE:
+		case TBLOCK_SUBCOMMIT:
 		case TBLOCK_ABORT_END:
 		case TBLOCK_SUBABORT_END:
 		case TBLOCK_ABORT_PENDING:
@@ -3196,7 +3249,7 @@ EndTransactionBlock(void)
 			while (s->parent != NULL)
 			{
 				if (s->blockState == TBLOCK_SUBINPROGRESS)
-					s->blockState = TBLOCK_SUBEND;
+					s->blockState = TBLOCK_SUBCOMMIT;
 				else
 					elog(FATAL, "EndTransactionBlock: unexpected state %s",
 						 BlockStateAsString(s->blockState));
@@ -3254,7 +3307,8 @@ EndTransactionBlock(void)
 		case TBLOCK_BEGIN:
 		case TBLOCK_SUBBEGIN:
 		case TBLOCK_END:
-		case TBLOCK_SUBEND:
+		case TBLOCK_SUBRELEASE:
+		case TBLOCK_SUBCOMMIT:
 		case TBLOCK_ABORT_END:
 		case TBLOCK_SUBABORT_END:
 		case TBLOCK_ABORT_PENDING:
@@ -3346,7 +3400,8 @@ UserAbortTransactionBlock(void)
 		case TBLOCK_BEGIN:
 		case TBLOCK_SUBBEGIN:
 		case TBLOCK_END:
-		case TBLOCK_SUBEND:
+		case TBLOCK_SUBRELEASE:
+		case TBLOCK_SUBCOMMIT:
 		case TBLOCK_ABORT_END:
 		case TBLOCK_SUBABORT_END:
 		case TBLOCK_ABORT_PENDING:
@@ -3391,7 +3446,8 @@ DefineSavepoint(char *name)
 		case TBLOCK_BEGIN:
 		case TBLOCK_SUBBEGIN:
 		case TBLOCK_END:
-		case TBLOCK_SUBEND:
+		case TBLOCK_SUBRELEASE:
+		case TBLOCK_SUBCOMMIT:
 		case TBLOCK_ABORT:
 		case TBLOCK_SUBABORT:
 		case TBLOCK_ABORT_END:
@@ -3447,7 +3503,8 @@ ReleaseSavepoint(List *options)
 		case TBLOCK_BEGIN:
 		case TBLOCK_SUBBEGIN:
 		case TBLOCK_END:
-		case TBLOCK_SUBEND:
+		case TBLOCK_SUBRELEASE:
+		case TBLOCK_SUBCOMMIT:
 		case TBLOCK_ABORT:
 		case TBLOCK_SUBABORT:
 		case TBLOCK_ABORT_END:
@@ -3498,7 +3555,7 @@ ReleaseSavepoint(List *options)
 	for (;;)
 	{
 		Assert(xact->blockState == TBLOCK_SUBINPROGRESS);
-		xact->blockState = TBLOCK_SUBEND;
+		xact->blockState = TBLOCK_SUBRELEASE;
 		if (xact == target)
 			break;
 		xact = xact->parent;
@@ -3547,7 +3604,8 @@ RollbackToSavepoint(List *options)
 		case TBLOCK_BEGIN:
 		case TBLOCK_SUBBEGIN:
 		case TBLOCK_END:
-		case TBLOCK_SUBEND:
+		case TBLOCK_SUBRELEASE:
+		case TBLOCK_SUBCOMMIT:
 		case TBLOCK_ABORT_END:
 		case TBLOCK_SUBABORT_END:
 		case TBLOCK_ABORT_PENDING:
@@ -3655,7 +3713,8 @@ BeginInternalSubTransaction(char *name)
 		case TBLOCK_DEFAULT:
 		case TBLOCK_BEGIN:
 		case TBLOCK_SUBBEGIN:
-		case TBLOCK_SUBEND:
+		case TBLOCK_SUBRELEASE:
+		case TBLOCK_SUBCOMMIT:
 		case TBLOCK_ABORT:
 		case TBLOCK_SUBABORT:
 		case TBLOCK_ABORT_END:
@@ -3690,7 +3749,7 @@ ReleaseCurrentSubTransaction(void)
 			 BlockStateAsString(s->blockState));
 	Assert(s->state == TRANS_INPROGRESS);
 	MemoryContextSwitchTo(CurTransactionContext);
-	CommitSubTransaction();
+	CommitSubTransaction(false);
 	s = CurrentTransactionState;	/* changed by pop */
 	Assert(s->state == TRANS_INPROGRESS);
 }
@@ -3721,7 +3780,8 @@ RollbackAndReleaseCurrentSubTransaction(void)
 		case TBLOCK_SUBBEGIN:
 		case TBLOCK_INPROGRESS:
 		case TBLOCK_END:
-		case TBLOCK_SUBEND:
+		case TBLOCK_SUBRELEASE:
+		case TBLOCK_SUBCOMMIT:
 		case TBLOCK_ABORT:
 		case TBLOCK_ABORT_END:
 		case TBLOCK_SUBABORT_END:
@@ -3795,7 +3855,8 @@ AbortOutOfAnyTransaction(void)
 				 */
 			case TBLOCK_SUBBEGIN:
 			case TBLOCK_SUBINPROGRESS:
-			case TBLOCK_SUBEND:
+			case TBLOCK_SUBRELEASE:
+			case TBLOCK_SUBCOMMIT:
 			case TBLOCK_SUBABORT_PENDING:
 			case TBLOCK_SUBRESTART:
 				AbortSubTransaction();
@@ -3867,7 +3928,8 @@ TransactionBlockStatusCode(void)
 		case TBLOCK_INPROGRESS:
 		case TBLOCK_SUBINPROGRESS:
 		case TBLOCK_END:
-		case TBLOCK_SUBEND:
+		case TBLOCK_SUBRELEASE:
+		case TBLOCK_SUBCOMMIT:
 		case TBLOCK_PREPARE:
 			return 'T';			/* in transaction */
 		case TBLOCK_ABORT:
@@ -3951,9 +4013,13 @@ StartSubTransaction(void)
  *
  *	The caller has to make sure to always reassign CurrentTransactionState
  *	if it has a local pointer to it after calling this function.
+ *
+ *	isTopLevel means that this CommitSubTransaction() is being issued as a
+ *	sequence of actions leading directly to a main transaction commit
+ *	allowing some actions to be optimised.
  */
 static void
-CommitSubTransaction(void)
+CommitSubTransaction(bool isTopLevel)
 {
 	TransactionState s = CurrentTransactionState;
 
@@ -4000,15 +4066,21 @@ CommitSubTransaction(void)
 
 	/*
 	 * The only lock we actually release here is the subtransaction XID lock.
-	 * The rest just get transferred to the parent resource owner.
 	 */
 	CurrentResourceOwner = s->curTransactionOwner;
 	if (TransactionIdIsValid(s->transactionId))
 		XactLockTableDelete(s->transactionId);
 
+	/*
+	 * Other locks should get transferred to their parent resource owner.
+	 * Doing that is an O(N^2) operation, so if isTopLevel then we can just
+	 * leave the lock records as they are, knowing they will all get released
+	 * by the top level commit using ProcReleaseLocks(). We only optimize
+	 * this for commit; aborts may need to do other cleanup.
+	 */
 	ResourceOwnerRelease(s->curTransactionOwner,
 						 RESOURCE_RELEASE_LOCKS,
-						 true, false);
+						 true, isTopLevel);
 	ResourceOwnerRelease(s->curTransactionOwner,
 						 RESOURCE_RELEASE_AFTER_LOCKS,
 						 true, false);
@@ -4362,8 +4434,10 @@ BlockStateAsString(TBlockState blockState)
 			return "SUB BEGIN";
 		case TBLOCK_SUBINPROGRESS:
 			return "SUB INPROGRS";
-		case TBLOCK_SUBEND:
-			return "SUB END";
+		case TBLOCK_SUBRELEASE:
+			return "SUB RELEASE";
+		case TBLOCK_SUBCOMMIT:
+			return "SUB COMMIT";
 		case TBLOCK_SUBABORT:
 			return "SUB ABORT";
 		case TBLOCK_SUBABORT_END:
@@ -4434,19 +4508,17 @@ xactGetCommittedChildren(TransactionId **ptr)
  * actions for which the order of execution is critical.
  */
 static void
-xact_redo_commit(xl_xact_commit *xlrec, TransactionId xid, XLogRecPtr lsn)
+xact_redo_commit_internal(TransactionId xid, XLogRecPtr lsn,
+					TransactionId *sub_xids, int nsubxacts,
+					SharedInvalidationMessage *inval_msgs, int nmsgs,
+					RelFileNode *xnodes, int nrels,
+					Oid dbId, Oid tsId,
+					uint32 xinfo)
 {
-	TransactionId *sub_xids;
-	SharedInvalidationMessage *inval_msgs;
 	TransactionId max_xid;
 	int			i;
 
-	/* subxid array follows relfilenodes */
-	sub_xids = (TransactionId *) &(xlrec->xnodes[xlrec->nrels]);
-	/* invalidation messages array follows subxids */
-	inval_msgs = (SharedInvalidationMessage *) &(sub_xids[xlrec->nsubxacts]);
-
-	max_xid = TransactionIdLatest(xid, xlrec->nsubxacts, sub_xids);
+	max_xid = TransactionIdLatest(xid, nsubxacts, sub_xids);
 
 	/*
 	 * Make sure nextXid is beyond any XID mentioned in the record.
@@ -4469,7 +4541,7 @@ xact_redo_commit(xl_xact_commit *xlrec, TransactionId xid, XLogRecPtr lsn)
 		/*
 		 * Mark the transaction committed in pg_clog.
 		 */
-		TransactionIdCommitTree(xid, xlrec->nsubxacts, sub_xids);
+		TransactionIdCommitTree(xid, nsubxacts, sub_xids);
 	}
 	else
 	{
@@ -4493,41 +4565,41 @@ xact_redo_commit(xl_xact_commit *xlrec, TransactionId xid, XLogRecPtr lsn)
 		 * bits set on changes made by transactions that haven't yet
 		 * recovered. It's unlikely but it's good to be safe.
 		 */
-		TransactionIdAsyncCommitTree(xid, xlrec->nsubxacts, sub_xids, lsn);
+		TransactionIdAsyncCommitTree(xid, nsubxacts, sub_xids, lsn);
 
 		/*
 		 * We must mark clog before we update the ProcArray.
 		 */
-		ExpireTreeKnownAssignedTransactionIds(xid, xlrec->nsubxacts, sub_xids, max_xid);
+		ExpireTreeKnownAssignedTransactionIds(xid, nsubxacts, sub_xids, max_xid);
 
 		/*
 		 * Send any cache invalidations attached to the commit. We must
 		 * maintain the same order of invalidation then release locks as
 		 * occurs in CommitTransaction().
 		 */
-		ProcessCommittedInvalidationMessages(inval_msgs, xlrec->nmsgs,
-								  XactCompletionRelcacheInitFileInval(xlrec),
-											 xlrec->dbId, xlrec->tsId);
+		ProcessCommittedInvalidationMessages(inval_msgs, nmsgs,
+								  XactCompletionRelcacheInitFileInval(xinfo),
+											 dbId, tsId);
 
 		/*
 		 * Release locks, if any. We do this for both two phase and normal one
 		 * phase transactions. In effect we are ignoring the prepare phase and
 		 * just going straight to lock release.
 		 */
-		StandbyReleaseLockTree(xid, xlrec->nsubxacts, sub_xids);
+		StandbyReleaseLockTree(xid, nsubxacts, sub_xids);
 	}
 
 	/* Make sure files supposed to be dropped are dropped */
-	for (i = 0; i < xlrec->nrels; i++)
+	for (i = 0; i < nrels; i++)
 	{
-		SMgrRelation srel = smgropen(xlrec->xnodes[i], InvalidBackendId);
+		SMgrRelation srel = smgropen(xnodes[i], InvalidBackendId);
 		ForkNumber	fork;
 
 		for (fork = 0; fork <= MAX_FORKNUM; fork++)
 		{
 			if (smgrexists(srel, fork))
 			{
-				XLogDropRelation(xlrec->xnodes[i], fork);
+				XLogDropRelation(xnodes[i], fork);
 				smgrdounlink(srel, fork, true);
 			}
 		}
@@ -4546,8 +4618,46 @@ xact_redo_commit(xl_xact_commit *xlrec, TransactionId xid, XLogRecPtr lsn)
 	 * to reduce that problem window, for any user that requested
 	 * ForceSyncCommit().
 	 */
-	if (XactCompletionForceSyncCommit(xlrec))
+	if (XactCompletionForceSyncCommit(xinfo))
 		XLogFlush(lsn);
+
+}
+/*
+ * Utility function to call xact_redo_commit_internal after breaking down xlrec
+ */
+static void
+xact_redo_commit(xl_xact_commit *xlrec,
+							TransactionId xid, XLogRecPtr lsn)
+{
+	TransactionId *subxacts;
+	SharedInvalidationMessage *inval_msgs;
+
+	/* subxid array follows relfilenodes */
+	subxacts = (TransactionId *) &(xlrec->xnodes[xlrec->nrels]);
+	/* invalidation messages array follows subxids */
+	inval_msgs = (SharedInvalidationMessage *) &(subxacts[xlrec->nsubxacts]);
+
+	xact_redo_commit_internal(xid, lsn, subxacts, xlrec->nsubxacts,
+								inval_msgs, xlrec->nmsgs,
+								xlrec->xnodes, xlrec->nrels,
+								xlrec->dbId,
+								xlrec->tsId,
+								xlrec->xinfo);
+}
+
+/*
+ * Utility function to call xact_redo_commit_internal  for compact form of message.
+ */
+static void
+xact_redo_commit_compact(xl_xact_commit_compact *xlrec,
+							TransactionId xid, XLogRecPtr lsn)
+{
+	xact_redo_commit_internal(xid, lsn, xlrec->subxacts, xlrec->nsubxacts,
+								NULL, 0,		/* inval msgs */
+								NULL, 0,		/* relfilenodes */
+								InvalidOid,		/* dbId */
+								InvalidOid,		/* tsId */
+								0);				/* xinfo */
 }
 
 /*
@@ -4648,7 +4758,13 @@ xact_redo(XLogRecPtr lsn, XLogRecord *record)
 	/* Backup blocks are not used in xact records */
 	Assert(!(record->xl_info & XLR_BKP_BLOCK_MASK));
 
-	if (info == XLOG_XACT_COMMIT)
+	if (info == XLOG_XACT_COMMIT_COMPACT)
+	{
+		xl_xact_commit_compact *xlrec = (xl_xact_commit_compact *) XLogRecGetData(record);
+
+		xact_redo_commit_compact(xlrec, record->xl_xid, lsn);
+	}
+	else if (info == XLOG_XACT_COMMIT)
 	{
 		xl_xact_commit *xlrec = (xl_xact_commit *) XLogRecGetData(record);
 
@@ -4696,9 +4812,9 @@ static void
 xact_desc_commit(StringInfo buf, xl_xact_commit *xlrec)
 {
 	int			i;
-	TransactionId *xacts;
+	TransactionId *subxacts;
 
-	xacts = (TransactionId *) &xlrec->xnodes[xlrec->nrels];
+	subxacts = (TransactionId *) &xlrec->xnodes[xlrec->nrels];
 
 	appendStringInfoString(buf, timestamptz_to_str(xlrec->xact_time));
 
@@ -4717,15 +4833,15 @@ xact_desc_commit(StringInfo buf, xl_xact_commit *xlrec)
 	{
 		appendStringInfo(buf, "; subxacts:");
 		for (i = 0; i < xlrec->nsubxacts; i++)
-			appendStringInfo(buf, " %u", xacts[i]);
+			appendStringInfo(buf, " %u", subxacts[i]);
 	}
 	if (xlrec->nmsgs > 0)
 	{
 		SharedInvalidationMessage *msgs;
 
-		msgs = (SharedInvalidationMessage *) &xacts[xlrec->nsubxacts];
+		msgs = (SharedInvalidationMessage *) &subxacts[xlrec->nsubxacts];
 
-		if (XactCompletionRelcacheInitFileInval(xlrec))
+		if (XactCompletionRelcacheInitFileInval(xlrec->xinfo))
 			appendStringInfo(buf, "; relcache init file inval dbid %u tsid %u",
 							 xlrec->dbId, xlrec->tsId);
 
@@ -4748,6 +4864,21 @@ xact_desc_commit(StringInfo buf, xl_xact_commit *xlrec)
 			else
 				appendStringInfo(buf, " unknown id %d", msg->id);
 		}
+	}
+}
+
+static void
+xact_desc_commit_compact(StringInfo buf, xl_xact_commit_compact *xlrec)
+{
+	int			i;
+
+	appendStringInfoString(buf, timestamptz_to_str(xlrec->xact_time));
+
+	if (xlrec->nsubxacts > 0)
+	{
+		appendStringInfo(buf, "; subxacts:");
+		for (i = 0; i < xlrec->nsubxacts; i++)
+			appendStringInfo(buf, " %u", xlrec->subxacts[i]);
 	}
 }
 
@@ -4795,7 +4926,14 @@ xact_desc(StringInfo buf, uint8 xl_info, char *rec)
 {
 	uint8		info = xl_info & ~XLR_INFO_MASK;
 
-	if (info == XLOG_XACT_COMMIT)
+	if (info == XLOG_XACT_COMMIT_COMPACT)
+	{
+		xl_xact_commit_compact *xlrec = (xl_xact_commit_compact *) rec;
+
+		appendStringInfo(buf, "commit: ");
+		xact_desc_commit_compact(buf, xlrec);
+	}
+	else if (info == XLOG_XACT_COMMIT)
 	{
 		xl_xact_commit *xlrec = (xl_xact_commit *) rec;
 

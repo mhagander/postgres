@@ -446,6 +446,8 @@ typedef struct XLogCtlData
 	XLogRecPtr	recoveryLastRecPtr;
 	/* timestamp of last COMMIT/ABORT record replayed (or being replayed) */
 	TimestampTz recoveryLastXTime;
+	/* end of the last record restored from the archive */
+	XLogRecPtr	restoreLastRecPtr;
 	/* Are we requested to pause recovery? */
 	bool		recoveryPause;
 
@@ -612,6 +614,7 @@ static void CheckRequiredParameterValues(void);
 static void XLogReportParameters(void);
 static void LocalSetXLogInsertAllowed(void);
 static void CheckPointGuts(XLogRecPtr checkPointRedo, int flags);
+static void KeepLogSeg(XLogRecPtr recptr, uint32 *logId, uint32 *logSeg);
 
 static bool XLogCheckBuffer(XLogRecData *rdata, bool doPageWrites,
 				XLogRecPtr *lsn, BkpBlock *bkpb);
@@ -659,7 +662,8 @@ static bool CheckForStandbyTrigger(void);
 static void xlog_outrec(StringInfo buf, XLogRecord *record);
 #endif
 static void pg_start_backup_callback(int code, Datum arg);
-static bool read_backup_label(XLogRecPtr *checkPointLoc);
+static bool read_backup_label(XLogRecPtr *checkPointLoc,
+				  bool *backupEndRequired);
 static void rm_redo_error_callback(void *arg);
 static int	get_sync_bit(int method);
 
@@ -2729,6 +2733,61 @@ XLogFileRead(uint32 log, uint32 seg, int emode, TimeLineID tli,
 			elog(ERROR, "invalid XLogFileRead source %d", source);
 	}
 
+	/*
+	 * If the segment was fetched from archival storage, replace
+	 * the existing xlog segment (if any) with the archival version.
+	 */
+	if (source == XLOG_FROM_ARCHIVE)
+	{
+		/* use volatile pointer to prevent code rearrangement */
+		volatile XLogCtlData *xlogctl = XLogCtl;
+		XLogRecPtr		endptr;
+		char			xlogfpath[MAXPGPATH];
+		bool			reload = false;
+		struct stat		statbuf;
+
+		XLogFilePath(xlogfpath, tli, log, seg);
+		if (stat(xlogfpath, &statbuf) == 0)
+		{
+			if (unlink(xlogfpath) != 0)
+				ereport(FATAL,
+						(errcode_for_file_access(),
+						 errmsg("could not remove file \"%s\": %m",
+								xlogfpath)));
+			reload = true;
+		}
+
+		if (rename(path, xlogfpath) < 0)
+			ereport(ERROR,
+				(errcode_for_file_access(),
+				 errmsg("could not rename file \"%s\" to \"%s\": %m",
+						path, xlogfpath)));
+
+		/*
+		 * If the existing segment was replaced, since walsenders might have
+		 * it open, request them to reload a currently-open segment.
+		 */
+		if (reload)
+			WalSndRqstFileReload();
+
+		/*
+		 * Calculate the end location of the restored WAL file and save it in
+		 * shmem. It's used as current standby flush position, and cascading
+		 * walsenders try to send WAL records up to this location.
+		 */
+		endptr.xlogid = log;
+		endptr.xrecoff = seg * XLogSegSize;
+		XLByteAdvance(endptr, XLogSegSize);
+
+		SpinLockAcquire(&xlogctl->info_lck);
+		xlogctl->restoreLastRecPtr = endptr;
+		SpinLockRelease(&xlogctl->info_lck);
+
+		/* Signal walsender that new WAL has arrived */
+		if (AllowCascadeReplication())
+			WalSndWakeup();
+	}
+
 	fd = BasicOpenFile(path, O_RDONLY | PG_BINARY, 0);
 	if (fd >= 0)
 	{
@@ -3361,18 +3420,7 @@ RemoveOldXlogFiles(uint32 log, uint32 seg, XLogRecPtr endptr)
 			strspn(xlde->d_name, "0123456789ABCDEF") == 24 &&
 			strcmp(xlde->d_name + 8, lastoff + 8) <= 0)
 		{
-			/*
-			 * Normally we don't delete old XLOG files during recovery to
-			 * avoid accidentally deleting a file that looks stale due to a
-			 * bug or hardware issue, but in fact contains important data.
-			 * During streaming recovery, however, we will eventually fill the
-			 * disk if we never clean up, so we have to. That's not an issue
-			 * with file-based archive recovery because in that case we
-			 * restore one XLOG file at a time, on-demand, and with a
-			 * different filename that can't be confused with regular XLOG
-			 * files.
-			 */
-			if (WalRcvInProgress() || XLogArchiveCheckDone(xlde->d_name))
+			if (RecoveryInProgress() || XLogArchiveCheckDone(xlde->d_name))
 			{
 				snprintf(path, MAXPGPATH, XLOGDIR "/%s", xlde->d_name);
 
@@ -3728,23 +3776,32 @@ ReadRecord(XLogRecPtr *RecPtr, int emode, bool fetching_ckpt)
 		RecPtr = &tmpRecPtr;
 
 		/*
-		 * Align recptr to next page if no more records can fit on the current
-		 * page.
+		 * RecPtr is pointing to end+1 of the previous WAL record.  We must
+		 * advance it if necessary to where the next record starts.  First,
+		 * align to next page if no more records can fit on the current page.
 		 */
 		if (XLOG_BLCKSZ - (RecPtr->xrecoff % XLOG_BLCKSZ) < SizeOfXLogRecord)
+			NextLogPage(*RecPtr);
+
+		/* Check for crossing of xlog segment boundary */
+		if (RecPtr->xrecoff >= XLogFileSize)
 		{
-			NextLogPage(tmpRecPtr);
-			/* We will account for page header size below */
+			(RecPtr->xlogid)++;
+			RecPtr->xrecoff = 0;
 		}
 
-		if (tmpRecPtr.xrecoff >= XLogFileSize)
-		{
-			(tmpRecPtr.xlogid)++;
-			tmpRecPtr.xrecoff = 0;
-		}
+		/*
+		 * If at page start, we must skip over the page header.  But we can't
+		 * do that until we've read in the page, since the header size is
+		 * variable.
+		 */
 	}
 	else
 	{
+		/*
+		 * In this case, the passed-in record pointer should already be
+		 * pointing to a valid record starting position.
+		 */
 		if (!XRecOffIsValid(RecPtr->xrecoff))
 			ereport(PANIC,
 					(errmsg("invalid record offset at %X/%X",
@@ -3773,11 +3830,13 @@ retry:
 	if (targetRecOff == 0)
 	{
 		/*
-		 * Can only get here in the continuing-from-prev-page case, because
-		 * XRecOffIsValid eliminated the zero-page-offset case otherwise. Need
-		 * to skip over the new page's header.
+		 * At page start, so skip over page header.  The Assert checks that
+		 * we're not scribbling on caller's record pointer; it's OK because we
+		 * can only get here in the continuing-from-prev-record case, since
+		 * XRecOffIsValid rejected the zero-page-offset case otherwise.
 		 */
-		tmpRecPtr.xrecoff += pageHeaderSize;
+		Assert(RecPtr == &tmpRecPtr);
+		RecPtr->xrecoff += pageHeaderSize;
 		targetRecOff = pageHeaderSize;
 	}
 	else if (targetRecOff < pageHeaderSize)
@@ -5451,7 +5510,6 @@ exitArchiveRecovery(TimeLineID endTLI, uint32 endLogId, uint32 endLogSeg)
 {
 	char		recoveryPath[MAXPGPATH];
 	char		xlogpath[MAXPGPATH];
-	XLogRecPtr	InvalidXLogRecPtr = {0, 0};
 
 	/*
 	 * We are no longer in archive recovery state.
@@ -5474,62 +5532,23 @@ exitArchiveRecovery(TimeLineID endTLI, uint32 endLogId, uint32 endLogSeg)
 	}
 
 	/*
-	 * If the segment was fetched from archival storage, we want to replace
-	 * the existing xlog segment (if any) with the archival version.  This is
-	 * because whatever is in XLOGDIR is very possibly older than what we have
-	 * from the archives, since it could have come from restoring a PGDATA
-	 * backup.	In any case, the archival version certainly is more
-	 * descriptive of what our current database state is, because that is what
-	 * we replayed from.
+	 * If we are establishing a new timeline, we have to copy data from
+	 * the last WAL segment of the old timeline to create a starting WAL
+	 * segment for the new timeline.
 	 *
-	 * Note that if we are establishing a new timeline, ThisTimeLineID is
-	 * already set to the new value, and so we will create a new file instead
-	 * of overwriting any existing file.  (This is, in fact, always the case
-	 * at present.)
+	 * Notify the archiver that the last WAL segment of the old timeline
+	 * is ready to copy to archival storage. Otherwise, it is not archived
+	 * for a while.
 	 */
-	snprintf(recoveryPath, MAXPGPATH, XLOGDIR "/RECOVERYXLOG");
-	XLogFilePath(xlogpath, ThisTimeLineID, endLogId, endLogSeg);
-
-	if (restoredFromArchive)
+	if (endTLI != ThisTimeLineID)
 	{
-		ereport(DEBUG3,
-				(errmsg_internal("moving last restored xlog to \"%s\"",
-								 xlogpath)));
-		unlink(xlogpath);		/* might or might not exist */
-		if (rename(recoveryPath, xlogpath) != 0)
-			ereport(FATAL,
-					(errcode_for_file_access(),
-					 errmsg("could not rename file \"%s\" to \"%s\": %m",
-							recoveryPath, xlogpath)));
-		/* XXX might we need to fix permissions on the file? */
-	}
-	else
-	{
-		/*
-		 * If the latest segment is not archival, but there's still a
-		 * RECOVERYXLOG laying about, get rid of it.
-		 */
-		unlink(recoveryPath);	/* ignore any error */
+		XLogFileCopy(endLogId, endLogSeg,
+					 endTLI, endLogId, endLogSeg);
 
-		/*
-		 * If we are establishing a new timeline, we have to copy data from
-		 * the last WAL segment of the old timeline to create a starting WAL
-		 * segment for the new timeline.
-		 *
-		 * Notify the archiver that the last WAL segment of the old timeline
-		 * is ready to copy to archival storage. Otherwise, it is not archived
-		 * for a while.
-		 */
-		if (endTLI != ThisTimeLineID)
+		if (XLogArchivingActive())
 		{
-			XLogFileCopy(endLogId, endLogSeg,
-						 endTLI, endLogId, endLogSeg);
-
-			if (XLogArchivingActive())
-			{
-				XLogFileName(xlogpath, endTLI, endLogId, endLogSeg);
-				XLogArchiveNotify(xlogpath);
-			}
+			XLogFileName(xlogpath, endTLI, endLogId, endLogSeg);
+			XLogArchiveNotify(xlogpath);
 		}
 	}
 
@@ -5539,6 +5558,13 @@ exitArchiveRecovery(TimeLineID endTLI, uint32 endLogId, uint32 endLogSeg)
 	 */
 	XLogFileName(xlogpath, ThisTimeLineID, endLogId, endLogSeg);
 	XLogArchiveCleanup(xlogpath);
+
+	/*
+	 * Since there might be a partial WAL segment named RECOVERYXLOG,
+	 * get rid of it.
+	 */
+	snprintf(recoveryPath, MAXPGPATH, XLOGDIR "/RECOVERYXLOG");
+	unlink(recoveryPath);		/* ignore any error */
 
 	/* Get rid of any remaining recovered timeline-history file, too */
 	snprintf(recoveryPath, MAXPGPATH, XLOGDIR "/RECOVERYHISTORY");
@@ -5583,7 +5609,14 @@ recoveryStopsHere(XLogRecord *record, bool *includeThis)
 	if (record->xl_rmid != RM_XACT_ID && record->xl_rmid != RM_XLOG_ID)
 		return false;
 	record_info = record->xl_info & ~XLR_INFO_MASK;
-	if (record->xl_rmid == RM_XACT_ID && record_info == XLOG_XACT_COMMIT)
+	if (record->xl_rmid == RM_XACT_ID && record_info == XLOG_XACT_COMMIT_COMPACT)
+	{
+		xl_xact_commit_compact *recordXactCommitData;
+
+		recordXactCommitData = (xl_xact_commit_compact *) XLogRecGetData(record);
+		recordXtime = recordXactCommitData->xact_time;
+	}
+	else if (record->xl_rmid == RM_XACT_ID && record_info == XLOG_XACT_COMMIT)
 	{
 		xl_xact_commit *recordXactCommitData;
 
@@ -5670,7 +5703,7 @@ recoveryStopsHere(XLogRecord *record, bool *includeThis)
 		recoveryStopTime = recordXtime;
 		recoveryStopAfter = *includeThis;
 
-		if (record_info == XLOG_XACT_COMMIT)
+		if (record_info == XLOG_XACT_COMMIT_COMPACT || record_info == XLOG_XACT_COMMIT)
 		{
 			if (recoveryStopAfter)
 				ereport(LOG,
@@ -5984,6 +6017,7 @@ StartupXLOG(void)
 	XLogRecord *record;
 	uint32		freespace;
 	TransactionId oldestActiveXID;
+	bool		backupEndRequired = false;
 
 	/*
 	 * Read control file and check XLOG status looks valid.
@@ -6117,7 +6151,7 @@ StartupXLOG(void)
 	if (StandbyMode)
 		OwnLatch(&XLogCtl->recoveryWakeupLatch);
 
-	if (read_backup_label(&checkPointLoc))
+	if (read_backup_label(&checkPointLoc, &backupEndRequired))
 	{
 		/*
 		 * When a backup_label file is present, we want to roll forward from
@@ -6296,7 +6330,10 @@ StartupXLOG(void)
 		 * set backupStartPoint if we're starting recovery from a base backup
 		 */
 		if (haveBackupLabel)
+		{
 			ControlFile->backupStartPoint = checkPoint.redo;
+			ControlFile->backupEndRequired = backupEndRequired;
+		}
 		ControlFile->time = (pg_time_t) time(NULL);
 		/* No need to hold ControlFileLock yet, we aren't up far enough */
 		UpdateControlFile();
@@ -6611,12 +6648,11 @@ StartupXLOG(void)
 	}
 
 	/*
-	 * If we launched a WAL receiver, it should be gone by now. It will trump
-	 * over the startup checkpoint and subsequent records if it's still alive,
-	 * so be extra sure that it's gone.
+	 * Kill WAL receiver, if it's still running, before we continue to write
+	 * the startup checkpoint record. It will trump over the checkpoint and
+	 * subsequent records if it's still alive when we start writing WAL.
 	 */
-	if (WalRcvInProgress())
-		elog(PANIC, "wal receiver still active");
+	ShutdownWalRcv();
 
 	/*
 	 * We don't need the latch anymore. It's not strictly necessary to disown
@@ -6657,25 +6693,29 @@ StartupXLOG(void)
 			ereport(FATAL,
 					(errmsg("requested recovery stop point is before consistent recovery point")));
 		}
+
 		/*
-		 * Ran off end of WAL before reaching end-of-backup WAL record,
-		 * or minRecoveryPoint. That's usually a bad sign, indicating that
-		 * you tried to recover from an online backup but never called
+		 * Ran off end of WAL before reaching end-of-backup WAL record, or
+		 * minRecoveryPoint. That's usually a bad sign, indicating that you
+		 * tried to recover from an online backup but never called
 		 * pg_stop_backup(), or you didn't archive all the WAL up to that
-		 * point. However, this also happens in crash recovery, if the
-		 * system crashes while an online backup is in progress. We
-		 * must not treat that as an error, or the database will refuse
-		 * to start up.
+		 * point. However, this also happens in crash recovery, if the system
+		 * crashes while an online backup is in progress. We must not treat
+		 * that as an error, or the database will refuse to start up.
 		 */
-		if (InArchiveRecovery)
+		if (InArchiveRecovery || ControlFile->backupEndRequired)
 		{
-			if (!XLogRecPtrIsInvalid(ControlFile->backupStartPoint))
+			if (ControlFile->backupEndRequired)
+				ereport(FATAL,
+						(errmsg("WAL ends before end of online backup"),
+						 errhint("All WAL generated while online backup was taken must be available at recovery.")));
+			else if (!XLogRecPtrIsInvalid(ControlFile->backupStartPoint))
 				ereport(FATAL,
 						(errmsg("WAL ends before end of online backup"),
 						 errhint("Online backup started with pg_start_backup() must be ended with pg_stop_backup(), and all WAL up to that point must be available at recovery.")));
 			else
 				ereport(FATAL,
-						(errmsg("WAL ends before consistent recovery point")));
+					  (errmsg("WAL ends before consistent recovery point")));
 		}
 	}
 
@@ -7855,46 +7895,7 @@ CreateCheckPoint(int flags)
 	 */
 	if (_logId || _logSeg)
 	{
-		/*
-		 * Calculate the last segment that we need to retain because of
-		 * wal_keep_segments, by subtracting wal_keep_segments from the new
-		 * checkpoint location.
-		 */
-		if (wal_keep_segments > 0)
-		{
-			uint32		log;
-			uint32		seg;
-			int			d_log;
-			int			d_seg;
-
-			XLByteToSeg(recptr, log, seg);
-
-			d_seg = wal_keep_segments % XLogSegsPerFile;
-			d_log = wal_keep_segments / XLogSegsPerFile;
-			if (seg < d_seg)
-			{
-				d_log += 1;
-				seg = seg - d_seg + XLogSegsPerFile;
-			}
-			else
-				seg = seg - d_seg;
-			/* avoid underflow, don't go below (0,1) */
-			if (log < d_log || (log == d_log && seg == 0))
-			{
-				log = 0;
-				seg = 1;
-			}
-			else
-				log = log - d_log;
-
-			/* don't delete WAL segments newer than the calculated segment */
-			if (log < _logId || (log == _logId && seg < _logSeg))
-			{
-				_logId = log;
-				_logSeg = seg;
-			}
-		}
-
+		KeepLogSeg(recptr, &_logId, &_logSeg);
 		PrevLogSeg(_logId, _logSeg);
 		RemoveOldXlogFiles(_logId, _logSeg, recptr);
 	}
@@ -8059,8 +8060,6 @@ CreateRestartPoint(int flags)
 	if (XLogRecPtrIsInvalid(lastCheckPointRecPtr) ||
 		XLByteLE(lastCheckPoint.redo, ControlFile->checkPointCopy.redo))
 	{
-		XLogRecPtr	InvalidXLogRecPtr = {0, 0};
-
 		ereport(DEBUG2,
 				(errmsg("skipping restartpoint, already performed at %X/%X",
 				  lastCheckPoint.redo.xlogid, lastCheckPoint.redo.xrecoff)));
@@ -8137,17 +8136,16 @@ CreateRestartPoint(int flags)
 	/*
 	 * Delete old log files (those no longer needed even for previous
 	 * checkpoint/restartpoint) to prevent the disk holding the xlog from
-	 * growing full. We don't need do this during normal recovery, but during
-	 * streaming recovery we have to or the disk will eventually fill up from
-	 * old log files streamed from master.
+	 * growing full.
 	 */
-	if (WalRcvInProgress() && (_logId || _logSeg))
+	if (_logId || _logSeg)
 	{
 		XLogRecPtr	endptr;
 
 		/* Get the current (or recent) end of xlog */
-		endptr = GetWalRcvWriteRecPtr(NULL);
+		endptr = GetStandbyFlushRecPtr();
 
+		KeepLogSeg(endptr, &_logId, &_logSeg);
 		PrevLogSeg(_logId, _logSeg);
 		RemoveOldXlogFiles(_logId, _logSeg, endptr);
 
@@ -8190,6 +8188,50 @@ CreateRestartPoint(int flags)
 							   false);
 
 	return true;
+}
+
+/*
+ * Calculate the last segment that we need to retain because of
+ * wal_keep_segments, by subtracting wal_keep_segments from
+ * the given xlog location, recptr.
+ */
+static void
+KeepLogSeg(XLogRecPtr recptr, uint32 *logId, uint32 *logSeg)
+{
+	uint32		log;
+	uint32		seg;
+	int			d_log;
+	int			d_seg;
+
+	if (wal_keep_segments == 0)
+		return;
+
+	XLByteToSeg(recptr, log, seg);
+
+	d_seg = wal_keep_segments % XLogSegsPerFile;
+	d_log = wal_keep_segments / XLogSegsPerFile;
+	if (seg < d_seg)
+	{
+		d_log += 1;
+		seg = seg - d_seg + XLogSegsPerFile;
+	}
+	else
+		seg = seg - d_seg;
+	/* avoid underflow, don't go below (0,1) */
+	if (log < d_log || (log == d_log && seg == 0))
+	{
+		log = 0;
+		seg = 1;
+	}
+	else
+		log = log - d_log;
+
+	/* don't delete WAL segments newer than the calculated segment */
+	if (log < *logId || (log == *logId && seg < *logSeg))
+	{
+		*logId = log;
+		*logSeg = seg;
+	}
 }
 
 /*
@@ -8365,13 +8407,13 @@ xlog_redo(XLogRecPtr lsn, XLogRecord *record)
 
 		/*
 		 * If we see a shutdown checkpoint while waiting for an end-of-backup
-		 * record, the backup was cancelled and the end-of-backup record will
+		 * record, the backup was canceled and the end-of-backup record will
 		 * never arrive.
 		 */
 		if (InArchiveRecovery &&
 			!XLogRecPtrIsInvalid(ControlFile->backupStartPoint))
 			ereport(ERROR,
-					(errmsg("online backup was cancelled, recovery cannot continue")));
+					(errmsg("online backup was canceled, recovery cannot continue")));
 
 		/*
 		 * If we see a shutdown checkpoint, we know that nothing was running
@@ -8498,6 +8540,7 @@ xlog_redo(XLogRecPtr lsn, XLogRecord *record)
 			if (XLByteLT(ControlFile->minRecoveryPoint, lsn))
 				ControlFile->minRecoveryPoint = lsn;
 			MemSet(&ControlFile->backupStartPoint, 0, sizeof(XLogRecPtr));
+			ControlFile->backupEndRequired = false;
 			UpdateControlFile();
 
 			LWLockRelease(ControlFileLock);
@@ -8980,6 +9023,8 @@ do_pg_start_backup(const char *backupidstr, bool fast, char **labelfile)
 						 startpoint.xlogid, startpoint.xrecoff, xlogfilename);
 		appendStringInfo(&labelfbuf, "CHECKPOINT LOCATION: %X/%X\n",
 						 checkpointloc.xlogid, checkpointloc.xrecoff);
+		appendStringInfo(&labelfbuf, "BACKUP METHOD: %s\n",
+						 exclusive ? "pg_start_backup" : "streamed");
 		appendStringInfo(&labelfbuf, "START TIME: %s\n", strfbuf);
 		appendStringInfo(&labelfbuf, "LABEL: %s\n", backupidstr);
 
@@ -9327,7 +9372,7 @@ do_pg_stop_backup(char *labelfile, bool waitforarchive)
 						(errmsg("pg_stop_backup still waiting for all required WAL segments to be archived (%d seconds elapsed)",
 								waits),
 						 errhint("Check that your archive_command is executing properly.  "
-								 "pg_stop_backup can be cancelled safely, "
+								 "pg_stop_backup can be canceled safely, "
 								 "but the database backup will not be usable without all the WAL segments.")));
 			}
 		}
@@ -9535,10 +9580,14 @@ pg_last_xlog_receive_location(PG_FUNCTION_ARGS)
 /*
  * Get latest redo apply position.
  *
+ * Optionally, returns the end byte position of the last restored
+ * WAL segment. Callers not interested in that value may pass
+ * NULL for restoreLastRecPtr.
+ *
  * Exported to allow WALReceiver to read the pointer directly.
  */
 XLogRecPtr
-GetXLogReplayRecPtr(void)
+GetXLogReplayRecPtr(XLogRecPtr *restoreLastRecPtr)
 {
 	/* use volatile pointer to prevent code rearrangement */
 	volatile XLogCtlData *xlogctl = XLogCtl;
@@ -9546,9 +9595,31 @@ GetXLogReplayRecPtr(void)
 
 	SpinLockAcquire(&xlogctl->info_lck);
 	recptr = xlogctl->recoveryLastRecPtr;
+	if (restoreLastRecPtr)
+		*restoreLastRecPtr = xlogctl->restoreLastRecPtr;
 	SpinLockRelease(&xlogctl->info_lck);
 
 	return recptr;
+}
+
+/*
+ * Get current standby flush position, ie, the last WAL position
+ * known to be fsync'd to disk in standby.
+ */
+XLogRecPtr
+GetStandbyFlushRecPtr(void)
+{
+	XLogRecPtr	receivePtr;
+	XLogRecPtr	replayPtr;
+	XLogRecPtr	restorePtr;
+
+	receivePtr = GetWalRcvWriteRecPtr(NULL);
+	replayPtr = GetXLogReplayRecPtr(&restorePtr);
+
+	if (XLByteLT(receivePtr, replayPtr))
+		return XLByteLT(replayPtr, restorePtr) ? restorePtr : replayPtr;
+	else
+		return XLByteLT(receivePtr, restorePtr) ? restorePtr : receivePtr;
 }
 
 /*
@@ -9563,7 +9634,7 @@ pg_last_xlog_replay_location(PG_FUNCTION_ARGS)
 	XLogRecPtr	recptr;
 	char		location[MAXFNAMELEN];
 
-	recptr = GetXLogReplayRecPtr();
+	recptr = GetXLogReplayRecPtr(NULL);
 
 	if (recptr.xlogid == 0 && recptr.xrecoff == 0)
 		PG_RETURN_NULL();
@@ -9709,15 +9780,19 @@ pg_xlogfile_name(PG_FUNCTION_ARGS)
  *
  * Returns TRUE if a backup_label was found (and fills the checkpoint
  * location and its REDO location into *checkPointLoc and RedoStartLSN,
- * respectively); returns FALSE if not.
+ * respectively); returns FALSE if not. If this backup_label came from a
+ * streamed backup, *backupEndRequired is set to TRUE.
  */
 static bool
-read_backup_label(XLogRecPtr *checkPointLoc)
+read_backup_label(XLogRecPtr *checkPointLoc, bool *backupEndRequired)
 {
 	char		startxlogfilename[MAXFNAMELEN];
 	TimeLineID	tli;
 	FILE	   *lfp;
 	char		ch;
+	char		backuptype[20];
+
+	*backupEndRequired = false;
 
 	/*
 	 * See if label file is present
@@ -9750,6 +9825,17 @@ read_backup_label(XLogRecPtr *checkPointLoc)
 		ereport(FATAL,
 				(errcode(ERRCODE_OBJECT_NOT_IN_PREREQUISITE_STATE),
 				 errmsg("invalid data in file \"%s\"", BACKUP_LABEL_FILE)));
+	/*
+	 * BACKUP METHOD line is new in 9.0. Don't complain if it doesn't exist,
+	 * in case you're restoring from a backup taken with an 9.0 beta version
+	 * that didn't emit it.
+	 */
+	if (fscanf(lfp, "BACKUP METHOD: %19s", backuptype) == 1)
+	{
+		if (strcmp(backuptype, "streamed") == 0)
+			*backupEndRequired = true;
+	}
+
 	if (ferror(lfp) || FreeFile(lfp))
 		ereport(FATAL,
 				(errcode_for_file_access(),
@@ -9809,13 +9895,13 @@ CancelBackup(void)
 	if (stat(BACKUP_LABEL_FILE, &stat_buf) < 0)
 		return;
 
-	/* remove leftover file from previously cancelled backup if it exists */
+	/* remove leftover file from previously canceled backup if it exists */
 	unlink(BACKUP_LABEL_OLD);
 
 	if (rename(BACKUP_LABEL_FILE, BACKUP_LABEL_OLD) == 0)
 	{
 		ereport(LOG,
-				(errmsg("online backup mode cancelled"),
+				(errmsg("online backup mode canceled"),
 				 errdetail("\"%s\" was renamed to \"%s\".",
 						   BACKUP_LABEL_FILE, BACKUP_LABEL_OLD)));
 	}
@@ -9823,7 +9909,7 @@ CancelBackup(void)
 	{
 		ereport(WARNING,
 				(errcode_for_file_access(),
-				 errmsg("online backup mode was not cancelled"),
+				 errmsg("online backup mode was not canceled"),
 				 errdetail("Could not rename \"%s\" to \"%s\": %m.",
 						   BACKUP_LABEL_FILE, BACKUP_LABEL_OLD)));
 	}
@@ -9871,34 +9957,50 @@ startupproc_quickdie(SIGNAL_ARGS)
 static void
 StartupProcSigUsr1Handler(SIGNAL_ARGS)
 {
+	int			save_errno = errno;
+
 	latch_sigusr1_handler();
+
+	errno = save_errno;
 }
 
 /* SIGUSR2: set flag to finish recovery */
 static void
 StartupProcTriggerHandler(SIGNAL_ARGS)
 {
+	int			save_errno = errno;
+
 	promote_triggered = true;
 	WakeupRecovery();
+
+	errno = save_errno;
 }
 
 /* SIGHUP: set flag to re-read config file at next convenient time */
 static void
 StartupProcSigHupHandler(SIGNAL_ARGS)
 {
+	int			save_errno = errno;
+
 	got_SIGHUP = true;
 	WakeupRecovery();
+
+	errno = save_errno;
 }
 
 /* SIGTERM: set flag to abort redo and exit */
 static void
 StartupProcShutdownHandler(SIGNAL_ARGS)
 {
+	int			save_errno = errno;
+
 	if (in_restore_command)
 		proc_exit(1);
 	else
 		shutdown_requested = true;
 	WakeupRecovery();
+
+	errno = save_errno;
 }
 
 /* Handle SIGHUP and SIGTERM signals of startup process */
@@ -9924,7 +10026,7 @@ HandleStartupProcInterrupts(void)
 	 * Emergency bailout if postmaster has died.  This is to avoid the
 	 * necessity for manual cleanup of all postmaster children.
 	 */
-	if (IsUnderPostmaster && !PostmasterIsAlive(true))
+	if (IsUnderPostmaster && !PostmasterIsAlive())
 		exit(1);
 }
 
@@ -10151,7 +10253,9 @@ retry:
 					/*
 					 * Wait for more WAL to arrive, or timeout to be reached
 					 */
-					WaitLatch(&XLogCtl->recoveryWakeupLatch, 5000000L);
+					WaitLatch(&XLogCtl->recoveryWakeupLatch,
+							  WL_LATCH_SET | WL_TIMEOUT,
+							  5000L);
 					ResetLatch(&XLogCtl->recoveryWakeupLatch);
 				}
 				else

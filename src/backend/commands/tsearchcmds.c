@@ -96,6 +96,7 @@ get_ts_parser_func(DefElem *defel, int attnum)
 			break;
 		case Anum_pg_ts_parser_prslextype:
 			nargs = 1;
+
 			/*
 			 * Note: because the lextype method returns type internal, it must
 			 * have an internal-type argument for security reasons.  The
@@ -141,7 +142,7 @@ makeParserDependencies(HeapTuple tuple)
 	recordDependencyOn(&myself, &referenced, DEPENDENCY_NORMAL);
 
 	/* dependency on extension */
-	recordDependencyOnCurrentExtension(&myself);
+	recordDependencyOnCurrentExtension(&myself, false);
 
 	/* dependencies on functions */
 	referenced.classId = ProcedureRelationId;
@@ -478,7 +479,7 @@ makeDictionaryDependencies(HeapTuple tuple)
 	recordDependencyOnOwner(myself.classId, myself.objectId, dict->dictowner);
 
 	/* dependency on extension */
-	recordDependencyOnCurrentExtension(&myself);
+	recordDependencyOnCurrentExtension(&myself, false);
 
 	/* dependency on template */
 	referenced.classId = TSTemplateRelationId;
@@ -1068,7 +1069,7 @@ makeTSTemplateDependencies(HeapTuple tuple)
 	recordDependencyOn(&myself, &referenced, DEPENDENCY_NORMAL);
 
 	/* dependency on extension */
-	recordDependencyOnCurrentExtension(&myself);
+	recordDependencyOnCurrentExtension(&myself, false);
 
 	/* dependencies on functions */
 	referenced.classId = ProcedureRelationId;
@@ -1416,8 +1417,7 @@ makeConfigurationDependencies(HeapTuple tuple, bool removeOld,
 	recordDependencyOnOwner(myself.classId, myself.objectId, cfg->cfgowner);
 
 	/* dependency on extension */
-	if (!removeOld)
-		recordDependencyOnCurrentExtension(&myself);
+	recordDependencyOnCurrentExtension(&myself, removeOld);
 
 	/* dependency on parser */
 	referenced.classId = TSParserRelationId;

@@ -33,6 +33,7 @@
 #include "utils/datum.h"
 #include "utils/lsyscache.h"
 #include "utils/memutils.h"
+#include "utils/rel.h"
 #include "utils/snapmgr.h"
 #include "utils/typcache.h"
 
@@ -150,6 +151,9 @@ static bool exec_eval_simple_expr(PLpgSQL_execstate *estate,
 static void exec_assign_expr(PLpgSQL_execstate *estate,
 				 PLpgSQL_datum *target,
 				 PLpgSQL_expr *expr);
+static void exec_assign_c_string(PLpgSQL_execstate *estate,
+					 PLpgSQL_datum *target,
+					 const char *str);
 static void exec_assign_value(PLpgSQL_execstate *estate,
 				  PLpgSQL_datum *target,
 				  Datum value, Oid valtype, bool *isNull);
@@ -1420,6 +1424,17 @@ exec_stmt_getdiag(PLpgSQL_execstate *estate, PLpgSQL_stmt_getdiag *stmt)
 {
 	ListCell   *lc;
 
+	/*
+	 * GET STACKED DIAGNOSTICS is only valid inside an exception handler.
+	 *
+	 * Note: we trust the grammar to have disallowed the relevant item kinds
+	 * if not is_stacked, otherwise we'd dump core below.
+	 */
+	if (stmt->is_stacked && estate->cur_error == NULL)
+		ereport(ERROR,
+				(errcode(ERRCODE_STACKED_DIAGNOSTICS_ACCESSED_WITHOUT_ACTIVE_HANDLER),
+				 errmsg("GET STACKED DIAGNOSTICS cannot be used outside an exception handler")));
+
 	foreach(lc, stmt->diag_items)
 	{
 		PLpgSQL_diag_item *diag_item = (PLpgSQL_diag_item *) lfirst(lc);
@@ -1437,21 +1452,44 @@ exec_stmt_getdiag(PLpgSQL_execstate *estate, PLpgSQL_stmt_getdiag *stmt)
 		switch (diag_item->kind)
 		{
 			case PLPGSQL_GETDIAG_ROW_COUNT:
-
 				exec_assign_value(estate, var,
 								  UInt32GetDatum(estate->eval_processed),
 								  INT4OID, &isnull);
 				break;
 
 			case PLPGSQL_GETDIAG_RESULT_OID:
-
 				exec_assign_value(estate, var,
 								  ObjectIdGetDatum(estate->eval_lastoid),
 								  OIDOID, &isnull);
 				break;
 
+			case PLPGSQL_GETDIAG_ERROR_CONTEXT:
+				exec_assign_c_string(estate, var,
+									 estate->cur_error->context);
+				break;
+
+			case PLPGSQL_GETDIAG_ERROR_DETAIL:
+				exec_assign_c_string(estate, var,
+									 estate->cur_error->detail);
+				break;
+
+			case PLPGSQL_GETDIAG_ERROR_HINT:
+				exec_assign_c_string(estate, var,
+									 estate->cur_error->hint);
+				break;
+
+			case PLPGSQL_GETDIAG_RETURNED_SQLSTATE:
+				exec_assign_c_string(estate, var,
+									 unpack_sql_state(estate->cur_error->sqlerrcode));
+				break;
+
+			case PLPGSQL_GETDIAG_MESSAGE_TEXT:
+				exec_assign_c_string(estate, var,
+									 estate->cur_error->message);
+				break;
+
 			default:
-				elog(ERROR, "unrecognized attribute request: %d",
+				elog(ERROR, "unrecognized diagnostic item kind: %d",
 					 diag_item->kind);
 		}
 	}
@@ -2060,7 +2098,7 @@ exec_stmt_foreach_a(PLpgSQL_execstate *estate, PLpgSQL_stmt_foreach_a *stmt)
 	if (isnull)
 		ereport(ERROR,
 				(errcode(ERRCODE_NULL_VALUE_NOT_ALLOWED),
-				 errmsg("FOREACH expression must not be NULL")));
+				 errmsg("FOREACH expression must not be null")));
 
 	/* check the type of the expression - must be an array */
 	if (!OidIsValid(get_element_type(arrtype)))
@@ -2633,7 +2671,7 @@ exec_stmt_raise(PLpgSQL_execstate *estate, PLpgSQL_stmt_raise *stmt)
 			ReThrowError(estate->cur_error);
 		/* oops, we're not inside a handler */
 		ereport(ERROR,
-				(errcode(ERRCODE_SYNTAX_ERROR),
+				(errcode(ERRCODE_STACKED_DIAGNOSTICS_ACCESSED_WITHOUT_ACTIVE_HANDLER),
 				 errmsg("RAISE without parameters cannot be used outside an exception handler")));
 	}
 
@@ -2791,7 +2829,7 @@ exec_stmt_raise(PLpgSQL_execstate *estate, PLpgSQL_stmt_raise *stmt)
 	ereport(stmt->elog_level,
 			(err_code ? errcode(err_code) : 0,
 			 errmsg_internal("%s", err_message),
-			 (err_detail != NULL) ? errdetail("%s", err_detail) : 0,
+			 (err_detail != NULL) ? errdetail_internal("%s", err_detail) : 0,
 			 (err_hint != NULL) ? errhint("%s", err_hint) : 0));
 
 	estate->err_text = NULL;	/* un-suppress... */
@@ -3649,8 +3687,7 @@ exec_stmt_close(PLpgSQL_execstate *estate, PLpgSQL_stmt_close *stmt)
 
 
 /* ----------
- * exec_assign_expr			Put an expression's result into
- *					a variable.
+ * exec_assign_expr			Put an expression's result into a variable.
  * ----------
  */
 static void
@@ -3664,6 +3701,29 @@ exec_assign_expr(PLpgSQL_execstate *estate, PLpgSQL_datum *target,
 	value = exec_eval_expr(estate, expr, &isnull, &valtype);
 	exec_assign_value(estate, target, value, valtype, &isnull);
 	exec_eval_cleanup(estate);
+}
+
+
+/* ----------
+ * exec_assign_c_string		Put a C string into a text variable.
+ *
+ * We take a NULL pointer as signifying empty string, not SQL null.
+ * ----------
+ */
+static void
+exec_assign_c_string(PLpgSQL_execstate *estate, PLpgSQL_datum *target,
+					 const char *str)
+{
+	text	   *value;
+	bool		isnull = false;
+
+	if (str != NULL)
+		value = cstring_to_text(str);
+	else
+		value = cstring_to_text("");
+	exec_assign_value(estate, target, PointerGetDatum(value),
+					  TEXTOID, &isnull);
+	pfree(value);
 }
 
 
@@ -4307,29 +4367,63 @@ exec_get_datum_type(PLpgSQL_execstate *estate,
 }
 
 /*
- * exec_get_datum_collation				Get collation of a PLpgSQL_datum
+ * exec_get_datum_type_info			Get datatype etc of a PLpgSQL_datum
+ *
+ * An extended version of exec_get_datum_type, which also retrieves the
+ * typmod and collation of the datum.
  */
-Oid
-exec_get_datum_collation(PLpgSQL_execstate *estate,
-						 PLpgSQL_datum *datum)
+void
+exec_get_datum_type_info(PLpgSQL_execstate *estate,
+						 PLpgSQL_datum *datum,
+						 Oid *typeid, int32 *typmod, Oid *collation)
 {
-	Oid			collid;
-
 	switch (datum->dtype)
 	{
 		case PLPGSQL_DTYPE_VAR:
 			{
 				PLpgSQL_var *var = (PLpgSQL_var *) datum;
 
-				collid = var->datatype->collation;
+				*typeid = var->datatype->typoid;
+				*typmod = var->datatype->atttypmod;
+				*collation = var->datatype->collation;
 				break;
 			}
 
 		case PLPGSQL_DTYPE_ROW:
+			{
+				PLpgSQL_row *row = (PLpgSQL_row *) datum;
+
+				if (!row->rowtupdesc)	/* should not happen */
+					elog(ERROR, "row variable has no tupdesc");
+				/* Make sure we have a valid type/typmod setting */
+				BlessTupleDesc(row->rowtupdesc);
+				*typeid = row->rowtupdesc->tdtypeid;
+				/* do NOT return the mutable typmod of a RECORD variable */
+				*typmod = -1;
+				/* composite types are never collatable */
+				*collation = InvalidOid;
+				break;
+			}
+
 		case PLPGSQL_DTYPE_REC:
-			/* composite types are never collatable */
-			collid = InvalidOid;
-			break;
+			{
+				PLpgSQL_rec *rec = (PLpgSQL_rec *) datum;
+
+				if (rec->tupdesc == NULL)
+					ereport(ERROR,
+						  (errcode(ERRCODE_OBJECT_NOT_IN_PREREQUISITE_STATE),
+						   errmsg("record \"%s\" is not assigned yet",
+								  rec->refname),
+						   errdetail("The tuple structure of a not-yet-assigned record is indeterminate.")));
+				/* Make sure we have a valid type/typmod setting */
+				BlessTupleDesc(rec->tupdesc);
+				*typeid = rec->tupdesc->tdtypeid;
+				/* do NOT return the mutable typmod of a RECORD variable */
+				*typmod = -1;
+				/* composite types are never collatable */
+				*collation = InvalidOid;
+				break;
+			}
 
 		case PLPGSQL_DTYPE_RECFIELD:
 			{
@@ -4350,21 +4444,27 @@ exec_get_datum_collation(PLpgSQL_execstate *estate,
 							(errcode(ERRCODE_UNDEFINED_COLUMN),
 							 errmsg("record \"%s\" has no field \"%s\"",
 									rec->refname, recfield->fieldname)));
-				/* XXX there's no SPI_getcollid, as yet */
+				*typeid = SPI_gettypeid(rec->tupdesc, fno);
+				/* XXX there's no SPI_gettypmod, for some reason */
 				if (fno > 0)
-					collid = rec->tupdesc->attrs[fno - 1]->attcollation;
+					*typmod = rec->tupdesc->attrs[fno - 1]->atttypmod;
+				else
+					*typmod = -1;
+				/* XXX there's no SPI_getcollation either */
+				if (fno > 0)
+					*collation = rec->tupdesc->attrs[fno - 1]->attcollation;
 				else	/* no system column types have collation */
-					collid = InvalidOid;
+					*collation = InvalidOid;
 				break;
 			}
 
 		default:
 			elog(ERROR, "unrecognized dtype: %d", datum->dtype);
-			collid = InvalidOid;	/* keep compiler quiet */
+			*typeid = InvalidOid;		/* keep compiler quiet */
+			*typmod = -1;
+			*collation = InvalidOid;
 			break;
 	}
-
-	return collid;
 }
 
 /* ----------

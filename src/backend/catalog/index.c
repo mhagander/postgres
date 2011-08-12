@@ -54,6 +54,7 @@
 #include "parser/parser.h"
 #include "storage/bufmgr.h"
 #include "storage/lmgr.h"
+#include "storage/predicate.h"
 #include "storage/procarray.h"
 #include "storage/smgr.h"
 #include "utils/builtins.h"
@@ -115,6 +116,7 @@ static void validate_index_heapscan(Relation heapRelation,
 						Snapshot snapshot,
 						v_i_state *state);
 static Oid	IndexGetRelation(Oid indexId);
+static bool ReindexIsCurrentlyProcessingIndex(Oid indexOid);
 static void SetReindexProcessing(Oid heapOid, Oid indexOid);
 static void ResetReindexProcessing(void);
 static void SetReindexPending(List *indexes);
@@ -647,6 +649,8 @@ UpdateIndexRelation(Oid indexoid,
  * indexRelationId: normally, pass InvalidOid to let this routine
  *		generate an OID for the index.	During bootstrap this may be
  *		nonzero to specify a preselected OID.
+ * relFileNode: normally, pass InvalidOid to get new storage.  May be
+ *		nonzero to attach an existing valid build.
  * indexInfo: same info executor uses to insert into the index
  * indexColNames: column names to use for index (List of char *)
  * accessMethodObjectId: OID of index AM to use
@@ -672,6 +676,7 @@ Oid
 index_create(Relation heapRelation,
 			 const char *indexRelationName,
 			 Oid indexRelationId,
+			 Oid relFileNode,
 			 IndexInfo *indexInfo,
 			 List *indexColNames,
 			 Oid accessMethodObjectId,
@@ -811,6 +816,7 @@ index_create(Relation heapRelation,
 								namespaceId,
 								tableSpaceId,
 								indexRelationId,
+								relFileNode,
 								indexTupDesc,
 								RELKIND_INDEX,
 								relpersistence,
@@ -1311,6 +1317,12 @@ index_drop(Oid indexId)
 	CheckTableNotInUse(userIndexRelation, "DROP INDEX");
 
 	/*
+	 * All predicate locks on the index are about to be made invalid. Promote
+	 * them to relation locks on the heap.
+	 */
+	TransferPredicateLocksToHeapRelation(userIndexRelation);
+
+	/*
 	 * Schedule physical removal of the files
 	 */
 	RelationDropStorage(userIndexRelation);
@@ -1741,9 +1753,14 @@ index_build(Relation heapRelation,
 	Assert(PointerIsValid(stats));
 
 	/*
-	 * If this is an unlogged index, we need to write out an init fork for it.
+	 * If this is an unlogged index, we may need to write out an init fork for
+	 * it -- but we must first check whether one already exists.  If, for
+	 * example, an unlogged relation is truncated in the transaction that
+	 * created it, or truncated twice in a subsequent transaction, the
+	 * relfilenode won't change, and nothing needs to be done here.
 	 */
-	if (heapRelation->rd_rel->relpersistence == RELPERSISTENCE_UNLOGGED)
+	if (heapRelation->rd_rel->relpersistence == RELPERSISTENCE_UNLOGGED &&
+		!smgrexists(indexRelation->rd_smgr, INIT_FORKNUM))
 	{
 		RegProcedure ambuildempty = indexRelation->rd_am->ambuildempty;
 
@@ -1753,19 +1770,6 @@ index_build(Relation heapRelation,
 	}
 
 	/*
-	 * If it's for an exclusion constraint, make a second pass over the heap
-	 * to verify that the constraint is satisfied.
-	 */
-	if (indexInfo->ii_ExclusionOps != NULL)
-		IndexCheckExclusion(heapRelation, indexRelation, indexInfo);
-
-	/* Roll back any GUC changes executed by index functions */
-	AtEOXact_GUC(false, save_nestlevel);
-
-	/* Restore userid and security context */
-	SetUserIdAndSecContext(save_userid, save_sec_context);
-
-	/*
 	 * If we found any potentially broken HOT chains, mark the index as not
 	 * being usable until the current transaction is below the event horizon.
 	 * See src/backend/access/heap/README.HOT for discussion.
@@ -1773,8 +1777,8 @@ index_build(Relation heapRelation,
 	 * However, when reindexing an existing index, we should do nothing here.
 	 * Any HOT chains that are broken with respect to the index must predate
 	 * the index's original creation, so there is no need to change the
-	 * index's usability horizon.  Moreover, we *must not* try to change
-	 * the index's pg_index entry while reindexing pg_index itself, and this
+	 * index's usability horizon.  Moreover, we *must not* try to change the
+	 * index's pg_index entry while reindexing pg_index itself, and this
 	 * optimization nicely prevents that.
 	 */
 	if (indexInfo->ii_BrokenHotChain && !isreindex)
@@ -1819,8 +1823,23 @@ index_build(Relation heapRelation,
 					   InvalidOid,
 					   stats->index_tuples);
 
-	/* Make the updated versions visible */
+	/* Make the updated catalog row versions visible */
 	CommandCounterIncrement();
+
+	/*
+	 * If it's for an exclusion constraint, make a second pass over the heap
+	 * to verify that the constraint is satisfied.	We must not do this until
+	 * the index is fully valid.  (Broken HOT chains shouldn't matter, though;
+	 * see comments for IndexCheckExclusion.)
+	 */
+	if (indexInfo->ii_ExclusionOps != NULL)
+		IndexCheckExclusion(heapRelation, indexRelation, indexInfo);
+
+	/* Roll back any GUC changes executed by index functions */
+	AtEOXact_GUC(false, save_nestlevel);
+
+	/* Restore userid and security context */
+	SetUserIdAndSecContext(save_userid, save_sec_context);
 }
 
 
@@ -2121,8 +2140,8 @@ IndexBuildHeapScan(Relation heapRelation,
 						/*
 						 * It's a HOT-updated tuple deleted by our own xact.
 						 * We can assume the deletion will commit (else the
-						 * index contents don't matter), so treat the same
-						 * as RECENTLY_DEAD HOT-updated tuples.
+						 * index contents don't matter), so treat the same as
+						 * RECENTLY_DEAD HOT-updated tuples.
 						 */
 						indexIt = false;
 						/* mark the index as unsafe for old snapshots */
@@ -2131,9 +2150,9 @@ IndexBuildHeapScan(Relation heapRelation,
 					else
 					{
 						/*
-						 * It's a regular tuple deleted by our own xact.
-						 * Index it but don't check for uniqueness, the same
-						 * as a RECENTLY_DEAD tuple.
+						 * It's a regular tuple deleted by our own xact. Index
+						 * it but don't check for uniqueness, the same as a
+						 * RECENTLY_DEAD tuple.
 						 */
 						indexIt = true;
 					}
@@ -2263,6 +2282,14 @@ IndexCheckExclusion(Relation heapRelation,
 	TupleTableSlot *slot;
 	EState	   *estate;
 	ExprContext *econtext;
+
+	/*
+	 * If we are reindexing the target index, mark it as no longer being
+	 * reindexed, to forestall an Assert in index_beginscan when we try to use
+	 * the index for probes.  This is OK because the index is now fully valid.
+	 */
+	if (ReindexIsCurrentlyProcessingIndex(RelationGetRelid(indexRelation)))
+		ResetReindexProcessing();
 
 	/*
 	 * Need an EState for evaluation of index expressions and partial-index
@@ -2782,6 +2809,12 @@ reindex_index(Oid indexId, bool skip_constraint_checks)
 	 */
 	CheckTableNotInUse(iRel, "REINDEX INDEX");
 
+	/*
+	 * All predicate locks on the index are about to be made invalid. Promote
+	 * them to relation locks on the heap.
+	 */
+	TransferPredicateLocksToHeapRelation(iRel);
+
 	PG_TRY();
 	{
 		/* Suppress use of the target index while rebuilding it */
@@ -2825,9 +2858,9 @@ reindex_index(Oid indexId, bool skip_constraint_checks)
 	 *
 	 * We can also reset indcheckxmin, because we have now done a
 	 * non-concurrent index build, *except* in the case where index_build
-	 * found some still-broken HOT chains.  If it did, we normally leave
+	 * found some still-broken HOT chains.	If it did, we normally leave
 	 * indcheckxmin alone (note that index_build won't have changed it,
-	 * because this is a reindex).  But if the index was invalid or not ready
+	 * because this is a reindex).	But if the index was invalid or not ready
 	 * and there were broken HOT chains, it seems best to force indcheckxmin
 	 * true, because the normal argument that the HOT chains couldn't conflict
 	 * with the index is suspect for an invalid index.
@@ -2899,7 +2932,7 @@ reindex_index(Oid indexId, bool skip_constraint_checks)
  * the data in a manner that risks a change in constraint validity.
  *
  * Returns true if any indexes were rebuilt (including toast table's index
- * when relevant).  Note that a CommandCounterIncrement will occur after each
+ * when relevant).	Note that a CommandCounterIncrement will occur after each
  * index rebuild.
  */
 bool
@@ -2913,7 +2946,8 @@ reindex_relation(Oid relid, int flags)
 
 	/*
 	 * Open and lock the relation.	ShareLock is sufficient since we only need
-	 * to prevent schema and data changes in it.
+	 * to prevent schema and data changes in it.  The lock level used here
+	 * should match ReindexTable().
 	 */
 	rel = heap_open(relid, ShareLock);
 
@@ -2984,8 +3018,8 @@ reindex_relation(Oid relid, int flags)
 
 			CommandCounterIncrement();
 
-			if (flags & REINDEX_REL_SUPPRESS_INDEX_USE)
-				RemoveReindexPending(indexOid);
+			/* Index should no longer be in the pending list */
+			Assert(!ReindexIsProcessingIndex(indexOid));
 
 			if (is_pg_class)
 				doneIndexes = lappend_oid(doneIndexes, indexOid);
@@ -3025,7 +3059,9 @@ reindex_relation(Oid relid, int flags)
  *		System index reindexing support
  *
  * When we are busy reindexing a system index, this code provides support
- * for preventing catalog lookups from using that index.
+ * for preventing catalog lookups from using that index.  We also make use
+ * of this to catch attempted uses of user indexes during reindexing of
+ * those indexes.
  * ----------------------------------------------------------------
  */
 
@@ -3041,6 +3077,16 @@ bool
 ReindexIsProcessingHeap(Oid heapOid)
 {
 	return heapOid == currentlyReindexedHeap;
+}
+
+/*
+ * ReindexIsCurrentlyProcessingIndex
+ *		True if index specified by OID is currently being reindexed.
+ */
+static bool
+ReindexIsCurrentlyProcessingIndex(Oid indexOid)
+{
+	return indexOid == currentlyReindexedIndex;
 }
 
 /*
@@ -3070,6 +3116,8 @@ SetReindexProcessing(Oid heapOid, Oid indexOid)
 		elog(ERROR, "cannot reindex while reindexing");
 	currentlyReindexedHeap = heapOid;
 	currentlyReindexedIndex = indexOid;
+	/* Index is no longer "pending" reindex. */
+	RemoveReindexPending(indexOid);
 }
 
 /*

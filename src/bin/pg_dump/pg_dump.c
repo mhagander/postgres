@@ -135,7 +135,7 @@ static int	binary_upgrade = 0;
 static int	disable_dollar_quoting = 0;
 static int	dump_inserts = 0;
 static int	column_inserts = 0;
-static int	no_security_label = 0;
+static int	no_security_labels = 0;
 static int	no_unlogged_table_data = 0;
 static int	serializable_deferrable = 0;
 
@@ -329,7 +329,7 @@ main(int argc, char **argv)
 		{"role", required_argument, NULL, 3},
 		{"serializable-deferrable", no_argument, &serializable_deferrable, 1},
 		{"use-set-session-authorization", no_argument, &use_setsessauth, 1},
-		{"no-security-label", no_argument, &no_security_label, 1},
+		{"no-security-labels", no_argument, &no_security_labels, 1},
 		{"no-unlogged-table-data", no_argument, &no_unlogged_table_data, 1},
 
 		{NULL, 0, NULL, 0}
@@ -651,8 +651,8 @@ main(int argc, char **argv)
 	/*
 	 * Disables security label support if server version < v9.1.x
 	 */
-	if (!no_security_label && g_fout->remoteVersion < 90100)
-		no_security_label = 1;
+	if (!no_security_labels && g_fout->remoteVersion < 90100)
+		no_security_labels = 1;
 
 	/*
 	 * Start transaction-snapshot mode transaction to dump consistent data.
@@ -829,7 +829,7 @@ help(const char *progname)
 	printf(_("  %s [OPTION]... [DBNAME]\n"), progname);
 
 	printf(_("\nGeneral options:\n"));
-	printf(_("  -f, --file=OUTPUT           output file or directory name\n"));
+	printf(_("  -f, --file=FILENAME         output file or directory name\n"));
 	printf(_("  -F, --format=c|d|t|p        output file format (custom, directory, tar, plain text)\n"));
 	printf(_("  -v, --verbose               verbose mode\n"));
 	printf(_("  -Z, --compress=0-9          compression level for compressed formats\n"));
@@ -854,16 +854,15 @@ help(const char *progname)
 	printf(_("  -T, --exclude-table=TABLE   do NOT dump the named table(s)\n"));
 	printf(_("  -x, --no-privileges         do not dump privileges (grant/revoke)\n"));
 	printf(_("  --binary-upgrade            for use by upgrade utilities only\n"));
-	printf(_("  --inserts                   dump data as INSERT commands, rather than COPY\n"));
 	printf(_("  --column-inserts            dump data as INSERT commands with column names\n"));
 	printf(_("  --disable-dollar-quoting    disable dollar quoting, use SQL standard quoting\n"));
 	printf(_("  --disable-triggers          disable triggers during data-only restore\n"));
+	printf(_("  --inserts                   dump data as INSERT commands, rather than COPY\n"));
+	printf(_("  --no-security-labels        do not dump security label assignments\n"));
 	printf(_("  --no-tablespaces            do not dump tablespace assignments\n"));
-	printf(_("  --quote-all-identifiers     quote all identifiers, even if not keywords\n"));
+	printf(_("  --no-unlogged-table-data    do not dump unlogged table data\n"));
+	printf(_("  --quote-all-identifiers     quote all identifiers, even if not key words\n"));
 	printf(_("  --serializable-deferrable   wait until the dump can run without anomalies\n"));
-	printf(_("  --role=ROLENAME             do SET ROLE before dump\n"));
-	printf(_("  --no-security-label         do not dump security label assignments\n"));
-	printf(_("  --no-unlogged-table-data	do not dump unlogged table data\n"));
 	printf(_("  --use-set-session-authorization\n"
 			 "                              use SET SESSION AUTHORIZATION commands instead of\n"
 	"                              ALTER OWNER commands to set ownership\n"));
@@ -874,6 +873,7 @@ help(const char *progname)
 	printf(_("  -U, --username=NAME      connect as specified database user\n"));
 	printf(_("  -w, --no-password        never prompt for password\n"));
 	printf(_("  -W, --password           force password prompt (should happen automatically)\n"));
+	printf(_("  --role=ROLENAME          do SET ROLE before dump\n"));
 
 	printf(_("\nIf no database name is supplied, then the PGDATABASE environment\n"
 			 "variable value is used.\n\n"));
@@ -1153,10 +1153,11 @@ selectDumpableDefaultACL(DefaultACLInfo *dinfo)
  * selectDumpableExtension: policy-setting subroutine
  *		Mark an extension as to be dumped or not
  *
- * Normally, we just dump all extensions.  However, in binary-upgrade mode
- * it's necessary to skip built-in extensions, since we assume those will
- * already be installed in the target database.  We identify such extensions
- * by their having OIDs in the range reserved for initdb.
+ * Normally, we dump all extensions, or none of them if include_everything
+ * is false (i.e., a --schema or --table switch was given).  However, in
+ * binary-upgrade mode it's necessary to skip built-in extensions, since we
+ * assume those will already be installed in the target database.  We identify
+ * such extensions by their having OIDs in the range reserved for initdb.
  */
 static void
 selectDumpableExtension(ExtensionInfo *extinfo)
@@ -1164,7 +1165,7 @@ selectDumpableExtension(ExtensionInfo *extinfo)
 	if (binary_upgrade && extinfo->dobj.catId.oid < (Oid) FirstNormalObjectId)
 		extinfo->dobj.dump = false;
 	else
-		extinfo->dobj.dump = true;
+		extinfo->dobj.dump = include_everything;
 }
 
 /*
@@ -2047,6 +2048,24 @@ dumpDatabase(Archive *AH)
 
 	PQclear(res);
 
+	/* Dump shared security label. */
+	if (!no_security_labels && g_fout->remoteVersion >= 90200)
+	{
+		PQExpBuffer seclabelQry = createPQExpBuffer();
+
+		buildShSecLabelQuery(g_conn, "pg_database", dbCatId.oid, seclabelQry);
+		res = PQexec(g_conn, seclabelQry->data);
+		check_sql_result(res, g_conn, seclabelQry->data, PGRES_TUPLES_OK);
+		resetPQExpBuffer(seclabelQry);
+		emitShSecLabels(g_conn, res, seclabelQry, "DATABASE", datname);
+		if (strlen(seclabelQry->data))
+			ArchiveEntry(AH, dbCatId, createDumpId(), datname, NULL, NULL,
+						 dba, false, "SECURITY LABEL", SECTION_NONE,
+						 seclabelQry->data, "", NULL,
+						 &dbDumpId, 1, NULL, NULL);
+		destroyPQExpBuffer(seclabelQry);
+	}
+
 	destroyPQExpBuffer(dbQry);
 	destroyPQExpBuffer(delQry);
 	destroyPQExpBuffer(creaQry);
@@ -2541,7 +2560,7 @@ binary_upgrade_extension_member(PQExpBuffer upgrade_buffer,
 	}
 	if (extobj == NULL)
 	{
-		write_msg(NULL, "failed to find parent extension for %s", objlabel);
+		write_msg(NULL, "could not find parent extension for %s", objlabel);
 		exit_nicely();
 	}
 
@@ -5555,6 +5574,7 @@ getTableAttrs(TableInfo *tblinfo, int numTables)
 	int			i_attislocal;
 	int			i_attoptions;
 	int			i_attcollation;
+	int			i_attfdwoptions;
 	PGresult   *res;
 	int			ntups;
 	bool		hasdefaults;
@@ -5592,7 +5612,31 @@ getTableAttrs(TableInfo *tblinfo, int numTables)
 
 		resetPQExpBuffer(q);
 
-		if (g_fout->remoteVersion >= 90100)
+		if (g_fout->remoteVersion >= 90200)
+		{
+			/*
+			 * attfdwoptions is new in 9.2.
+			 */
+			appendPQExpBuffer(q, "SELECT a.attnum, a.attname, a.atttypmod, "
+							  "a.attstattarget, a.attstorage, t.typstorage, "
+							  "a.attnotnull, a.atthasdef, a.attisdropped, "
+							  "a.attlen, a.attalign, a.attislocal, "
+				  "pg_catalog.format_type(t.oid,a.atttypmod) AS atttypname, "
+						"array_to_string(a.attoptions, ', ') AS attoptions, "
+							  "CASE WHEN a.attcollation <> t.typcollation "
+							"THEN a.attcollation ELSE 0 END AS attcollation, "
+				  "array_to_string(ARRAY("
+				  "  SELECT option_name || ' ' || quote_literal(option_value) "
+				  "  FROM pg_options_to_table(attfdwoptions)), ', ') "
+				  " AS attfdwoptions "
+			 "FROM pg_catalog.pg_attribute a LEFT JOIN pg_catalog.pg_type t "
+							  "ON a.atttypid = t.oid "
+							  "WHERE a.attrelid = '%u'::pg_catalog.oid "
+							  "AND a.attnum > 0::pg_catalog.int2 "
+							  "ORDER BY a.attrelid, a.attnum",
+							  tbinfo->dobj.catId.oid);
+		}
+		else if (g_fout->remoteVersion >= 90100)
 		{
 			/*
 			 * attcollation is new in 9.1.	Since we only want to dump COLLATE
@@ -5607,7 +5651,8 @@ getTableAttrs(TableInfo *tblinfo, int numTables)
 				  "pg_catalog.format_type(t.oid,a.atttypmod) AS atttypname, "
 						"array_to_string(a.attoptions, ', ') AS attoptions, "
 							  "CASE WHEN a.attcollation <> t.typcollation "
-							"THEN a.attcollation ELSE 0 END AS attcollation "
+							"THEN a.attcollation ELSE 0 END AS attcollation, "
+							  "NULL AS attfdwoptions "
 			 "FROM pg_catalog.pg_attribute a LEFT JOIN pg_catalog.pg_type t "
 							  "ON a.atttypid = t.oid "
 							  "WHERE a.attrelid = '%u'::pg_catalog.oid "
@@ -5624,7 +5669,8 @@ getTableAttrs(TableInfo *tblinfo, int numTables)
 							  "a.attlen, a.attalign, a.attislocal, "
 				  "pg_catalog.format_type(t.oid,a.atttypmod) AS atttypname, "
 						"array_to_string(a.attoptions, ', ') AS attoptions, "
-							  "0 AS attcollation "
+							  "0 AS attcollation, "
+							  "NULL AS attfdwoptions "
 			 "FROM pg_catalog.pg_attribute a LEFT JOIN pg_catalog.pg_type t "
 							  "ON a.atttypid = t.oid "
 							  "WHERE a.attrelid = '%u'::pg_catalog.oid "
@@ -5640,7 +5686,8 @@ getTableAttrs(TableInfo *tblinfo, int numTables)
 							  "a.attnotnull, a.atthasdef, a.attisdropped, "
 							  "a.attlen, a.attalign, a.attislocal, "
 				  "pg_catalog.format_type(t.oid,a.atttypmod) AS atttypname, "
-							  "'' AS attoptions, 0 AS attcollation "
+							  "'' AS attoptions, 0 AS attcollation, "
+							  "NULL AS attfdwoptions "
 			 "FROM pg_catalog.pg_attribute a LEFT JOIN pg_catalog.pg_type t "
 							  "ON a.atttypid = t.oid "
 							  "WHERE a.attrelid = '%u'::pg_catalog.oid "
@@ -5661,7 +5708,8 @@ getTableAttrs(TableInfo *tblinfo, int numTables)
 							  "false AS attisdropped, a.attlen, "
 							  "a.attalign, false AS attislocal, "
 							  "format_type(t.oid,a.atttypmod) AS atttypname, "
-							  "'' AS attoptions, 0 AS attcollation "
+							  "'' AS attoptions, 0 AS attcollation, "
+							  "NULL AS attfdwoptions "
 							  "FROM pg_attribute a LEFT JOIN pg_type t "
 							  "ON a.atttypid = t.oid "
 							  "WHERE a.attrelid = '%u'::oid "
@@ -5679,7 +5727,8 @@ getTableAttrs(TableInfo *tblinfo, int numTables)
 							  "attlen, attalign, "
 							  "false AS attislocal, "
 							  "(SELECT typname FROM pg_type WHERE oid = atttypid) AS atttypname, "
-							  "'' AS attoptions, 0 AS attcollation "
+							  "'' AS attoptions, 0 AS attcollation, "
+							  "NULL AS attfdwoptions "
 							  "FROM pg_attribute a "
 							  "WHERE attrelid = '%u'::oid "
 							  "AND attnum > 0::int2 "
@@ -5707,6 +5756,7 @@ getTableAttrs(TableInfo *tblinfo, int numTables)
 		i_attislocal = PQfnumber(res, "attislocal");
 		i_attoptions = PQfnumber(res, "attoptions");
 		i_attcollation = PQfnumber(res, "attcollation");
+		i_attfdwoptions = PQfnumber(res, "attfdwoptions");
 
 		tbinfo->numatts = ntups;
 		tbinfo->attnames = (char **) malloc(ntups * sizeof(char *));
@@ -5723,6 +5773,7 @@ getTableAttrs(TableInfo *tblinfo, int numTables)
 		tbinfo->attrdefs = (AttrDefInfo **) malloc(ntups * sizeof(AttrDefInfo *));
 		tbinfo->attoptions = (char **) malloc(ntups * sizeof(char *));
 		tbinfo->attcollation = (Oid *) malloc(ntups * sizeof(Oid));
+		tbinfo->attfdwoptions = (char **) malloc(ntups * sizeof(char *));
 		tbinfo->inhAttrs = (bool *) malloc(ntups * sizeof(bool));
 		tbinfo->inhAttrDef = (bool *) malloc(ntups * sizeof(bool));
 		tbinfo->inhNotNull = (bool *) malloc(ntups * sizeof(bool));
@@ -5749,6 +5800,7 @@ getTableAttrs(TableInfo *tblinfo, int numTables)
 			tbinfo->notnull[j] = (PQgetvalue(res, j, i_attnotnull)[0] == 't');
 			tbinfo->attoptions[j] = strdup(PQgetvalue(res, j, i_attoptions));
 			tbinfo->attcollation[j] = atooid(PQgetvalue(res, j, i_attcollation));
+			tbinfo->attfdwoptions[j] = strdup(PQgetvalue(res, j, i_attfdwoptions));
 			tbinfo->attrdefs[j] = NULL; /* fix below */
 			if (PQgetvalue(res, j, i_atthasdef)[0] == 't')
 				hasdefaults = true;
@@ -7937,6 +7989,7 @@ static void
 dumpCompositeType(Archive *fout, TypeInfo *tyinfo)
 {
 	PQExpBuffer q = createPQExpBuffer();
+	PQExpBuffer dropped = createPQExpBuffer();
 	PQExpBuffer delq = createPQExpBuffer();
 	PQExpBuffer labelq = createPQExpBuffer();
 	PQExpBuffer query = createPQExpBuffer();
@@ -7944,9 +7997,13 @@ dumpCompositeType(Archive *fout, TypeInfo *tyinfo)
 	int			ntups;
 	int			i_attname;
 	int			i_atttypdefn;
+	int			i_attlen;
+	int			i_attalign;
+	int			i_attisdropped;
 	int			i_attcollation;
 	int			i_typrelid;
 	int			i;
+	int			actual_atts;
 
 	/* Set proper schema search path so type references list correctly */
 	selectSourceSchema(tyinfo->dobj.namespace->dobj.name);
@@ -7958,33 +8015,37 @@ dumpCompositeType(Archive *fout, TypeInfo *tyinfo)
 		 * attcollation is new in 9.1.	Since we only want to dump COLLATE
 		 * clauses for attributes whose collation is different from their
 		 * type's default, we use a CASE here to suppress uninteresting
-		 * attcollations cheaply.
+		 * attcollations cheaply.  atttypid will be 0 for dropped columns;
+		 * collation does not matter for those.
 		 */
 		appendPQExpBuffer(query, "SELECT a.attname, "
-						  "pg_catalog.format_type(a.atttypid, a.atttypmod) AS atttypdefn, "
+			"pg_catalog.format_type(a.atttypid, a.atttypmod) AS atttypdefn, "
+						  "a.attlen, a.attalign, a.attisdropped, "
 						  "CASE WHEN a.attcollation <> at.typcollation "
 						  "THEN a.attcollation ELSE 0 END AS attcollation, "
 						  "ct.typrelid "
-						  "FROM pg_catalog.pg_type ct, pg_catalog.pg_attribute a, "
-						  "pg_catalog.pg_type at "
+						  "FROM pg_catalog.pg_type ct "
+				"JOIN pg_catalog.pg_attribute a ON a.attrelid = ct.typrelid "
+					"LEFT JOIN pg_catalog.pg_type at ON at.oid = a.atttypid "
 						  "WHERE ct.oid = '%u'::pg_catalog.oid "
-						  "AND a.attrelid = ct.typrelid "
-						  "AND a.atttypid = at.oid "
-						  "AND NOT a.attisdropped "
 						  "ORDER BY a.attnum ",
 						  tyinfo->dobj.catId.oid);
 	}
 	else
 	{
-		/* We assume here that remoteVersion must be at least 70300 */
+		/*
+		 * We assume here that remoteVersion must be at least 70300.  Since
+		 * ALTER TYPE could not drop columns until 9.1, attisdropped should
+		 * always be false.
+		 */
 		appendPQExpBuffer(query, "SELECT a.attname, "
-						  "pg_catalog.format_type(a.atttypid, a.atttypmod) AS atttypdefn, "
+			"pg_catalog.format_type(a.atttypid, a.atttypmod) AS atttypdefn, "
+						  "a.attlen, a.attalign, a.attisdropped, "
 						  "0 AS attcollation, "
 						  "ct.typrelid "
-						  "FROM pg_catalog.pg_type ct, pg_catalog.pg_attribute a "
+					 "FROM pg_catalog.pg_type ct, pg_catalog.pg_attribute a "
 						  "WHERE ct.oid = '%u'::pg_catalog.oid "
 						  "AND a.attrelid = ct.typrelid "
-						  "AND NOT a.attisdropped "
 						  "ORDER BY a.attnum ",
 						  tyinfo->dobj.catId.oid);
 	}
@@ -7996,6 +8057,9 @@ dumpCompositeType(Archive *fout, TypeInfo *tyinfo)
 
 	i_attname = PQfnumber(res, "attname");
 	i_atttypdefn = PQfnumber(res, "atttypdefn");
+	i_attlen = PQfnumber(res, "attlen");
+	i_attalign = PQfnumber(res, "attalign");
+	i_attisdropped = PQfnumber(res, "attisdropped");
 	i_attcollation = PQfnumber(res, "attcollation");
 	i_typrelid = PQfnumber(res, "typrelid");
 
@@ -8010,38 +8074,81 @@ dumpCompositeType(Archive *fout, TypeInfo *tyinfo)
 	appendPQExpBuffer(q, "CREATE TYPE %s AS (",
 					  fmtId(tyinfo->dobj.name));
 
+	actual_atts = 0;
 	for (i = 0; i < ntups; i++)
 	{
 		char	   *attname;
 		char	   *atttypdefn;
+		char	   *attlen;
+		char	   *attalign;
+		bool		attisdropped;
 		Oid			attcollation;
 
 		attname = PQgetvalue(res, i, i_attname);
 		atttypdefn = PQgetvalue(res, i, i_atttypdefn);
+		attlen = PQgetvalue(res, i, i_attlen);
+		attalign = PQgetvalue(res, i, i_attalign);
+		attisdropped = (PQgetvalue(res, i, i_attisdropped)[0] == 't');
 		attcollation = atooid(PQgetvalue(res, i, i_attcollation));
 
-		appendPQExpBuffer(q, "\n\t%s %s", fmtId(attname), atttypdefn);
+		if (attisdropped && !binary_upgrade)
+			continue;
 
-		/* Add collation if not default for the column type */
-		if (OidIsValid(attcollation))
+		/* Format properly if not first attr */
+		if (actual_atts++ > 0)
+			appendPQExpBuffer(q, ",");
+		appendPQExpBuffer(q, "\n\t");
+
+		if (!attisdropped)
 		{
-			CollInfo   *coll;
+			appendPQExpBuffer(q, "%s %s", fmtId(attname), atttypdefn);
 
-			coll = findCollationByOid(attcollation);
-			if (coll)
+			/* Add collation if not default for the column type */
+			if (OidIsValid(attcollation))
 			{
-				/* always schema-qualify, don't try to be smart */
-				appendPQExpBuffer(q, " COLLATE %s.",
-								  fmtId(coll->dobj.namespace->dobj.name));
-				appendPQExpBuffer(q, "%s",
-								  fmtId(coll->dobj.name));
+				CollInfo   *coll;
+
+				coll = findCollationByOid(attcollation);
+				if (coll)
+				{
+					/* always schema-qualify, don't try to be smart */
+					appendPQExpBuffer(q, " COLLATE %s.",
+									  fmtId(coll->dobj.namespace->dobj.name));
+					appendPQExpBuffer(q, "%s",
+									  fmtId(coll->dobj.name));
+				}
 			}
 		}
+		else
+		{
+			/*
+			 * This is a dropped attribute and we're in binary_upgrade mode.
+			 * Insert a placeholder for it in the CREATE TYPE command, and set
+			 * length and alignment with direct UPDATE to the catalogs
+			 * afterwards. See similar code in dumpTableSchema().
+			 */
+			appendPQExpBuffer(q, "%s INTEGER /* dummy */", fmtId(attname));
 
-		if (i < ntups - 1)
-			appendPQExpBuffer(q, ",");
+			/* stash separately for insertion after the CREATE TYPE */
+			appendPQExpBuffer(dropped,
+					  "\n-- For binary upgrade, recreate dropped column.\n");
+			appendPQExpBuffer(dropped, "UPDATE pg_catalog.pg_attribute\n"
+							  "SET attlen = %s, "
+							  "attalign = '%s', attbyval = false\n"
+							  "WHERE attname = ", attlen, attalign);
+			appendStringLiteralAH(dropped, attname, fout);
+			appendPQExpBuffer(dropped, "\n  AND attrelid = ");
+			appendStringLiteralAH(dropped, fmtId(tyinfo->dobj.name), fout);
+			appendPQExpBuffer(dropped, "::pg_catalog.regclass;\n");
+
+			appendPQExpBuffer(dropped, "ALTER TYPE %s ",
+							  fmtId(tyinfo->dobj.name));
+			appendPQExpBuffer(dropped, "DROP ATTRIBUTE %s;\n",
+							  fmtId(attname));
+		}
 	}
 	appendPQExpBuffer(q, "\n);\n");
+	appendPQExpBufferStr(q, dropped->data);
 
 	/*
 	 * DROP must be fully qualified in case same name appears in pg_catalog
@@ -8077,6 +8184,7 @@ dumpCompositeType(Archive *fout, TypeInfo *tyinfo)
 
 	PQclear(res);
 	destroyPQExpBuffer(q);
+	destroyPQExpBuffer(dropped);
 	destroyPQExpBuffer(delq);
 	destroyPQExpBuffer(labelq);
 	destroyPQExpBuffer(query);
@@ -8252,6 +8360,9 @@ dumpShellType(Archive *fout, ShellTypeInfo *stinfo)
  * For some backwards compatibility with the older behavior, we forcibly
  * dump a PL if its handler function (and validator if any) are in a
  * dumpable namespace.	That case is not checked here.
+ *
+ * Also, if the PL belongs to an extension, we do not use this heuristic.
+ * That case isn't checked here either.
  */
 static bool
 shouldDumpProcLangs(void)
@@ -8316,13 +8427,22 @@ dumpProcLang(Archive *fout, ProcLangInfo *plang)
 	 * If the functions are dumpable then emit a traditional CREATE LANGUAGE
 	 * with parameters.  Otherwise, dump only if shouldDumpProcLangs() says to
 	 * dump it.
+	 *
+	 * However, for a language that belongs to an extension, we must not use
+	 * the shouldDumpProcLangs heuristic, but just dump the language iff we're
+	 * told to (via dobj.dump).  Generally the support functions will belong
+	 * to the same extension and so have the same dump flags ... if they
+	 * don't, this might not work terribly nicely.
 	 */
 	useParams = (funcInfo != NULL &&
 				 (inlineInfo != NULL || !OidIsValid(plang->laninline)) &&
 				 (validatorInfo != NULL || !OidIsValid(plang->lanvalidator)));
 
-	if (!useParams && !shouldDumpProcLangs())
-		return;
+	if (!plang->dobj.ext_member)
+	{
+		if (!useParams && !shouldDumpProcLangs())
+			return;
+	}
 
 	defqry = createPQExpBuffer();
 	delqry = createPQExpBuffer();
@@ -9013,13 +9133,12 @@ dumpCast(Archive *fout, CastInfo *cast)
 	PQExpBuffer delqry;
 	PQExpBuffer labelq;
 	FuncInfo   *funcInfo = NULL;
-	TypeInfo   *sourceInfo;
-	TypeInfo   *targetInfo;
 
 	/* Skip if not to be dumped */
 	if (!cast->dobj.dump || dataOnly)
 		return;
 
+	/* Cannot dump if we don't have the cast function's info */
 	if (OidIsValid(cast->castfunc))
 	{
 		funcInfo = findFuncByOid(cast->castfunc);
@@ -9032,43 +9151,49 @@ dumpCast(Archive *fout, CastInfo *cast)
 	 * objects (the conversion function and the two data types) are not
 	 * builtin AND if all of the non-builtin objects are included in the dump.
 	 * Builtin meaning, the namespace name does not start with "pg_".
+	 *
+	 * However, for a cast that belongs to an extension, we must not use this
+	 * heuristic, but just dump the cast iff we're told to (via dobj.dump).
 	 */
-	sourceInfo = findTypeByOid(cast->castsource);
-	targetInfo = findTypeByOid(cast->casttarget);
+	if (!cast->dobj.ext_member)
+	{
+		TypeInfo   *sourceInfo = findTypeByOid(cast->castsource);
+		TypeInfo   *targetInfo = findTypeByOid(cast->casttarget);
 
-	if (sourceInfo == NULL || targetInfo == NULL)
-		return;
+		if (sourceInfo == NULL || targetInfo == NULL)
+			return;
 
-	/*
-	 * Skip this cast if all objects are from pg_
-	 */
-	if ((funcInfo == NULL ||
-		 strncmp(funcInfo->dobj.namespace->dobj.name, "pg_", 3) == 0) &&
-		strncmp(sourceInfo->dobj.namespace->dobj.name, "pg_", 3) == 0 &&
-		strncmp(targetInfo->dobj.namespace->dobj.name, "pg_", 3) == 0)
-		return;
+		/*
+		 * Skip this cast if all objects are from pg_
+		 */
+		if ((funcInfo == NULL ||
+			 strncmp(funcInfo->dobj.namespace->dobj.name, "pg_", 3) == 0) &&
+			strncmp(sourceInfo->dobj.namespace->dobj.name, "pg_", 3) == 0 &&
+			strncmp(targetInfo->dobj.namespace->dobj.name, "pg_", 3) == 0)
+			return;
 
-	/*
-	 * Skip cast if function isn't from pg_ and is not to be dumped.
-	 */
-	if (funcInfo &&
-		strncmp(funcInfo->dobj.namespace->dobj.name, "pg_", 3) != 0 &&
-		!funcInfo->dobj.dump)
-		return;
+		/*
+		 * Skip cast if function isn't from pg_ and is not to be dumped.
+		 */
+		if (funcInfo &&
+			strncmp(funcInfo->dobj.namespace->dobj.name, "pg_", 3) != 0 &&
+			!funcInfo->dobj.dump)
+			return;
 
-	/*
-	 * Same for the source type
-	 */
-	if (strncmp(sourceInfo->dobj.namespace->dobj.name, "pg_", 3) != 0 &&
-		!sourceInfo->dobj.dump)
-		return;
+		/*
+		 * Same for the source type
+		 */
+		if (strncmp(sourceInfo->dobj.namespace->dobj.name, "pg_", 3) != 0 &&
+			!sourceInfo->dobj.dump)
+			return;
 
-	/*
-	 * and the target type.
-	 */
-	if (strncmp(targetInfo->dobj.namespace->dobj.name, "pg_", 3) != 0 &&
-		!targetInfo->dobj.dump)
-		return;
+		/*
+		 * and the target type.
+		 */
+		if (strncmp(targetInfo->dobj.namespace->dobj.name, "pg_", 3) != 0 &&
+			!targetInfo->dobj.dump)
+			return;
+	}
 
 	/* Make sure we are in proper schema (needed for getFormattedTypeName) */
 	selectSourceSchema("pg_catalog");
@@ -11106,6 +11231,14 @@ dumpForeignDataWrapper(Archive *fout, FdwInfo *fdwinfo)
 	if (!fdwinfo->dobj.dump || dataOnly)
 		return;
 
+	/*
+	 * FDWs that belong to an extension are dumped based on their "dump"
+	 * field. Otherwise omit them if we are only dumping some specific object.
+	 */
+	if (!fdwinfo->dobj.ext_member)
+		if (!include_everything)
+			return;
+
 	q = createPQExpBuffer();
 	delq = createPQExpBuffer();
 	labelq = createPQExpBuffer();
@@ -11181,7 +11314,7 @@ dumpForeignServer(Archive *fout, ForeignServerInfo *srvinfo)
 	char	   *fdwname;
 
 	/* Skip if not to be dumped */
-	if (!srvinfo->dobj.dump || dataOnly)
+	if (!srvinfo->dobj.dump || dataOnly || !include_everything)
 		return;
 
 	q = createPQExpBuffer();
@@ -11518,8 +11651,8 @@ dumpSecLabel(Archive *fout, const char *target,
 	int			i;
 	PQExpBuffer query;
 
-	/* do nothing, if --no-security-label is supplied */
-	if (no_security_label)
+	/* do nothing, if --no-security-labels is supplied */
+	if (no_security_labels)
 		return;
 
 	/* Comments are schema not data ... except blob comments are data */
@@ -11581,8 +11714,8 @@ dumpTableSecLabel(Archive *fout, TableInfo *tbinfo, const char *reltypename)
 	PQExpBuffer query;
 	PQExpBuffer target;
 
-	/* do nothing, if --no-security-label is supplied */
-	if (no_security_label)
+	/* do nothing, if --no-security-labels is supplied */
+	if (no_security_labels)
 		return;
 
 	/* SecLabel are SCHEMA not data */
@@ -11804,7 +11937,6 @@ dumpTable(Archive *fout, TableInfo *tbinfo)
 		namecopy = strdup(fmtId(tbinfo->dobj.name));
 		dumpACL(fout, tbinfo->dobj.catId, tbinfo->dobj.dumpId,
 				(tbinfo->relkind == RELKIND_SEQUENCE) ? "SEQUENCE" :
-				(tbinfo->relkind == RELKIND_FOREIGN_TABLE) ? "FOREIGN TABLE" :
 				"TABLE",
 				namecopy, NULL, tbinfo->dobj.name,
 				tbinfo->dobj.namespace->dobj.name, tbinfo->rolname,
@@ -11882,7 +12014,7 @@ dumpTableSchema(Archive *fout, TableInfo *tbinfo)
 
 	if (binary_upgrade)
 		binary_upgrade_set_type_oids_by_rel_oid(q,
-													 tbinfo->dobj.catId.oid);
+												tbinfo->dobj.catId.oid);
 
 	/* Is it a table or a view? */
 	if (tbinfo->relkind == RELKIND_VIEW)
@@ -12004,7 +12136,12 @@ dumpTableSchema(Archive *fout, TableInfo *tbinfo)
 						  "UNLOGGED " : "",
 						  reltypename,
 						  fmtId(tbinfo->dobj.name));
-		if (tbinfo->reloftype)
+
+		/*
+		 * In case of a binary upgrade, we dump the table normally and attach
+		 * it to the type afterward.
+		 */
+		if (tbinfo->reloftype && !binary_upgrade)
 			appendPQExpBuffer(q, " OF %s", tbinfo->reloftype);
 		actual_atts = 0;
 		for (j = 0; j < tbinfo->numatts; j++)
@@ -12032,7 +12169,7 @@ dumpTableSchema(Archive *fout, TableInfo *tbinfo)
 				bool		has_notnull = (tbinfo->notnull[j]
 							  && (!tbinfo->inhNotNull[j] || binary_upgrade));
 
-				if (tbinfo->reloftype && !has_default && !has_notnull)
+				if (tbinfo->reloftype && !has_default && !has_notnull && !binary_upgrade)
 					continue;
 
 				/* Format properly if not first attr */
@@ -12060,7 +12197,7 @@ dumpTableSchema(Archive *fout, TableInfo *tbinfo)
 				}
 
 				/* Attribute type */
-				if (tbinfo->reloftype)
+				if (tbinfo->reloftype && !binary_upgrade)
 				{
 					appendPQExpBuffer(q, "WITH OPTIONS");
 				}
@@ -12126,7 +12263,7 @@ dumpTableSchema(Archive *fout, TableInfo *tbinfo)
 
 		if (actual_atts)
 			appendPQExpBuffer(q, "\n)");
-		else if (!tbinfo->reloftype)
+		else if (!(tbinfo->reloftype && !binary_upgrade))
 		{
 			/*
 			 * We must have a parenthesized attribute list, even though empty,
@@ -12192,6 +12329,7 @@ dumpTableSchema(Archive *fout, TableInfo *tbinfo)
 		 * an INHERITS clause --- the latter would possibly mess up the column
 		 * order.  That also means we have to take care about setting
 		 * attislocal correctly, plus fix up any inherited CHECK constraints.
+		 * Analogously, we set up typed tables using ALTER TABLE / OF here.
 		 */
 		if (binary_upgrade && tbinfo->relkind == RELKIND_RELATION)
 		{
@@ -12266,6 +12404,14 @@ dumpTableSchema(Archive *fout, TableInfo *tbinfo)
 					appendPQExpBuffer(q, "%s;\n",
 									  fmtId(parentRel->dobj.name));
 				}
+			}
+
+			if (tbinfo->reloftype)
+			{
+				appendPQExpBuffer(q, "\n-- For binary upgrade, set up typed tables this way.\n");
+				appendPQExpBuffer(q, "ALTER TABLE ONLY %s OF %s;\n",
+								  fmtId(tbinfo->dobj.name),
+								  tbinfo->reloftype);
 			}
 
 			appendPQExpBuffer(q, "\n-- For binary upgrade, set heap's relfrozenxid\n");
@@ -12355,6 +12501,21 @@ dumpTableSchema(Archive *fout, TableInfo *tbinfo)
 								  fmtId(tbinfo->attnames[j]));
 				appendPQExpBuffer(q, "SET (%s);\n",
 								  tbinfo->attoptions[j]);
+			}
+
+			/*
+			 * Dump per-column fdw options.
+			 */
+			if (tbinfo->relkind == RELKIND_FOREIGN_TABLE &&
+				tbinfo->attfdwoptions[j] &&
+				tbinfo->attfdwoptions[j][0] != '\0')
+			{
+				appendPQExpBuffer(q, "ALTER FOREIGN TABLE %s ",
+								  fmtId(tbinfo->dobj.name));
+				appendPQExpBuffer(q, "ALTER COLUMN %s ",
+								  fmtId(tbinfo->attnames[j]));
+				appendPQExpBuffer(q, "OPTIONS (%s);\n",
+								  tbinfo->attfdwoptions[j]);
 			}
 		}
 	}

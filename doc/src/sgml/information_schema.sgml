@@ -34,13 +34,13 @@
   </para>
 
   <para>
-   This problem can appear when querying information schema views like
-   <literal>referential_constraints</>, <literal>check_constraints</>,
-   <literal>domain_constraints</>, and
-   <literal>check_constraint_routine_usage</>.  Some other views have
-   similar issues but contain the table name to help distinguish
-   duplicate rows, e.g. <literal>table_constraints</>,
-   <literal>constraint_table_usage</>, <literal>constraint_column_usage</>.
+   This problem can appear when querying information schema views such
+   as <literal>check_constraint_routine_usage</>,
+   <literal>check_constraints</>, <literal>domain_constraints</>, and
+   <literal>referential_constraints</>.  Some other views have similar
+   issues but contain the table name to help distinguish duplicate
+   rows, e.g., <literal>constraint_column_usage</>,
+   <literal>constraint_table_usage</>, <literal>table_constraints</>.
   </para>
  </note>
 
@@ -380,6 +380,53 @@
      </row>
 
      <row>
+      <entry><literal>character_set_catalog</literal></entry>
+      <entry><type>sql_identifier</type></entry>
+      <entry>Applies to a feature not available in <productname>PostgreSQL</></entry>
+     </row>
+
+     <row>
+      <entry><literal>character_set_schema</literal></entry>
+      <entry><type>sql_identifier</type></entry>
+      <entry>Applies to a feature not available in <productname>PostgreSQL</></entry>
+     </row>
+
+     <row>
+      <entry><literal>character_set_name</literal></entry>
+      <entry><type>sql_identifier</type></entry>
+      <entry>Applies to a feature not available in <productname>PostgreSQL</></entry>
+     </row>
+
+     <row>
+      <entry><literal>collation_catalog</literal></entry>
+      <entry><type>sql_identifier</type></entry>
+      <entry>
+       Name of the database containing the collation of the attribute
+       (always the current database), null if default or the data type
+       of the attribute is not collatable
+      </entry>
+     </row>
+
+     <row>
+      <entry><literal>collation_schema</literal></entry>
+      <entry><type>sql_identifier</type></entry>
+      <entry>
+       Name of the schema containing the collation of the attribute,
+       null if default or the data type of the attribute is not
+       collatable
+      </entry>
+     </row>
+
+     <row>
+      <entry><literal>collation_name</literal></entry>
+      <entry><type>sql_identifier</type></entry>
+      <entry>
+       Name of the collation of the attribute, null if default or the
+       data type of the attribute is not collatable
+      </entry>
+     </row>
+
+     <row>
       <entry><literal>numeric_precision</literal></entry>
       <entry><type>cardinal_number</type></entry>
       <entry>
@@ -436,13 +483,26 @@
      <row>
       <entry><literal>interval_type</literal></entry>
       <entry><type>character_data</type></entry>
-      <entry>Not yet implemented</entry>
+      <entry>
+       If <literal>data_type</literal> identifies an interval type,
+       this column contains the specification which fields the
+       intervals include for this attribute, e.g., <literal>YEAR TO
+       MONTH</literal>, <literal>DAY TO SECOND</literal>, etc.  If no
+       field restrictions were specified (that is, the interval
+       accepts all fields), and for all other data types, this field
+       is null.
+      </entry>
      </row>
 
      <row>
       <entry><literal>interval_precision</literal></entry>
-      <entry><type>character_data</type></entry>
-      <entry>Not yet implemented</entry>
+      <entry><type>cardinal_number</type></entry>
+      <entry>
+       Applies to a feature not available
+       in <productname>PostgreSQL</productname>
+       (see <literal>datetime_precision</literal> for the fractional
+       seconds precision of interval type attributes)
+      </entry>
      </row>
 
      <row>
@@ -825,7 +885,7 @@
   </table>
  </sect1>
 
- <sect1 id="infoschema-collation-character-set-applicability">
+ <sect1 id="infoschema-collation-character-set-applicab"> <!-- max 44 characters -->
   <title><literal>collation_character_set_applicability</literal></title>
 
   <para>
@@ -952,6 +1012,69 @@
       <entry><literal>column_name</literal></entry>
       <entry><type>sql_identifier</type></entry>
       <entry>Name of the column</entry>
+     </row>
+    </tbody>
+   </tgroup>
+  </table>
+ </sect1>
+
+ <sect1 id="infoschema-column-options">
+  <title><literal>column_options</literal></title>
+
+  <para>
+   The view <literal>column_options</literal> contains all the
+   options defined for foreign table columns in the current database.  Only
+   those foreign table columns are shown that the current user has access to
+   (by way of being the owner or having some privilege).
+  </para>
+
+  <table>
+   <title><literal>column_options</literal> Columns</title>
+
+   <tgroup cols="3">
+    <thead>
+     <row>
+      <entry>Name</entry>
+      <entry>Data Type</entry>
+      <entry>Description</entry>
+     </row>
+    </thead>
+
+    <tbody>
+     <row>
+      <entry><literal>table_catalog</literal></entry>
+      <entry><type>sql_identifier</type></entry>
+      <entry>Name of the database that contains the foreign table (always the current database)</entry>
+     </row>
+
+     <row>
+      <entry><literal>table_schema</literal></entry>
+      <entry><type>sql_identifier</type></entry>
+      <entry>Name of the schema that contains the foreign table</entry>
+     </row>
+
+     <row>
+      <entry><literal>table_name</literal></entry>
+      <entry><type>sql_identifier</type></entry>
+      <entry>Name of the foreign table</entry>
+     </row>
+
+     <row>
+      <entry><literal>column_name</literal></entry>
+      <entry><type>sql_identifier</type></entry>
+      <entry>Name of the column</entry>
+     </row>
+
+     <row>
+      <entry><literal>option_name</literal></entry>
+      <entry><type>sql_identifier</type></entry>
+      <entry>Name of an option</entry>
+     </row>
+
+     <row>
+      <entry><literal>option_value</literal></entry>
+      <entry><type>character_data</type></entry>
+      <entry>Value of the option</entry>
      </row>
     </tbody>
    </tgroup>
@@ -1291,13 +1414,26 @@
      <row>
       <entry><literal>interval_type</literal></entry>
       <entry><type>character_data</type></entry>
-      <entry>Not yet implemented</entry>
+      <entry>
+       If <literal>data_type</literal> identifies an interval type,
+       this column contains the specification which fields the
+       intervals include for this column, e.g., <literal>YEAR TO
+       MONTH</literal>, <literal>DAY TO SECOND</literal>, etc.  If no
+       field restrictions were specified (that is, the interval
+       accepts all fields), and for all other data types, this field
+       is null.
+      </entry>
      </row>
 
      <row>
       <entry><literal>interval_precision</literal></entry>
-      <entry><type>character_data</type></entry>
-      <entry>Not yet implemented</entry>
+      <entry><type>cardinal_number</type></entry>
+      <entry>
+       Applies to a feature not available
+       in <productname>PostgreSQL</productname>
+       (see <literal>datetime_precision</literal> for the fractional
+       seconds precision of interval type columns)
+      </entry>
      </row>
 
      <row>
@@ -1321,19 +1457,29 @@
      <row>
       <entry><literal>collation_catalog</literal></entry>
       <entry><type>sql_identifier</type></entry>
-      <entry>Applies to a feature not available in <productname>PostgreSQL</></entry>
+      <entry>
+       Name of the database containing the collation of the column
+       (always the current database), null if default or the data type
+       of the column is not collatable
+      </entry>
      </row>
 
      <row>
       <entry><literal>collation_schema</literal></entry>
       <entry><type>sql_identifier</type></entry>
-      <entry>Applies to a feature not available in <productname>PostgreSQL</></entry>
+      <entry>
+       Name of the schema containing the collation of the column, null
+       if default or the data type of the column is not collatable
+      </entry>
      </row>
 
      <row>
       <entry><literal>collation_name</literal></entry>
       <entry><type>sql_identifier</type></entry>
-      <entry>Applies to a feature not available in <productname>PostgreSQL</></entry>
+      <entry>
+       Name of the collation of the column, null if default or the
+       data type of the column is not collatable
+      </entry>
      </row>
 
      <row>
@@ -1996,19 +2142,29 @@
      <row>
       <entry><literal>collation_catalog</literal></entry>
       <entry><type>sql_identifier</type></entry>
-      <entry>Applies to a feature not available in <productname>PostgreSQL</></entry>
+      <entry>
+       Name of the database containing the collation of the domain
+       (always the current database), null if default or the data type
+       of the domain is not collatable
+      </entry>
      </row>
 
      <row>
       <entry><literal>collation_schema</literal></entry>
       <entry><type>sql_identifier</type></entry>
-      <entry>Applies to a feature not available in <productname>PostgreSQL</></entry>
+      <entry>
+       Name of the schema containing the collation of the domain, null
+       if default or the data type of the domain is not collatable
+      </entry>
      </row>
 
      <row>
       <entry><literal>collation_name</literal></entry>
       <entry><type>sql_identifier</type></entry>
-      <entry>Applies to a feature not available in <productname>PostgreSQL</></entry>
+      <entry>
+       Name of the collation of the column, null if default or the
+       data type of the domain is not collatable
+      </entry>
      </row>
 
      <row>
@@ -2067,13 +2223,26 @@
      <row>
       <entry><literal>interval_type</literal></entry>
       <entry><type>character_data</type></entry>
-      <entry>Not yet implemented</entry>
+      <entry>
+       If <literal>data_type</literal> identifies an interval type,
+       this column contains the specification which fields the
+       intervals include for this domain, e.g., <literal>YEAR TO
+       MONTH</literal>, <literal>DAY TO SECOND</literal>, etc.  If no
+       field restrictions were specified (that is, the interval
+       accepts all fields), and for all other data types, this field
+       is null.
+      </entry>
      </row>
 
      <row>
       <entry><literal>interval_precision</literal></entry>
-      <entry><type>character_data</type></entry>
-      <entry>Not yet implemented</entry>
+      <entry><type>cardinal_number</type></entry>
+      <entry>
+       Applies to a feature not available
+       in <productname>PostgreSQL</productname>
+       (see <literal>datetime_precision</literal> for the fractional
+       seconds precision of interval type domains)
+      </entry>
      </row>
 
      <row>
@@ -2147,7 +2316,7 @@
 
   <para>
    The view <literal>element_types</literal> contains the data type
-   descriptors of the elements of arrays.  When a table column,
+   descriptors of the elements of arrays.  When a table column, composite-type attribute,
    domain, function parameter, or function return value is defined to
    be of an array type, the respective information schema view only
    contains <literal>ARRAY</literal> in the column
@@ -2159,7 +2328,7 @@
 SELECT c.column_name, c.data_type, e.data_type AS element_type
 FROM information_schema.columns c LEFT JOIN information_schema.element_types e
      ON ((c.table_catalog, c.table_schema, c.table_name, 'TABLE', c.dtd_identifier)
-       = (e.object_catalog, e.object_schema, e.object_name, e.object_type, e.dtd_identifier))
+       = (e.object_catalog, e.object_schema, e.object_name, e.object_type, e.collection_type_identifier))
 WHERE c.table_schema = '...' AND c.table_name = '...'
 ORDER BY c.ordinal_position;
 </programlisting>
@@ -2212,18 +2381,22 @@ ORDER BY c.ordinal_position;
       <entry>
        The type of the object that uses the array being described: one
        of <literal>TABLE</literal> (the array is used by a column of
-       that table), <literal>DOMAIN</literal> (the array is used by
-       that domain), <literal>ROUTINE</literal> (the array is used by
-       a parameter or the return data type of that function).
+       that table), <literal>USER-DEFINED TYPE</literal> (the array is
+       used by an attribute of that composite type),
+       <literal>DOMAIN</literal> (the array is used by that domain),
+       <literal>ROUTINE</literal> (the array is used by a parameter or
+       the return data type of that function).
       </entry>
      </row>
 
      <row>
-      <entry><literal>dtd_identifier</literal></entry>
+      <entry><literal>collection_type_identifier</literal></entry>
       <entry><type>sql_identifier</type></entry>
       <entry>
        The identifier of the data type descriptor of the array being
-       described
+       described.  Use this to join with the
+       <literal>dtd_identifier</literal> columns of other information
+       schema views.
       </entry>
      </row>
 
@@ -2271,19 +2444,30 @@ ORDER BY c.ordinal_position;
      <row>
       <entry><literal>collation_catalog</literal></entry>
       <entry><type>sql_identifier</type></entry>
-      <entry>Applies to a feature not available in <productname>PostgreSQL</></entry>
+      <entry>
+       Name of the database containing the collation of the element
+       type (always the current database), null if default or the data
+       type of the element is not collatable
+      </entry>
      </row>
 
      <row>
       <entry><literal>collation_schema</literal></entry>
       <entry><type>sql_identifier</type></entry>
-      <entry>Applies to a feature not available in <productname>PostgreSQL</></entry>
+      <entry>
+       Name of the schema containing the collation of the element
+       type, null if default or the data type of the element is not
+       collatable
+      </entry>
      </row>
 
      <row>
       <entry><literal>collation_name</literal></entry>
       <entry><type>sql_identifier</type></entry>
-      <entry>Applies to a feature not available in <productname>PostgreSQL</></entry>
+      <entry>
+       Name of the collation of the element type, null if default or
+       the data type of the element is not collatable
+      </entry>
      </row>
 
      <row>
@@ -2318,7 +2502,7 @@ ORDER BY c.ordinal_position;
 
      <row>
       <entry><literal>interval_precision</literal></entry>
-      <entry><type>character_data</type></entry>
+      <entry><type>cardinal_number</type></entry>
       <entry>Always null, since this information is not applied to array element data types in <productname>PostgreSQL</></entry>
      </row>
 
@@ -2378,6 +2562,14 @@ ORDER BY c.ordinal_position;
       <entry>Always null, because arrays always have unlimited maximum cardinality in <productname>PostgreSQL</></entry>
      </row>
 
+     <row>
+      <entry><literal>dtd_identifier</literal></entry>
+      <entry><type>sql_identifier</type></entry>
+      <entry>
+       An identifier of the data type descriptor of the element.  This
+       is currently not useful.
+      </entry>
+     </row>
     </tbody>
    </tgroup>
   </table>
@@ -3013,19 +3205,19 @@ ORDER BY c.ordinal_position;
      <row>
       <entry><literal>collation_catalog</literal></entry>
       <entry><type>sql_identifier</type></entry>
-      <entry>Applies to a feature not available in <productname>PostgreSQL</></entry>
+      <entry>Always null, since this information is not applied to parameter data types in <productname>PostgreSQL</></entry>
      </row>
 
      <row>
       <entry><literal>collation_schema</literal></entry>
       <entry><type>sql_identifier</type></entry>
-      <entry>Applies to a feature not available in <productname>PostgreSQL</></entry>
+      <entry>Always null, since this information is not applied to parameter data types in <productname>PostgreSQL</></entry>
      </row>
 
      <row>
       <entry><literal>collation_name</literal></entry>
       <entry><type>sql_identifier</type></entry>
-      <entry>Applies to a feature not available in <productname>PostgreSQL</></entry>
+      <entry>Always null, since this information is not applied to parameter data types in <productname>PostgreSQL</></entry>
      </row>
 
      <row>
@@ -3060,7 +3252,7 @@ ORDER BY c.ordinal_position;
 
      <row>
       <entry><literal>interval_precision</literal></entry>
-      <entry><type>character_data</type></entry>
+      <entry><type>cardinal_number</type></entry>
       <entry>Always null, since this information is not applied to parameter data types in <productname>PostgreSQL</></entry>
      </row>
 
@@ -3249,7 +3441,7 @@ ORDER BY c.ordinal_position;
    difference between this view
    and <literal>column_privileges</literal> is that this view omits
    columns that have been made accessible to the current user by way
-   of a grant to public.
+   of a grant to <literal>PUBLIC</literal>.
   </para>
 
   <table>
@@ -3332,7 +3524,7 @@ ORDER BY c.ordinal_position;
    difference between this view
    and <literal>routine_privileges</literal> is that this view omits
    functions that have been made accessible to the current user by way
-   of a grant to public.
+   of a grant to <literal>PUBLIC</literal>.
   </para>
 
   <table>
@@ -3426,7 +3618,7 @@ ORDER BY c.ordinal_position;
    difference between this view
    and <literal>table_privileges</literal> is that this view omits
    tables that have been made accessible to the current user by way of
-   a grant to public.
+   a grant to <literal>PUBLIC</literal>.
   </para>
 
   <table>
@@ -3499,6 +3691,81 @@ ORDER BY c.ordinal_position;
   </table>
  </sect1>
 
+ <sect1 id="infoschema-role-udt-grants">
+  <title><literal>role_udt_grants</literal></title>
+
+  <para>
+   The view <literal>role_udt_grants</literal> is intended to identify
+   <literal>USAGE</literal> privileges granted on user-defined types
+   where the grantor or grantee is a currently enabled role.  Further
+   information can be found under
+   <literal>udt_privileges</literal>.  The only effective difference
+   between this view and <literal>udt_privileges</literal> is that
+   this view omits objects that have been made accessible to the
+   current user by way of a grant to <literal>PUBLIC</literal>.  Since
+   data types do not have real privileges in PostgreSQL, but only an
+   implicit grant to <literal>PUBLIC</literal>, this view is empty.
+  </para>
+
+  <table>
+   <title><literal>role_udt_grants</literal> Columns</title>
+
+   <tgroup cols="3">
+    <thead>
+     <row>
+      <entry>Name</entry>
+      <entry>Data Type</entry>
+      <entry>Description</entry>
+     </row>
+    </thead>
+
+    <tbody>
+     <row>
+      <entry><literal>grantor</literal></entry>
+      <entry><type>sql_identifier</type></entry>
+      <entry>The name of the role that granted the privilege</entry>
+     </row>
+
+     <row>
+      <entry><literal>grantee</literal></entry>
+      <entry><type>sql_identifier</type></entry>
+      <entry>The name of the role that the privilege was granted to</entry>
+     </row>
+
+     <row>
+      <entry><literal>udt_catalog</literal></entry>
+      <entry><type>sql_identifier</type></entry>
+      <entry>Name of the database containing the type (always the current database)</entry>
+     </row>
+
+     <row>
+      <entry><literal>udt_schema</literal></entry>
+      <entry><type>sql_identifier</type></entry>
+      <entry>Name of the schema containing the type</entry>
+     </row>
+
+     <row>
+      <entry><literal>udt_name</literal></entry>
+      <entry><type>sql_identifier</type></entry>
+      <entry>Name of the type</entry>
+     </row>
+
+     <row>
+      <entry><literal>privilege_type</literal></entry>
+      <entry><type>character_data</type></entry>
+      <entry>Always <literal>TYPE USAGE</literal></entry>
+     </row>
+
+     <row>
+      <entry><literal>is_grantable</literal></entry>
+      <entry><type>yes_or_no</type></entry>
+      <entry><literal>YES</literal> if the privilege is grantable, <literal>NO</literal> if not</entry>
+     </row>
+    </tbody>
+   </tgroup>
+  </table>
+ </sect1>
+
  <sect1 id="infoschema-role-usage-grants">
   <title><literal>role_usage_grants</literal></title>
 
@@ -3510,7 +3777,7 @@ ORDER BY c.ordinal_position;
    <literal>usage_privileges</literal>.  The only effective difference
    between this view and <literal>usage_privileges</literal> is that
    this view omits objects that have been made accessible to the
-   current user by way of a grant to public.
+   current user by way of a grant to <literal>PUBLIC</literal>.
   </para>
 
   <table>
@@ -3825,19 +4092,19 @@ ORDER BY c.ordinal_position;
      <row>
       <entry><literal>collation_catalog</literal></entry>
       <entry><type>sql_identifier</type></entry>
-      <entry>Applies to a feature not available in <productname>PostgreSQL</></entry>
+      <entry>Always null, since this information is not applied to return data types in <productname>PostgreSQL</></entry>
      </row>
 
      <row>
       <entry><literal>collation_schema</literal></entry>
       <entry><type>sql_identifier</type></entry>
-      <entry>Applies to a feature not available in <productname>PostgreSQL</></entry>
+      <entry>Always null, since this information is not applied to return data types in <productname>PostgreSQL</></entry>
      </row>
 
      <row>
       <entry><literal>collation_name</literal></entry>
       <entry><type>sql_identifier</type></entry>
-      <entry>Applies to a feature not available in <productname>PostgreSQL</></entry>
+      <entry>Always null, since this information is not applied to return data types in <productname>PostgreSQL</></entry>
      </row>
 
      <row>
@@ -3872,7 +4139,7 @@ ORDER BY c.ordinal_position;
 
      <row>
       <entry><literal>interval_precision</literal></entry>
-      <entry><type>character_data</type></entry>
+      <entry><type>cardinal_number</type></entry>
       <entry>Always null, since this information is not applied to return data types in <productname>PostgreSQL</></entry>
      </row>
 
@@ -4109,7 +4376,11 @@ ORDER BY c.ordinal_position;
      <row>
       <entry><literal>is_udt_dependent</literal></entry>
       <entry><type>yes_or_no</type></entry>
-      <entry>Applies to a feature not available in <productname>PostgreSQL</></entry>
+      <entry>
+       Currently always <literal>NO</literal>.  The alternative
+       <literal>YES</literal> applies to a feature not available in
+       <productname>PostgreSQL</>.
+      </entry>
      </row>
 
      <row>
@@ -4204,7 +4475,7 @@ ORDER BY c.ordinal_position;
 
      <row>
       <entry><literal>result_cast_interval_precision</literal></entry>
-      <entry><type>character_data</type></entry>
+      <entry><type>cardinal_number</type></entry>
       <entry>Applies to a feature not available in <productname>PostgreSQL</></entry>
      </row>
 
@@ -4609,6 +4880,11 @@ ORDER BY c.ordinal_position;
    embedded SQL in C; that is all you will learn from this table.
   </para>
 
+  <para>
+   This table was removed from the SQL standard in SQL:2008, so there
+   are no entries referring to standards later than SQL:2003.
+  </para>
+
   <table>
    <title><literal>sql_languages</literal> Columns</title>
 
@@ -4636,8 +4912,7 @@ ORDER BY c.ordinal_position;
       <entry><type>character_data</type></entry>
       <entry>
        The year the standard referenced in
-       <literal>sql_language_source</literal> was approved; currently
-       <literal>2003</>
+       <literal>sql_language_source</literal> was approved.
       </entry>
      </row>
 
@@ -5208,12 +5483,7 @@ ORDER BY c.ordinal_position;
      <row>
       <entry><literal>commit_action</literal></entry>
       <entry><type>character_data</type></entry>
-      <entry>
-       If the table is a temporary table, then
-       <literal>PRESERVE</literal>, else null.  (The SQL standard
-       defines other commit actions for temporary tables, which are
-       not supported by <productname>PostgreSQL</>.)
-      </entry>
+      <entry>Not yet implemented</entry>
      </row>
     </tbody>
    </tgroup>
@@ -5489,6 +5759,80 @@ ORDER BY c.ordinal_position;
   </note>
  </sect1>
 
+ <sect1 id="infoschema-udt-privileges">
+  <title><literal>udt_privileges</literal></title>
+
+  <para>
+   The view <literal>udt_privileges</literal> is intended to identify
+   <literal>USAGE</literal> privileges granted on user-defined types
+   to a currently enabled role or by a currently enabled role.  Since
+   data types do not have real privileges
+   in <productname>PostgreSQL</productname>, this view shows implicit
+   non-grantable <literal>USAGE</literal> privileges granted by the
+   owner to <literal>PUBLIC</literal> for all types, including
+   built-in ones (except domains,
+   see <xref linkend="infoschema-usage-privileges"> for that).
+  </para>
+
+  <table>
+   <title><literal>udt_privileges</literal> Columns</title>
+
+   <tgroup cols="3">
+    <thead>
+     <row>
+      <entry>Name</entry>
+      <entry>Data Type</entry>
+      <entry>Description</entry>
+     </row>
+    </thead>
+
+    <tbody>
+     <row>
+      <entry><literal>grantor</literal></entry>
+      <entry><type>sql_identifier</type></entry>
+      <entry>Name of the role that granted the privilege</entry>
+     </row>
+
+     <row>
+      <entry><literal>grantee</literal></entry>
+      <entry><type>sql_identifier</type></entry>
+      <entry>Name of the role that the privilege was granted to</entry>
+     </row>
+
+     <row>
+      <entry><literal>udt_catalog</literal></entry>
+      <entry><type>sql_identifier</type></entry>
+      <entry>Name of the database containing the type (always the current database)</entry>
+     </row>
+
+     <row>
+      <entry><literal>udt_schema</literal></entry>
+      <entry><type>sql_identifier</type></entry>
+      <entry>Name of the schema containing the type</entry>
+     </row>
+
+     <row>
+      <entry><literal>udt_name</literal></entry>
+      <entry><type>sql_identifier</type></entry>
+      <entry>Name of the type</entry>
+     </row>
+
+     <row>
+      <entry><literal>privilege_type</literal></entry>
+      <entry><type>character_data</type></entry>
+      <entry>Always <literal>TYPE USAGE</literal></entry>
+     </row>
+
+     <row>
+      <entry><literal>is_grantable</literal></entry>
+      <entry><type>yes_or_no</type></entry>
+      <entry><literal>YES</literal> if the privilege is grantable, <literal>NO</literal> if not</entry>
+     </row>
+    </tbody>
+   </tgroup>
+  </table>
+ </sect1>
+
  <sect1 id="infoschema-usage-privileges">
   <title><literal>usage_privileges</literal></title>
 
@@ -5569,6 +5913,220 @@ ORDER BY c.ordinal_position;
       <entry><literal>is_grantable</literal></entry>
       <entry><type>yes_or_no</type></entry>
       <entry><literal>YES</literal> if the privilege is grantable, <literal>NO</literal> if not</entry>
+     </row>
+    </tbody>
+   </tgroup>
+  </table>
+ </sect1>
+
+ <sect1 id="infoschema-user-defined-types">
+  <title><literal>user_defined_types</literal></title>
+
+  <para>
+   The view <literal>user_defined_types</literal> currently contains
+   all composite types defined in the current database.
+  </para>
+
+  <para>
+   SQL knows about two kinds of user-defined types: structured types
+   (also known as composite types
+   in <productname>PostgreSQL</productname>) and distinct types (not
+   implemented in <productname>PostgreSQL</productname>).  To be
+   future-proof, use the
+   column <literal>user_defined_type_category</literal> to
+   differentiate between these.  Other user-defined types such as base
+   types and enums, which are <productname>PostgreSQL</productname>
+   extensions, are not shown here.  For domains,
+   see <xref linkend="infoschema-domains"> instead.
+  </para>
+
+  <table>
+   <title><literal>user_defined_types</literal> Columns</title>
+
+   <tgroup cols="3">
+    <thead>
+     <row>
+      <entry>Name</entry>
+      <entry>Data Type</entry>
+      <entry>Description</entry>
+     </row>
+    </thead>
+
+    <tbody>
+     <row>
+      <entry><literal>user_defined_type_catalog</literal></entry>
+      <entry><type>sql_identifier</type></entry>
+      <entry>Name of the database that contains the type (always the current database)</entry>
+     </row>
+
+     <row>
+      <entry><literal>user_defined_type_schema</literal></entry>
+      <entry><type>sql_identifier</type></entry>
+      <entry>Name of the schema that contains the type</entry>
+     </row>
+
+     <row>
+      <entry><literal>user_defined_type_name</literal></entry>
+      <entry><type>sql_identifier</type></entry>
+      <entry>Name of the type</entry>
+     </row>
+
+     <row>
+      <entry><literal>user_defined_type_category</literal></entry>
+      <entry><type>character_data</type></entry>
+      <entry>
+       Currently always <literal>STRUCTURED</literal>
+      </entry>
+     </row>
+
+     <row>
+      <entry><literal>is_instantiable</literal></entry>
+      <entry><type>yes_or_no</type></entry>
+      <entry>Applies to a feature not available in <productname>PostgreSQL</></entry>
+     </row>
+
+     <row>
+      <entry><literal>is_final</literal></entry>
+      <entry><type>yes_or_no</type></entry>
+      <entry>Applies to a feature not available in <productname>PostgreSQL</></entry>
+     </row>
+
+     <row>
+      <entry><literal>ordering_form</literal></entry>
+      <entry><type>character_data</type></entry>
+      <entry>Applies to a feature not available in <productname>PostgreSQL</></entry>
+     </row>
+
+     <row>
+      <entry><literal>ordering_category</literal></entry>
+      <entry><type>character_data</type></entry>
+      <entry>Applies to a feature not available in <productname>PostgreSQL</></entry>
+     </row>
+
+     <row>
+      <entry><literal>ordering_routine_catalog</literal></entry>
+      <entry><type>sql_identifier</type></entry>
+      <entry>Applies to a feature not available in <productname>PostgreSQL</></entry>
+     </row>
+
+     <row>
+      <entry><literal>ordering_routine_schema</literal></entry>
+      <entry><type>sql_identifier</type></entry>
+      <entry>Applies to a feature not available in <productname>PostgreSQL</></entry>
+     </row>
+
+     <row>
+      <entry><literal>ordering_routine_name</literal></entry>
+      <entry><type>sql_identifier</type></entry>
+      <entry>Applies to a feature not available in <productname>PostgreSQL</></entry>
+     </row>
+
+     <row>
+      <entry><literal>reference_type</literal></entry>
+      <entry><type>character_data</type></entry>
+      <entry>Applies to a feature not available in <productname>PostgreSQL</></entry>
+     </row>
+
+     <row>
+      <entry><literal>data_type</literal></entry>
+      <entry><type>character_data</type></entry>
+      <entry>Applies to a feature not available in <productname>PostgreSQL</></entry>
+     </row>
+
+     <row>
+      <entry><literal>character_maximum_length</literal></entry>
+      <entry><type>cardinal_number</type></entry>
+      <entry>Applies to a feature not available in <productname>PostgreSQL</></entry>
+     </row>
+
+     <row>
+      <entry><literal>character_octet_length</literal></entry>
+      <entry><type>cardinal_number</type></entry>
+      <entry>Applies to a feature not available in <productname>PostgreSQL</></entry>
+     </row>
+
+     <row>
+      <entry><literal>character_set_catalog</literal></entry>
+      <entry><type>sql_identifier</type></entry>
+      <entry>Applies to a feature not available in <productname>PostgreSQL</></entry>
+     </row>
+
+     <row>
+      <entry><literal>character_set_schema</literal></entry>
+      <entry><type>sql_identifier</type></entry>
+      <entry>Applies to a feature not available in <productname>PostgreSQL</></entry>
+     </row>
+
+     <row>
+      <entry><literal>character_set_name</literal></entry>
+      <entry><type>sql_identifier</type></entry>
+      <entry>Applies to a feature not available in <productname>PostgreSQL</></entry>
+     </row>
+
+     <row>
+      <entry><literal>collation_catalog</literal></entry>
+      <entry><type>sql_identifier</type></entry>
+      <entry>Applies to a feature not available in <productname>PostgreSQL</></entry>
+     </row>
+
+     <row>
+      <entry><literal>collation_schema</literal></entry>
+      <entry><type>sql_identifier</type></entry>
+      <entry>Applies to a feature not available in <productname>PostgreSQL</></entry>
+     </row>
+
+     <row>
+      <entry><literal>collation_name</literal></entry>
+      <entry><type>sql_identifier</type></entry>
+      <entry>Applies to a feature not available in <productname>PostgreSQL</></entry>
+     </row>
+
+     <row>
+      <entry><literal>numeric_precision</literal></entry>
+      <entry><type>cardinal_number</type></entry>
+      <entry>Applies to a feature not available in <productname>PostgreSQL</></entry>
+     </row>
+
+     <row>
+      <entry><literal>numeric_precision_radix</literal></entry>
+      <entry><type>cardinal_number</type></entry>
+      <entry>Applies to a feature not available in <productname>PostgreSQL</></entry>
+     </row>
+
+     <row>
+      <entry><literal>numeric_scale</literal></entry>
+      <entry><type>cardinal_number</type></entry>
+      <entry>Applies to a feature not available in <productname>PostgreSQL</></entry>
+     </row>
+
+     <row>
+      <entry><literal>datetime_precision</literal></entry>
+      <entry><type>cardinal_number</type></entry>
+      <entry>Applies to a feature not available in <productname>PostgreSQL</></entry>
+     </row>
+
+     <row>
+      <entry><literal>interval_type</literal></entry>
+      <entry><type>character_data</type></entry>
+      <entry>Applies to a feature not available in <productname>PostgreSQL</></entry>
+     </row>
+
+     <row>
+      <entry><literal>interval_precision</literal></entry>
+      <entry><type>cardinal_number</type></entry>
+      <entry>Applies to a feature not available in <productname>PostgreSQL</></entry>
+     </row>
+
+     <row>
+      <entry><literal>source_dtd_identifier</literal></entry>
+      <entry><type>sql_identifier</type></entry>
+      <entry>Applies to a feature not available in <productname>PostgreSQL</></entry>
+     </row>
+
+     <row>
+      <entry><literal>ref_dtd_identifier</literal></entry>
+      <entry><type>sql_identifier</type></entry>
+      <entry>Applies to a feature not available in <productname>PostgreSQL</></entry>
      </row>
     </tbody>
    </tgroup>

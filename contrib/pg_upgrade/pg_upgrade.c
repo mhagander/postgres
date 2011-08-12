@@ -116,7 +116,7 @@ main(int argc, char **argv)
 	 * the old system, but we do it anyway just in case.  We do it late here
 	 * because there is no need to have the schema load use new oids.
 	 */
-	prep_status("Setting next oid for new cluster");
+	prep_status("Setting next OID for new cluster");
 	exec_prog(true, SYSTEMQUOTE "\"%s/pg_resetxlog\" -o %u \"%s\" > "
 			  DEVNULL SYSTEMQUOTE,
 			  new_cluster.bindir, old_cluster.controldata.chkpnt_nxtoid, new_cluster.pgdata);
@@ -149,27 +149,23 @@ setup(char *argv0, bool live_check)
 	 * make sure the user has a clean environment, otherwise, we may confuse
 	 * libpq when we connect to one (or both) of the servers.
 	 */
-	check_for_libpq_envvars();
+	check_pghost_envvar();
 
 	verify_directories();
 
 	/* no postmasters should be running */
 	if (!live_check && is_server_running(old_cluster.pgdata))
-	{
 		pg_log(PG_FATAL, "There seems to be a postmaster servicing the old cluster.\n"
 			   "Please shutdown that postmaster and try again.\n");
-	}
 
 	/* same goes for the new postmaster */
 	if (is_server_running(new_cluster.pgdata))
-	{
 		pg_log(PG_FATAL, "There seems to be a postmaster servicing the new cluster.\n"
 			   "Please shutdown that postmaster and try again.\n");
-	}
 
 	/* get path to pg_upgrade executable */
 	if (find_my_exec(argv0, exec_path) < 0)
-		pg_log(PG_FATAL, "Could not get pathname to pg_upgrade: %s\n", getErrorText(errno));
+		pg_log(PG_FATAL, "Could not get path name to pg_upgrade: %s\n", getErrorText(errno));
 
 	/* Trim off program name and keep just path */
 	*last_dir_separator(exec_path) = '\0';
@@ -197,8 +193,8 @@ prepare_new_cluster(void)
 	prep_status("Analyzing all rows in the new cluster");
 	exec_prog(true,
 			  SYSTEMQUOTE "\"%s/vacuumdb\" --port %d --username \"%s\" "
-			  "--all --analyze >> %s 2>&1" SYSTEMQUOTE,
-	  new_cluster.bindir, new_cluster.port, os_info.user, log_opts.filename);
+			  "--all --analyze >> \"%s\" 2>&1" SYSTEMQUOTE,
+	  new_cluster.bindir, new_cluster.port, os_info.user, log_opts.filename2);
 	check_ok();
 
 	/*
@@ -210,8 +206,8 @@ prepare_new_cluster(void)
 	prep_status("Freezing all rows on the new cluster");
 	exec_prog(true,
 			  SYSTEMQUOTE "\"%s/vacuumdb\" --port %d --username \"%s\" "
-			  "--all --freeze >> %s 2>&1" SYSTEMQUOTE,
-	  new_cluster.bindir, new_cluster.port, os_info.user, log_opts.filename);
+			  "--all --freeze >> \"%s\" 2>&1" SYSTEMQUOTE,
+	  new_cluster.bindir, new_cluster.port, os_info.user, log_opts.filename2);
 	check_ok();
 
 	get_pg_database_relfilenode(&new_cluster);
@@ -249,7 +245,7 @@ prepare_new_databases(void)
 			  "--no-psqlrc --port %d --username \"%s\" "
 			  "-f \"%s/%s\" --dbname template1 >> \"%s\"" SYSTEMQUOTE,
 			  new_cluster.bindir, new_cluster.port, os_info.user, os_info.cwd,
-			  GLOBALS_DUMP_FILE, log_opts.filename);
+			  GLOBALS_DUMP_FILE, log_opts.filename2);
 	check_ok();
 
 	/* we load this to get a current list of databases */
@@ -280,7 +276,7 @@ create_new_objects(void)
 			  "--no-psqlrc --port %d --username \"%s\" "
 			  "-f \"%s/%s\" --dbname template1 >> \"%s\"" SYSTEMQUOTE,
 			  new_cluster.bindir, new_cluster.port, os_info.user, os_info.cwd,
-			  DB_DUMP_FILE, log_opts.filename);
+			  DB_DUMP_FILE, log_opts.filename2);
 	check_ok();
 
 	/* regenerate now that we have objects in the databases */
@@ -302,7 +298,7 @@ copy_clog_xlog_xid(void)
 	snprintf(old_clog_path, sizeof(old_clog_path), "%s/pg_clog", old_cluster.pgdata);
 	snprintf(new_clog_path, sizeof(new_clog_path), "%s/pg_clog", new_cluster.pgdata);
 	if (!rmtree(new_clog_path, true))
-		pg_log(PG_FATAL, "Unable to delete directory %s\n", new_clog_path);
+		pg_log(PG_FATAL, "could not delete directory \"%s\"\n", new_clog_path);
 	check_ok();
 
 	prep_status("Copying old commit clogs to new server");
@@ -318,7 +314,7 @@ copy_clog_xlog_xid(void)
 	check_ok();
 
 	/* set the next transaction id of the new cluster */
-	prep_status("Setting next transaction id for new cluster");
+	prep_status("Setting next transaction ID for new cluster");
 	exec_prog(true, SYSTEMQUOTE "\"%s/pg_resetxlog\" -f -x %u \"%s\" > " DEVNULL SYSTEMQUOTE,
 			  new_cluster.bindir, old_cluster.controldata.chkpnt_nxtxid, new_cluster.pgdata);
 	check_ok();
@@ -328,7 +324,7 @@ copy_clog_xlog_xid(void)
 	exec_prog(true, SYSTEMQUOTE "\"%s/pg_resetxlog\" -l %u,%u,%u \"%s\" >> \"%s\" 2>&1" SYSTEMQUOTE,
 			  new_cluster.bindir, old_cluster.controldata.chkpnt_tli,
 			old_cluster.controldata.logid, old_cluster.controldata.nxtlogseg,
-			  new_cluster.pgdata, log_opts.filename);
+			  new_cluster.pgdata, log_opts.filename2);
 	check_ok();
 }
 

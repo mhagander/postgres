@@ -21,9 +21,6 @@
 #include <ctype.h>
 #include <time.h>
 #include <unistd.h>
-#ifdef HAVE_UCRED_H
-#include <ucred.h>
-#endif
 
 #include "libpq-fe.h"
 #include "libpq-int.h"
@@ -1012,7 +1009,7 @@ connectFailureMessage(PGconn *conn, int errorno)
 #endif   /* HAVE_UNIX_SOCKETS */
 	{
 		char		host_addr[NI_MAXHOST];
-		bool		display_host_addr;
+		const char *displayed_host;
 		struct sockaddr_storage *addr = &conn->raddr.addr;
 
 		/*
@@ -1042,30 +1039,36 @@ connectFailureMessage(PGconn *conn, int errorno)
 		else
 			strcpy(host_addr, "???");
 
+		if (conn->pghostaddr && conn->pghostaddr[0] != '\0')
+			displayed_host = conn->pghostaddr;
+		else if (conn->pghost && conn->pghost[0] != '\0')
+			displayed_host = conn->pghost;
+		else
+			displayed_host = DefaultHost;
+
 		/*
 		 * If the user did not supply an IP address using 'hostaddr', and
 		 * 'host' was missing or does not match our lookup, display the
 		 * looked-up IP address.
 		 */
-		display_host_addr = (conn->pghostaddr == NULL) &&
-			((conn->pghost == NULL) ||
-			 (strcmp(conn->pghost, host_addr) != 0));
-
-		appendPQExpBuffer(&conn->errorMessage,
-						  libpq_gettext("could not connect to server: %s\n"
-			   "\tIs the server running on host \"%s\"%s%s%s and accepting\n"
-										"\tTCP/IP connections on port %s?\n"),
-						  SOCK_STRERROR(errorno, sebuf, sizeof(sebuf)),
-						  (conn->pghostaddr && conn->pghostaddr[0] != '\0')
-						  ? conn->pghostaddr
-						  : (conn->pghost && conn->pghost[0] != '\0')
-						  ? conn->pghost
-						  : DefaultHost,
-		/* display the IP address only if not already output */
-						  display_host_addr ? " (" : "",
-						  display_host_addr ? host_addr : "",
-						  display_host_addr ? ")" : "",
-						  conn->pgport);
+		if ((conn->pghostaddr == NULL) &&
+			(conn->pghost == NULL || strcmp(conn->pghost, host_addr) != 0))
+			appendPQExpBuffer(&conn->errorMessage,
+							libpq_gettext("could not connect to server: %s\n"
+				"\tIs the server running on host \"%s\" (%s) and accepting\n"
+									   "\tTCP/IP connections on port %s?\n"),
+							  SOCK_STRERROR(errorno, sebuf, sizeof(sebuf)),
+							  displayed_host,
+							  host_addr,
+							  conn->pgport);
+		else
+			appendPQExpBuffer(&conn->errorMessage,
+							libpq_gettext("could not connect to server: %s\n"
+					 "\tIs the server running on host \"%s\" and accepting\n"
+									   "\tTCP/IP connections on port %s?\n"),
+							  SOCK_STRERROR(errorno, sebuf, sizeof(sebuf)),
+							  displayed_host,
+							  conn->pgport);
 	}
 }
 
@@ -1850,64 +1853,37 @@ keep_going:						/* We will come back to here until there is
 				char	   *startpacket;
 				int			packetlen;
 
-				if (conn->requirepeer && conn->requirepeer[0])
+#ifdef HAVE_UNIX_SOCKETS
+
+				/*
+				 * Implement requirepeer check, if requested and it's a
+				 * Unix-domain socket.
+				 */
+				if (conn->requirepeer && conn->requirepeer[0] &&
+					IS_AF_UNIX(conn->raddr.addr.ss_family))
 				{
-#if defined(HAVE_GETPEEREID) || defined(SO_PEERCRED) || defined(HAVE_GETPEERUCRED)
 					char		pwdbuf[BUFSIZ];
 					struct passwd pass_buf;
 					struct passwd *pass;
 					uid_t		uid;
-
-#if defined(HAVE_GETPEEREID)
 					gid_t		gid;
 
 					errno = 0;
 					if (getpeereid(conn->sock, &uid, &gid) != 0)
 					{
-						appendPQExpBuffer(&conn->errorMessage,
-						libpq_gettext("could not get peer credentials: %s\n"),
+						/*
+						 * Provide special error message if getpeereid is a
+						 * stub
+						 */
+						if (errno == ENOSYS)
+							appendPQExpBuffer(&conn->errorMessage,
+											  libpq_gettext("requirepeer parameter is not supported on this platform\n"));
+						else
+							appendPQExpBuffer(&conn->errorMessage,
+											  libpq_gettext("could not get peer credentials: %s\n"),
 									pqStrerror(errno, sebuf, sizeof(sebuf)));
 						goto error_return;
 					}
-#elif defined(SO_PEERCRED)
-					struct ucred peercred;
-					ACCEPT_TYPE_ARG3 so_len = sizeof(peercred);
-
-					errno = 0;
-					if (getsockopt(conn->sock, SOL_SOCKET, SO_PEERCRED,
-								   &peercred, &so_len) != 0 ||
-						so_len != sizeof(peercred))
-					{
-						appendPQExpBuffer(&conn->errorMessage,
-						libpq_gettext("could not get peer credentials: %s\n"),
-									pqStrerror(errno, sebuf, sizeof(sebuf)));
-						goto error_return;
-					}
-					uid = peercred.uid;
-#elif defined(HAVE_GETPEERUCRED)
-					ucred_t    *ucred;
-
-					ucred = NULL;		/* must be initialized to NULL */
-					if (getpeerucred(conn->sock, &ucred) == -1)
-					{
-						appendPQExpBuffer(&conn->errorMessage,
-						libpq_gettext("could not get peer credentials: %s\n"),
-									pqStrerror(errno, sebuf, sizeof(sebuf)));
-						goto error_return;
-					}
-
-					if ((uid = ucred_geteuid(ucred)) == -1)
-					{
-						appendPQExpBuffer(&conn->errorMessage,
-										  libpq_gettext("could not get effective UID from peer credentials: %s\n"),
-									pqStrerror(errno, sebuf, sizeof(sebuf)));
-						ucred_free(ucred);
-						goto error_return;
-					}
-					ucred_free(ucred);
-#else
-#error missing implementation method for requirepeer
-#endif
 
 					pqGetpwuid(uid, &pass_buf, pwdbuf, sizeof(pwdbuf), &pass);
 
@@ -1926,12 +1902,8 @@ keep_going:						/* We will come back to here until there is
 										  conn->requirepeer, pass->pw_name);
 						goto error_return;
 					}
-#else							/* can't support requirepeer */
-					appendPQExpBuffer(&conn->errorMessage,
-									  libpq_gettext("requirepeer parameter is not supported on this platform\n"));
-					goto error_return;
-#endif
 				}
+#endif   /* HAVE_UNIX_SOCKETS */
 
 #ifdef USE_SSL
 
@@ -2383,7 +2355,7 @@ keep_going:						/* We will come back to here until there is
 						if (!conn->ginbuf.value)
 						{
 							printfPQExpBuffer(&conn->errorMessage,
-											  libpq_gettext("out of memory allocating GSSAPI buffer (%i)"),
+											  libpq_gettext("out of memory allocating GSSAPI buffer (%d)"),
 											  llen);
 							goto error_return;
 						}
@@ -3596,10 +3568,11 @@ ldapServiceLookup(const char *purl, PQconninfoOption *options,
 		return 1;
 	}
 
-	/* concatenate values to a single string */
-	for (size = 0, i = 0; values[i] != NULL; ++i)
+	/* concatenate values into a single string with newline terminators */
+	size = 1;					/* for the trailing null */
+	for (i = 0; values[i] != NULL; i++)
 		size += values[i]->bv_len + 1;
-	if ((result = malloc(size + 1)) == NULL)
+	if ((result = malloc(size)) == NULL)
 	{
 		printfPQExpBuffer(errorMessage,
 						  libpq_gettext("out of memory\n"));
@@ -3607,14 +3580,14 @@ ldapServiceLookup(const char *purl, PQconninfoOption *options,
 		ldap_unbind(ld);
 		return 3;
 	}
-	for (p = result, i = 0; values[i] != NULL; ++i)
+	p = result;
+	for (i = 0; values[i] != NULL; i++)
 	{
-		strncpy(p, values[i]->bv_val, values[i]->bv_len);
+		memcpy(p, values[i]->bv_val, values[i]->bv_len);
 		p += values[i]->bv_len;
 		*(p++) = '\n';
-		if (values[i + 1] == NULL)
-			*(p + 1) = '\0';
 	}
+	*p = '\0';
 
 	ldap_value_free_len(values);
 	ldap_unbind(ld);
@@ -3643,6 +3616,7 @@ ldapServiceLookup(const char *purl, PQconninfoOption *options,
 					printfPQExpBuffer(errorMessage, libpq_gettext(
 					"missing \"=\" after \"%s\" in connection info string\n"),
 									  optname);
+					free(result);
 					return 3;
 				}
 				else if (*p == '=')
@@ -3661,6 +3635,7 @@ ldapServiceLookup(const char *purl, PQconninfoOption *options,
 					printfPQExpBuffer(errorMessage, libpq_gettext(
 					"missing \"=\" after \"%s\" in connection info string\n"),
 									  optname);
+					free(result);
 					return 3;
 				}
 				break;
@@ -3724,6 +3699,7 @@ ldapServiceLookup(const char *purl, PQconninfoOption *options,
 				printfPQExpBuffer(errorMessage,
 						 libpq_gettext("invalid connection option \"%s\"\n"),
 								  optname);
+				free(result);
 				return 1;
 			}
 			optname = NULL;
@@ -3731,6 +3707,8 @@ ldapServiceLookup(const char *purl, PQconninfoOption *options,
 		}
 		oldstate = state;
 	}
+
+	free(result);
 
 	if (state == 5 || state == 6)
 	{

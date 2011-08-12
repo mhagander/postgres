@@ -2062,7 +2062,7 @@
      </para>
 
      <para>
-      This fix prevents a PANIC if a <literal>VACUUM FULL</> is cancelled
+      This fix prevents a PANIC if a <literal>VACUUM FULL</> is canceled
       after it's already committed its tuple movements, as well as transient
       errors if a plain <literal>VACUUM</> is interrupted after having
       truncated the table.
@@ -5467,7 +5467,7 @@ WITH w AS (SELECT * FROM foo) SELECT * FROM w, bar ... FOR UPDATE
        <para>
         Allow <application>pg_dump</>, <application>pg_dumpall</>, and
         <application>pg_restore</> to use a specified role (Benedek
-        László)
+        L&aacute;szl&oacute;)
        </para>
       </listitem>
 

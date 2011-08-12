@@ -1,6 +1,6 @@
 <!-- doc/src/sgml/earthdistance.sgml -->
 
-<sect1 id="earthdistance">
+<sect1 id="earthdistance" xreflabel="earthdistance">
  <title>earthdistance</title>
 
  <indexterm zone="earthdistance">
@@ -55,7 +55,8 @@
   </para>
 
   <para>
-   The following functions are provided:
+   The provided functions are shown
+   in <xref linkend="earthdistance-cube-functions">.
   </para>
 
   <table id="earthdistance-cube-functions">
@@ -148,7 +149,8 @@
   </para>
 
   <para>
-   A single operator is provided:
+   A single operator is provided, shown
+   in <xref linkend="earthdistance-point-operators">.
   </para>
 
   <table id="earthdistance-point-operators">

@@ -76,7 +76,7 @@ main(int argc, char **argv)
 	static int	no_data_for_failed_tables = 0;
 	static int	outputNoTablespaces = 0;
 	static int	use_setsessauth = 0;
-	static int	skip_seclabel = 0;
+	static int	no_security_labels = 0;
 
 	struct option cmdopts[] = {
 		{"clean", 0, NULL, 'c'},
@@ -117,7 +117,7 @@ main(int argc, char **argv)
 		{"no-tablespaces", no_argument, &outputNoTablespaces, 1},
 		{"role", required_argument, NULL, 2},
 		{"use-set-session-authorization", no_argument, &use_setsessauth, 1},
-		{"no-security-label", no_argument, &skip_seclabel, 1},
+		{"no-security-labels", no_argument, &no_security_labels, 1},
 
 		{NULL, 0, NULL, 0}
 	};
@@ -318,7 +318,7 @@ main(int argc, char **argv)
 	opts->noDataForFailedTables = no_data_for_failed_tables;
 	opts->noTablespace = outputNoTablespaces;
 	opts->use_setsessauth = use_setsessauth;
-	opts->skip_seclabel = skip_seclabel;
+	opts->no_security_labels = no_security_labels;
 
 	if (opts->formatName)
 	{
@@ -345,7 +345,7 @@ main(int argc, char **argv)
 				break;
 
 			default:
-				write_msg(NULL, "unrecognized archive format \"%s\"; please specify \"c\", \"d\" or \"t\"\n",
+				write_msg(NULL, "unrecognized archive format \"%s\"; please specify \"c\", \"d\", or \"t\"\n",
 						  opts->formatName);
 				exit(1);
 		}
@@ -424,18 +424,17 @@ usage(const char *progname)
 	printf(_("  -t, --table=NAME         restore named table\n"));
 	printf(_("  -T, --trigger=NAME       restore named trigger\n"));
 	printf(_("  -x, --no-privileges      skip restoration of access privileges (grant/revoke)\n"));
+	printf(_("  -1, --single-transaction\n"
+			 "                           restore as a single transaction\n"));
 	printf(_("  --disable-triggers       disable triggers during data-only restore\n"));
 	printf(_("  --no-data-for-failed-tables\n"
 			 "                           do not restore data of tables that could not be\n"
 			 "                           created\n"));
+	printf(_("  --no-security-labels     do not restore security labels\n"));
 	printf(_("  --no-tablespaces         do not restore tablespace assignments\n"));
-	printf(_("  --no-security-label      do not restore security labels\n"));
-	printf(_("  --role=ROLENAME          do SET ROLE before restore\n"));
 	printf(_("  --use-set-session-authorization\n"
 			 "                           use SET SESSION AUTHORIZATION commands instead of\n"
 	  "                           ALTER OWNER commands to set ownership\n"));
-	printf(_("  -1, --single-transaction\n"
-			 "                           restore as a single transaction\n"));
 
 	printf(_("\nConnection options:\n"));
 	printf(_("  -h, --host=HOSTNAME      database server host or socket directory\n"));
@@ -443,6 +442,7 @@ usage(const char *progname)
 	printf(_("  -U, --username=NAME      connect as specified database user\n"));
 	printf(_("  -w, --no-password        never prompt for password\n"));
 	printf(_("  -W, --password           force password prompt (should happen automatically)\n"));
+	printf(_("  --role=ROLENAME          do SET ROLE before restore\n"));
 
 	printf(_("\nIf no input file name is supplied, then standard input is used.\n\n"));
 	printf(_("Report bugs to <pgsql-bugs@postgresql.org>.\n"));

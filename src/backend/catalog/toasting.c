@@ -29,6 +29,7 @@
 #include "miscadmin.h"
 #include "nodes/makefuncs.h"
 #include "utils/builtins.h"
+#include "utils/rel.h"
 #include "utils/syscache.h"
 
 /* Potentially set by contrib/pg_upgrade_support functions */
@@ -60,8 +61,8 @@ AlterTableCreateToastTable(Oid relOid, Datum reloptions)
 
 	/*
 	 * Grab a DDL-exclusive lock on the target table, since we'll update the
-	 * pg_class tuple.  This is redundant for all present users.  Tuple toasting
-	 * behaves safely in the face of a concurrent TOAST table add.
+	 * pg_class tuple.	This is redundant for all present users.  Tuple
+	 * toasting behaves safely in the face of a concurrent TOAST table add.
 	 */
 	rel = heap_open(relOid, ShareUpdateExclusiveLock);
 
@@ -273,14 +274,14 @@ create_toast_table(Relation rel, Oid toastOid, Oid toastIndexOid, Datum reloptio
 	coloptions[0] = 0;
 	coloptions[1] = 0;
 
-	index_create(toast_rel, toast_idxname, toastIndexOid,
-							   indexInfo,
-							   list_make2("chunk_id", "chunk_seq"),
-							   BTREE_AM_OID,
-							   rel->rd_rel->reltablespace,
-					 collationObjectId, classObjectId, coloptions, (Datum) 0,
-							   true, false, false, false,
-							   true, false, false);
+	index_create(toast_rel, toast_idxname, toastIndexOid, InvalidOid,
+				 indexInfo,
+				 list_make2("chunk_id", "chunk_seq"),
+				 BTREE_AM_OID,
+				 rel->rd_rel->reltablespace,
+				 collationObjectId, classObjectId, coloptions, (Datum) 0,
+				 true, false, false, false,
+				 true, false, false);
 
 	heap_close(toast_rel, NoLock);
 

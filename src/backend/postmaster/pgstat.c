@@ -1246,8 +1246,7 @@ pgstat_report_autovac(Oid dboid)
  * ---------
  */
 void
-pgstat_report_vacuum(Oid tableoid, bool shared, bool adopt_counts,
-					 PgStat_Counter tuples)
+pgstat_report_vacuum(Oid tableoid, bool shared, PgStat_Counter tuples)
 {
 	PgStat_MsgVacuum msg;
 
@@ -1257,7 +1256,6 @@ pgstat_report_vacuum(Oid tableoid, bool shared, bool adopt_counts,
 	pgstat_setheader(&msg.m_hdr, PGSTAT_MTYPE_VACUUM);
 	msg.m_databaseid = shared ? InvalidOid : MyDatabaseId;
 	msg.m_tableoid = tableoid;
-	msg.m_adopt_counts = adopt_counts;
 	msg.m_autovacuum = IsAutoVacuumWorkerProcess();
 	msg.m_vacuumtime = GetCurrentTimestamp();
 	msg.m_tuples = tuples;
@@ -1271,7 +1269,7 @@ pgstat_report_vacuum(Oid tableoid, bool shared, bool adopt_counts,
  * --------
  */
 void
-pgstat_report_analyze(Relation rel, bool adopt_counts,
+pgstat_report_analyze(Relation rel,
 					  PgStat_Counter livetuples, PgStat_Counter deadtuples)
 {
 	PgStat_MsgAnalyze msg;
@@ -1308,7 +1306,6 @@ pgstat_report_analyze(Relation rel, bool adopt_counts,
 	pgstat_setheader(&msg.m_hdr, PGSTAT_MTYPE_ANALYZE);
 	msg.m_databaseid = rel->rd_rel->relisshared ? InvalidOid : MyDatabaseId;
 	msg.m_tableoid = RelationGetRelid(rel);
-	msg.m_adopt_counts = adopt_counts;
 	msg.m_autovacuum = IsAutoVacuumWorkerProcess();
 	msg.m_analyzetime = GetCurrentTimestamp();
 	msg.m_live_tuples = livetuples;
@@ -3114,7 +3111,7 @@ PgstatCollectorMain(int argc, char *argv[])
 			 * We can only get here if the select/poll timeout elapsed. Check
 			 * for postmaster death.
 			 */
-			if (!PostmasterIsAlive(true))
+			if (!PostmasterIsAlive())
 				break;
 		}
 	}							/* end of message-processing loop */
@@ -3757,8 +3754,10 @@ pgstat_read_statsfile_timestamp(bool permanent, TimestampTz *ts)
 static void
 backend_read_statsfile(void)
 {
+	TimestampTz cur_ts;
 	TimestampTz min_ts;
 	int			count;
+	int			last_delay_errno = 0;
 
 	/* already read it? */
 	if (pgStatDBHash)
@@ -3779,12 +3778,11 @@ backend_read_statsfile(void)
 	 * PGSTAT_STAT_INTERVAL; and we don't want to lie to the collector about
 	 * what our cutoff time really is.
 	 */
+	cur_ts = GetCurrentTimestamp();
 	if (IsAutoVacuumWorkerProcess())
-		min_ts = TimestampTzPlusMilliseconds(GetCurrentTimestamp(),
-											 -PGSTAT_RETRY_DELAY);
+		min_ts = TimestampTzPlusMilliseconds(cur_ts, -PGSTAT_RETRY_DELAY);
 	else
-		min_ts = TimestampTzPlusMilliseconds(GetCurrentTimestamp(),
-											 -PGSTAT_STAT_INTERVAL);
+		min_ts = TimestampTzPlusMilliseconds(cur_ts, -PGSTAT_STAT_INTERVAL);
 
 	/*
 	 * Loop until fresh enough stats file is available or we ran out of time.
@@ -3801,9 +3799,29 @@ backend_read_statsfile(void)
 			file_ts >= min_ts)
 			break;
 
+		/* Make debugging printouts once we've waited unreasonably long */
+		if (count >= PGSTAT_POLL_LOOP_COUNT/2)
+		{
+			TimestampTz now_ts = GetCurrentTimestamp();
+
+#ifdef HAVE_INT64_TIMESTAMP
+			elog(WARNING, "pgstat waiting for " INT64_FORMAT " usec (%d loops), file timestamp " INT64_FORMAT " target timestamp " INT64_FORMAT " last errno %d",
+				 now_ts - cur_ts, count,
+				 file_ts, min_ts,
+				 last_delay_errno);
+#else
+			elog(WARNING, "pgstat waiting for %.6f sec (%d loops), file timestamp %.6f target timestamp %.6f last errno %d",
+				 now_ts - cur_ts, count,
+				 file_ts, min_ts,
+				 last_delay_errno);
+#endif
+		}
+
 		/* Not there or too old, so kick the collector and wait a bit */
+		errno = 0;
 		pgstat_send_inquiry(min_ts);
 		pg_usleep(PGSTAT_RETRY_DELAY * 1000L);
+		last_delay_errno = errno;
 	}
 
 	if (count >= PGSTAT_POLL_LOOP_COUNT)
@@ -4197,8 +4215,7 @@ pgstat_recv_vacuum(PgStat_MsgVacuum *msg, int len)
 
 	tabentry = pgstat_get_tab_entry(dbentry, msg->m_tableoid, true);
 
-	if (msg->m_adopt_counts)
-		tabentry->n_live_tuples = msg->m_tuples;
+	tabentry->n_live_tuples = msg->m_tuples;
 	/* Resetting dead_tuples to 0 is an approximation ... */
 	tabentry->n_dead_tuples = 0;
 
@@ -4233,11 +4250,8 @@ pgstat_recv_analyze(PgStat_MsgAnalyze *msg, int len)
 
 	tabentry = pgstat_get_tab_entry(dbentry, msg->m_tableoid, true);
 
-	if (msg->m_adopt_counts)
-	{
-		tabentry->n_live_tuples = msg->m_live_tuples;
-		tabentry->n_dead_tuples = msg->m_dead_tuples;
-	}
+	tabentry->n_live_tuples = msg->m_live_tuples;
+	tabentry->n_dead_tuples = msg->m_dead_tuples;
 
 	/*
 	 * We reset changes_since_analyze to zero, forgetting any changes that

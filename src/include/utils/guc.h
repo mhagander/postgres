@@ -82,7 +82,8 @@ typedef enum
  */
 typedef enum
 {
-	PGC_S_DEFAULT,				/* wired-in default */
+	PGC_S_DEFAULT,				/* hard-wired default ("boot_val") */
+	PGC_S_DYNAMIC_DEFAULT,		/* default computed during initialization */
 	PGC_S_ENV_VAR,				/* postmaster environment variable */
 	PGC_S_FILE,					/* postgresql.conf */
 	PGC_S_ARGV,					/* postmaster command line */
@@ -208,6 +209,8 @@ extern int	client_min_messages;
 extern int	log_min_duration_statement;
 extern int	log_temp_files;
 
+extern int	temp_file_limit;
+
 extern int	num_temp_buffers;
 
 extern char *data_directory;
@@ -295,7 +298,8 @@ extern void DefineCustomEnumVariable(
 
 extern void EmitWarningsOnPlaceholders(const char *className);
 
-extern const char *GetConfigOption(const char *name, bool restrict_superuser);
+extern const char *GetConfigOption(const char *name, bool missing_ok,
+				bool restrict_superuser);
 extern const char *GetConfigOptionResetString(const char *name);
 extern void ProcessConfigFile(GucContext context);
 extern void InitializeGUCOptions(void);

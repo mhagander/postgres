@@ -5,7 +5,7 @@
  * timetravel.c --	function to get time travel feature
  *		using general triggers.
  *
- * Modified by BÖJTHE Zoltán, Hungary, mailto:urdesobt@axelero.hu
+ * Modified by BÃ–JTHE ZoltÃ¡n, Hungary, mailto:urdesobt@axelero.hu
  */
 #include "postgres.h"
 
@@ -17,6 +17,7 @@
 #include "miscadmin.h"
 #include "utils/builtins.h"
 #include "utils/nabstime.h"
+#include "utils/rel.h"
 
 PG_MODULE_MAGIC;
 

@@ -15,6 +15,9 @@
 
 #include "libpq-fe.h"
 
+/* Use port in the private/dynamic port number range */
+#define DEF_PGUPORT			50432
+
 /* Allocate for null byte */
 #define USER_NAME_SIZE		128
 
@@ -184,8 +187,8 @@ typedef struct
 	unsigned short port;		/* port number where postmaster is waiting */
 	uint32		major_version;	/* PG_VERSION of cluster */
 	char		major_version_str[64];	/* string PG_VERSION of cluster */
+	uint32		bin_version;	/* version returned from pg_ctl */
 	Oid			pg_database_oid;	/* OID of pg_database relation */
-	char	   *libpath;		/* pathname for cluster's pkglibdir */
 	char	   *tablespace_suffix;		/* directory specification */
 } ClusterInfo;
 
@@ -196,6 +199,20 @@ typedef struct
 typedef struct
 {
 	char	   *filename;		/* name of log file (may be /dev/null) */
+	/*
+	 * WIN32 files do not accept writes from multiple processes
+	 *
+	 * On Win32, we can't send both pg_upgrade output and command output to the
+	 * same file because we get the error: "The process cannot access the file
+	 * because it is being used by another process." so we have to send all
+	 * other output to 'nul'.  Therefore, we set this to DEVNULL on Win32, and
+	 * it equals 'filename' on all other platforms.
+	 *
+	 * We could use the Windows pgwin32_open() flags to allow shared file
+	 * writes but is unclear how all other tools would use those flags, so
+	 * we just avoid it and log a little less on Windows.
+	 */
+	char	   *filename2;
 	FILE	   *fd;				/* log FILE */
 	bool		debug;			/* TRUE -> log more information */
 	FILE	   *debug_fd;		/* debug-level log FILE */
@@ -361,7 +378,7 @@ PGresult   *executeQueryOrDie(PGconn *conn, const char *fmt,...);
 void		start_postmaster(ClusterInfo *cluster);
 void		stop_postmaster(bool fast);
 uint32		get_major_server_version(ClusterInfo *cluster);
-void		check_for_libpq_envvars(void);
+void		check_pghost_envvar(void);
 
 
 /* util.c */
@@ -378,6 +395,7 @@ void	   *pg_malloc(int size);
 void		pg_free(void *ptr);
 const char *getErrorText(int errNum);
 unsigned int str2uint(const char *str);
+void		pg_putenv(const char *var, const char *val);
 
 
 /* version.c */

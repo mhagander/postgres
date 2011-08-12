@@ -34,6 +34,7 @@
 #include "utils/hsearch.h"
 #include "utils/lsyscache.h"
 #include "utils/memutils.h"
+#include "utils/rel.h"
 #include "utils/syscache.h"
 #include "utils/typcache.h"
 
@@ -926,7 +927,7 @@ plperl_trusted_init(void)
 		if (!isGV_with_GP(sv) || !GvCV(sv))
 			continue;
 		SvREFCNT_dec(GvCV(sv)); /* free the CV */
-		GvCV(sv) = NULL;		/* prevent call via GV */
+		GvCV_set(sv, NULL);		/* prevent call via GV */
 	}
 	hv_clear(stash);
 
@@ -1357,7 +1358,13 @@ make_array_ref(plperl_array_info *info, int first, int last)
 	for (i = first; i < last; i++)
 	{
 		if (info->nulls[i])
-			av_push(result, &PL_sv_undef);
+		{
+			/*
+			 * We can't use &PL_sv_undef here.  See "AVs, HVs and undefined
+			 * values" in perlguts.
+			 */
+			av_push(result, newSV(0));
+		}
 		else
 		{
 			Datum		itemvalue = info->elements[i];
@@ -1976,8 +1983,11 @@ plperl_call_perl_trigger_func(plperl_proc_desc *desc, FunctionCallInfo fcinfo,
 	ENTER;
 	SAVETMPS;
 
-	TDsv = get_sv("_TD", GV_ADD);
-	SAVESPTR(TDsv);				/* local $_TD */
+	TDsv = get_sv("_TD", 0);
+	if (!TDsv)
+		elog(ERROR, "couldn't fetch $_TD");
+
+	save_item(TDsv);			/* local $_TD */
 	sv_setsv(TDsv, td);
 
 	PUSHMARK(sp);
@@ -2636,8 +2646,12 @@ plperl_hash_from_tuple(HeapTuple tuple, TupleDesc tupdesc)
 
 		if (isnull)
 		{
-			/* Store (attname => undef) and move on. */
-			hv_store_string(hv, attname, &PL_sv_undef);
+			/*
+			 * Store (attname => undef) and move on.  Note we can't use
+			 * &PL_sv_undef here; see "AVs, HVs and undefined values" in
+			 * perlguts for an explanation.
+			 */
+			hv_store_string(hv, attname, newSV(0));
 			continue;
 		}
 
@@ -3551,7 +3565,7 @@ hv_store_string(HV *hv, const char *key, SV *val)
 	 * does not appear that hashes track UTF-8-ness of keys at all in Perl
 	 * 5.6.
 	 */
-	hlen = - (int) strlen(hkey);
+	hlen = -(int) strlen(hkey);
 	ret = hv_store(hv, hkey, hlen, val, 0);
 
 	if (hkey != key)
@@ -3576,7 +3590,7 @@ hv_fetch_string(HV *hv, const char *key)
 								  GetDatabaseEncoding(), PG_UTF8);
 
 	/* See notes in hv_store_string */
-	hlen = - (int) strlen(hkey);
+	hlen = -(int) strlen(hkey);
 	ret = hv_fetch(hv, hkey, hlen, 0);
 
 	if (hkey != key)

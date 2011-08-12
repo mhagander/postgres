@@ -119,6 +119,11 @@
 #maintenance_work_mem = 16MB		# min 1MB
 #max_stack_depth = 2MB			# min 100kB
 
+# - Disk -
+
+#temp_file_limit = -1			# limits per-session temp file space
+					# in kB, or -1 for no limit
+
 # - Kernel Resource Usage -
 
 #max_files_per_process = 1000		# min 25
@@ -184,32 +189,45 @@
 #archive_timeout = 0		# force a logfile segment switch after this
 				# number of seconds; 0 disables
 
-# - Streaming Replication - Server Settings
 
-#synchronous_standby_names = ''	# standby servers that provide sync rep
-				# comma-separated list of application_name from standby(s);
-				# '*' = all
+#------------------------------------------------------------------------------
+# REPLICATION
+#------------------------------------------------------------------------------
 
+# - Sending Server(s) -
+
+# Set these on the master and on any standby that will send replication data
 
 #max_wal_senders = 0		# max number of walsender processes
 				# (change requires restart)
-#wal_sender_delay = 1s		# walsender cycle time, 1-10000 milliseconds
 #wal_keep_segments = 0		# in logfile segments, 16MB each; 0 disables
+#replication_timeout = 60s	# in milliseconds; 0 disables
+
+# - Master Server -
+
+# These settings are ignored on a standby server
+
+#synchronous_standby_names = ''	# standby servers that provide sync rep
+				# comma-separated list of application_name
+				# from standby(s); '*' = all
 #vacuum_defer_cleanup_age = 0	# number of xacts by which cleanup is delayed
-#replication_timeout = 60s # in milliseconds, 0 is disabled
 
 # - Standby Servers -
 
+# These settings are ignored on a master server
+
 #hot_standby = off			# "on" allows queries during recovery
 					# (change requires restart)
-#hot_standby_feedback = off	# info from standby to prevent query conflicts
 #max_standby_archive_delay = 30s	# max delay before canceling queries
 					# when reading WAL from archive;
 					# -1 allows indefinite delay
 #max_standby_streaming_delay = 30s	# max delay before canceling queries
 					# when reading streaming WAL;
 					# -1 allows indefinite delay
-#wal_receiver_status_interval = 10s	# replies at least this often, 0 disables
+#wal_receiver_status_interval = 10s	# send replies at least this often
+					# 0 disables
+#hot_standby_feedback = off		# send info from standby to prevent
+					# query conflicts
 
 
 #------------------------------------------------------------------------------
@@ -300,11 +318,6 @@
 #syslog_facility = 'LOCAL0'
 #syslog_ident = 'postgres'
 
-#silent_mode = off			# Run server silently.
-					# DO NOT USE without syslog or
-					# logging_collector
-					# (change requires restart)
-
 
 # - When to Log -
 
@@ -390,8 +403,7 @@
 #log_temp_files = -1			# log temporary files equal or larger
 					# than the specified size in kilobytes;
 					# -1 disables, 0 logs all temp files
-#log_timezone = unknown			# actually, defaults to TZ environment
-					# setting
+#log_timezone = '(defaults to server environment setting)'
 
 
 #------------------------------------------------------------------------------
@@ -471,8 +483,7 @@
 
 #datestyle = 'iso, mdy'
 #intervalstyle = 'postgres'
-#timezone = unknown			# actually, defaults to TZ environment
-					# setting
+#timezone = '(defaults to server environment setting)'
 #timezone_abbreviations = 'Default'     # Select the set of available time zone
 					# abbreviations.  Currently, there are
 					#   Default

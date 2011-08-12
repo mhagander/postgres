@@ -13,6 +13,8 @@
  */
 #include "postgres.h"
 
+#include <math.h>
+
 #include "access/gist_private.h"
 #include "access/reloptions.h"
 #include "storage/freespace.h"
@@ -446,7 +448,7 @@ gistdentryinit(GISTSTATE *giststate, int nkey, GISTENTRY *e,
 		gistentryinit(*e, k, r, pg, o, l);
 		dep = (GISTENTRY *)
 			DatumGetPointer(FunctionCall1Coll(&giststate->decompressFn[nkey],
-											  giststate->supportCollation[nkey],
+										   giststate->supportCollation[nkey],
 											  PointerGetDatum(e)));
 		/* decompressFn may just return the given pointer */
 		if (dep != e)
@@ -473,7 +475,7 @@ gistcentryinit(GISTSTATE *giststate, int nkey,
 		gistentryinit(*e, k, r, pg, o, l);
 		cep = (GISTENTRY *)
 			DatumGetPointer(FunctionCall1Coll(&giststate->compressFn[nkey],
-											  giststate->supportCollation[nkey],
+										   giststate->supportCollation[nkey],
 											  PointerGetDatum(e)));
 		/* compressFn may just return the given pointer */
 		if (cep != e)
@@ -526,16 +528,21 @@ gistpenalty(GISTSTATE *giststate, int attno,
 
 	if (giststate->penaltyFn[attno].fn_strict == FALSE ||
 		(isNullOrig == FALSE && isNullAdd == FALSE))
+	{
 		FunctionCall3Coll(&giststate->penaltyFn[attno],
 						  giststate->supportCollation[attno],
 						  PointerGetDatum(orig),
 						  PointerGetDatum(add),
 						  PointerGetDatum(&penalty));
+		/* disallow negative or NaN penalty */
+		if (isnan(penalty) || penalty < 0.0)
+			penalty = 0.0;
+	}
 	else if (isNullOrig && isNullAdd)
 		penalty = 0.0;
 	else
-		penalty = 1e10;			/* try to prevent to mix null and non-null
-								 * value */
+		penalty = 1e10;			/* try to prevent mixing null and non-null
+								 * values */
 
 	return penalty;
 }

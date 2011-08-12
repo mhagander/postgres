@@ -1114,7 +1114,7 @@ identify_system_timezone(void)
 					 &rootKey) != ERROR_SUCCESS)
 	{
 		ereport(LOG,
-				(errmsg("could not open registry key to identify system time zone: %i",
+				(errmsg("could not open registry key to identify system time zone: %d",
 						(int) GetLastError()),
 				 errdetail("The PostgreSQL time zone will be set to \"%s\".",
 						   "GMT"),
@@ -1145,14 +1145,14 @@ identify_system_timezone(void)
 			if (r == ERROR_NO_MORE_ITEMS)
 				break;
 			ereport(LOG,
-					(errmsg_internal("could not enumerate registry subkeys to identify system time zone: %i", (int) r)));
+					(errmsg_internal("could not enumerate registry subkeys to identify system time zone: %d", (int) r)));
 			break;
 		}
 
 		if ((r = RegOpenKeyEx(rootKey, keyname, 0, KEY_READ, &key)) != ERROR_SUCCESS)
 		{
 			ereport(LOG,
-					(errmsg_internal("could not open registry subkey to identify system time zone: %i", (int) r)));
+					(errmsg_internal("could not open registry subkey to identify system time zone: %d", (int) r)));
 			break;
 		}
 
@@ -1161,7 +1161,7 @@ identify_system_timezone(void)
 		if ((r = RegQueryValueEx(key, "Std", NULL, NULL, (unsigned char *) zonename, &namesize)) != ERROR_SUCCESS)
 		{
 			ereport(LOG,
-					(errmsg_internal("could not query value for key \"std\" to identify system time zone \"%s\": %i",
+					(errmsg_internal("could not query value for key \"std\" to identify system time zone \"%s\": %d",
 									 keyname, (int) r)));
 			RegCloseKey(key);
 			continue;			/* Proceed to look at the next timezone */
@@ -1178,7 +1178,7 @@ identify_system_timezone(void)
 		if ((r = RegQueryValueEx(key, "Dlt", NULL, NULL, (unsigned char *) zonename, &namesize)) != ERROR_SUCCESS)
 		{
 			ereport(LOG,
-					(errmsg_internal("could not query value for key \"dlt\" to identify system time zone \"%s\": %i",
+					(errmsg_internal("could not query value for key \"dlt\" to identify system time zone \"%s\": %d",
 									 keyname, (int) r)));
 			RegCloseKey(key);
 			continue;			/* Proceed to look at the next timezone */
@@ -1438,6 +1438,10 @@ pg_timezone_pre_initialize(void)
  * This is called after initial loading of postgresql.conf.  If no TimeZone
  * setting was found therein, we try to derive one from the environment.
  * Likewise for log_timezone.
+ *
+ * Note: this is also called from ProcessConfigFile, to re-establish valid
+ * GUC settings if the GUCs have been reset to default following their
+ * removal from postgresql.conf.
  */
 void
 pg_timezone_initialize(void)
@@ -1463,21 +1467,34 @@ pg_timezone_initialize(void)
 		log_timezone = def_tz;
 	}
 
-	/* Now, set the timezone GUC if it's not already set */
-	if (GetConfigOption("timezone", false) == NULL)
-	{
-		/* Tell GUC about the value. Will redundantly call pg_tzset() */
+	/*
+	 * Now, set the timezone and log_timezone GUCs if they're still default.
+	 * (This will redundantly call pg_tzset().)
+	 *
+	 * We choose to label these values PGC_S_ENV_VAR, rather than
+	 * PGC_S_DYNAMIC_DEFAULT which would be functionally equivalent, because
+	 * they came either from getenv("TZ") or from libc behavior that's
+	 * determined by process environment of some kind.
+	 *
+	 * Note: in the case where a setting has just been removed from
+	 * postgresql.conf, this code will not do what you might expect, namely
+	 * call select_default_timezone() and install that value as the setting.
+	 * Rather, the previously active setting --- typically the one from
+	 * postgresql.conf --- will be reinstalled, relabeled as PGC_S_ENV_VAR. If
+	 * we did try to install the "correct" default value, the effect would be
+	 * that each postmaster child would independently run an extremely
+	 * expensive search of the timezone database, bringing the database to its
+	 * knees for possibly multiple seconds.  This is so unpleasant, and could
+	 * so easily be triggered quite unintentionally, that it seems better to
+	 * violate the principle of least astonishment.
+	 */
+	if (GetConfigOptionResetString("timezone") == NULL)
 		SetConfigOption("timezone", pg_get_timezone_name(session_timezone),
 						PGC_POSTMASTER, PGC_S_ENV_VAR);
-	}
 
-	/* Likewise for log timezone */
-	if (GetConfigOption("log_timezone", false) == NULL)
-	{
-		/* Tell GUC about the value. Will redundantly call pg_tzset() */
+	if (GetConfigOptionResetString("log_timezone") == NULL)
 		SetConfigOption("log_timezone", pg_get_timezone_name(log_timezone),
 						PGC_POSTMASTER, PGC_S_ENV_VAR);
-	}
 }
 
 

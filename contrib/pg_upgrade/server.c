@@ -27,7 +27,7 @@ connectToServer(ClusterInfo *cluster, const char *db_name)
 
 	if (conn == NULL || PQstatus(conn) != CONNECTION_OK)
 	{
-		pg_log(PG_REPORT, "Connection to database failed: %s\n",
+		pg_log(PG_REPORT, "connection to database failed: %s\n",
 			   PQerrorMessage(conn));
 
 		if (conn)
@@ -52,8 +52,8 @@ get_db_conn(ClusterInfo *cluster, const char *db_name)
 	char		conn_opts[MAXPGPATH];
 
 	snprintf(conn_opts, sizeof(conn_opts),
-		 "dbname = '%s' user = '%s' port = %d", db_name, os_info.user,
-		 cluster->port);
+			 "dbname = '%s' user = '%s' port = %d", db_name, os_info.user,
+			 cluster->port);
 
 	return PQconnectdb(conn_opts);
 }
@@ -84,7 +84,7 @@ executeQueryOrDie(PGconn *conn, const char *fmt,...)
 
 	if ((status != PGRES_TUPLES_OK) && (status != PGRES_COMMAND_OK))
 	{
-		pg_log(PG_REPORT, "DB command failed\n%s\n%s\n", command,
+		pg_log(PG_REPORT, "SQL command failed\n%s\n%s\n", command,
 			   PQerrorMessage(conn));
 		PQclear(result);
 		PQfinish(conn);
@@ -145,17 +145,7 @@ start_postmaster(ClusterInfo *cluster)
 	char		cmd[MAXPGPATH];
 	PGconn	   *conn;
 	bool		exit_hook_registered = false;
-#ifndef WIN32
-	char		*output_filename = log_opts.filename;
-#else
-	/*
-	 * On Win32, we can't send both pg_upgrade output and pg_ctl output to the
-	 * same file because we get the error: "The process cannot access the file
-	 * because it is being used by another process." so we have to send all
-	 * other output to 'nul'.
-	 */
-	char		*output_filename = DEVNULL;
-#endif
+	int			pg_ctl_return = 0;
 
 	if (!exit_hook_registered)
 	{
@@ -177,25 +167,35 @@ start_postmaster(ClusterInfo *cluster)
 	snprintf(cmd, sizeof(cmd),
 			 SYSTEMQUOTE "\"%s/pg_ctl\" -w -l \"%s\" -D \"%s\" "
 			 "-o \"-p %d %s\" start >> \"%s\" 2>&1" SYSTEMQUOTE,
-			 cluster->bindir, output_filename, cluster->pgdata, cluster->port,
+			 cluster->bindir, log_opts.filename2, cluster->pgdata, cluster->port,
 			 (cluster->controldata.cat_ver >=
-				BINARY_UPGRADE_SERVER_FLAG_CAT_VER) ? "-b" :
-				"-c autovacuum=off -c autovacuum_freeze_max_age=2000000000",
-			 log_opts.filename);
+			  BINARY_UPGRADE_SERVER_FLAG_CAT_VER) ? "-b" :
+			 "-c autovacuum=off -c autovacuum_freeze_max_age=2000000000",
+			 log_opts.filename2);
 
-	exec_prog(true, "%s", cmd);
+	/*
+	 * Don't throw an error right away, let connecting throw the error because
+	 * it might supply a reason for the failure.
+	 */
+	pg_ctl_return = exec_prog(false, "%s", cmd);
 
 	/* Check to see if we can connect to the server; if not, report it. */
 	if ((conn = get_db_conn(cluster, "template1")) == NULL ||
 		PQstatus(conn) != CONNECTION_OK)
 	{
+		pg_log(PG_REPORT, "\nconnection to database failed: %s\n",
+			   PQerrorMessage(conn));
 		if (conn)
 			PQfinish(conn);
-		pg_log(PG_FATAL, "unable to connect to %s postmaster started with the command: %s\n"
-			   "Perhaps pg_hba.conf was not set to \"trust\".",
+		pg_log(PG_FATAL, "could not connect to %s postmaster started with the command: %s\n",
 			   CLUSTER_NAME(cluster), cmd);
 	}
 	PQfinish(conn);
+
+	/* If the connection didn't fail, fail now */
+	if (pg_ctl_return != 0)
+		pg_log(PG_FATAL, "pg_ctl failed to start the %s server\n",
+			   CLUSTER_NAME(cluster));
 
 	os_info.running_cluster = cluster;
 }
@@ -207,12 +207,6 @@ stop_postmaster(bool fast)
 	char		cmd[MAXPGPATH];
 	const char *bindir;
 	const char *datadir;
-#ifndef WIN32
-	char		*output_filename = log_opts.filename;
-#else
-	/* See comment in start_postmaster() about why win32 output is ignored. */
-	char		*output_filename = DEVNULL;
-#endif
 
 	if (os_info.running_cluster == &old_cluster)
 	{
@@ -230,8 +224,8 @@ stop_postmaster(bool fast)
 	snprintf(cmd, sizeof(cmd),
 			 SYSTEMQUOTE "\"%s/pg_ctl\" -w -l \"%s\" -D \"%s\" %s stop >> "
 			 "\"%s\" 2>&1" SYSTEMQUOTE,
-			 bindir, output_filename, datadir, fast ? "-m fast" : "",
-			 output_filename);
+			 bindir, log_opts.filename2, datadir, fast ? "-m fast" : "",
+			 log_opts.filename2);
 
 	exec_prog(fast ? false : true, "%s", cmd);
 
@@ -240,20 +234,15 @@ stop_postmaster(bool fast)
 
 
 /*
- * check_for_libpq_envvars()
+ * check_pghost_envvar()
  *
- * tests whether any libpq environment variables are set.
- * Since pg_upgrade connects to both the old and the new server,
- * it is potentially dangerous to have any of these set.
- *
- * If any are found, will log them and cancel.
+ * Tests that PGHOST does not point to a non-local server
  */
 void
-check_for_libpq_envvars(void)
+check_pghost_envvar(void)
 {
 	PQconninfoOption *option;
 	PQconninfoOption *start;
-	bool		found = false;
 
 	/* Get valid libpq env vars from the PQconndefaults function */
 
@@ -261,28 +250,21 @@ check_for_libpq_envvars(void)
 
 	for (option = start; option->keyword != NULL; option++)
 	{
-		if (option->envvar)
+		if (option->envvar && (strcmp(option->envvar, "PGHOST") == 0 ||
+							   strcmp(option->envvar, "PGHOSTADDR") == 0))
 		{
-			const char *value;
+			const char *value = getenv(option->envvar);
 
-			if (strcmp(option->envvar, "PGCLIENTENCODING") == 0)
-				continue;
-
-			value = getenv(option->envvar);
-			if (value && strlen(value) > 0)
-			{
-				found = true;
-
-				pg_log(PG_WARNING,
-					   "libpq env var %-20s is currently set to: %s\n", option->envvar, value);
-			}
+			if (value && strlen(value) > 0 &&
+			/* check for 'local' host values */
+				(strcmp(value, "localhost") != 0 && strcmp(value, "127.0.0.1") != 0 &&
+				 strcmp(value, "::1") != 0 && value[0] != '/'))
+				pg_log(PG_FATAL,
+					   "libpq environment variable %s has a non-local server value: %s\n",
+					   option->envvar, value);
 		}
 	}
 
 	/* Free the memory that libpq allocated on our behalf */
 	PQconninfoFree(start);
-
-	if (found)
-		pg_log(PG_FATAL,
-			   "libpq env vars have been found and listed above, please unset them for pg_upgrade\n");
 }

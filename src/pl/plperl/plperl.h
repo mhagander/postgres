@@ -59,13 +59,13 @@
 #undef vsnprintf
 #endif
 #ifdef __GNUC__
-#define vsnprintf(...)  pg_vsnprintf(__VA_ARGS__)
-#define snprintf(...)   pg_snprintf(__VA_ARGS__)
+#define vsnprintf(...)	pg_vsnprintf(__VA_ARGS__)
+#define snprintf(...)	pg_snprintf(__VA_ARGS__)
 #else
-#define vsnprintf       pg_vsnprintf
-#define snprintf        pg_snprintf
-#endif /* __GNUC__ */
-#endif /*  USE_REPL_SNPRINTF */
+#define vsnprintf		pg_vsnprintf
+#define snprintf		pg_snprintf
+#endif   /* __GNUC__ */
+#endif   /* USE_REPL_SNPRINTF */
 
 /* perl version and platform portability */
 #define NEED_eval_pv
@@ -83,6 +83,11 @@
 #define HeUTF8(he)			   ((HeKLEN(he) == HEf_SVKEY) ?			   \
 								SvUTF8(HeKEY_sv(he)) :				   \
 								(U32)HeKUTF8(he))
+#endif
+
+/* supply GvCV_set if it's missing - ppport.h doesn't supply it, unfortunately */
+#ifndef GvCV_set
+#define GvCV_set(gv, cv)		(GvCV(gv) = cv)
 #endif
 
 /* declare routines from plperl.c for access by .xs files */

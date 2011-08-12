@@ -188,9 +188,10 @@ protocol to make nodes agree on a serializable transactional order.
     <para>
      With statement-based replication middleware, a program intercepts
      every SQL query and sends it to one or all servers.  Each server
-     operates independently.  Read-write queries are sent to all servers,
-     while read-only queries can be sent to just one server, allowing
-     the read workload to be distributed.
+     operates independently.  Read-write queries must be sent to all servers,
+     so that every server receives any changes.  But read-only queries can be
+     sent to just one server, allowing the read workload to be distributed
+     among them.
     </para>
 
     <para>
@@ -209,8 +210,8 @@ protocol to make nodes agree on a serializable transactional order.
      transactions either commit or abort on all servers, perhaps
      using two-phase commit (<xref linkend="sql-prepare-transaction">
      and <xref linkend="sql-commit-prepared">.
-     <productname>Pgpool-II</> and <productname>Sequoia</> are examples of
-     this type of replication.
+     <productname>Pgpool-II</> and <productname>Continuent Tungsten</>
+     are examples of this type of replication.
     </para>
    </listitem>
   </varlistentry>
@@ -871,13 +872,71 @@ primary_conninfo = 'host=192.168.1.50 port=5432 user=foo password=foopass'
      <literal>pg_stat_replication</></link> view. Large differences between
      <function>pg_current_xlog_location</> and <literal>sent_location</> field
      might indicate that the master server is under heavy load, while
-     differences between <literal>sent_location</> and 
+     differences between <literal>sent_location</> and
      <function>pg_last_xlog_receive_location</> on the standby might indicate
      network delay, or that the standby is under heavy load.
     </para>
    </sect3>
-
   </sect2>
+
+  <sect2 id="cascading-replication">
+   <title>Cascading Replication</title>
+
+   <indexterm zone="high-availability">
+    <primary>Cascading Replication</primary>
+   </indexterm>
+
+   <para>
+    The cascading replication feature allows a standby server to accept replication
+    connections and stream WAL records to other standbys, acting as a relay.
+    This can be used to reduce the number of direct connections to the master
+    and also to minimise inter-site bandwidth overheads.
+   </para>
+
+   <para>
+    A standby acting as both a receiver and a sender is known as a cascading
+    standby.  Standbys that are more directly connected to the master are known
+    as upstream servers, while those standby servers further away are downstream
+    servers.  Cascading replication does not place limits on the number or
+    arrangement of downstream servers, though each standby connects to only
+    one upstream server which eventually links to a single master/primary
+    server.
+   </para>
+
+   <para>
+    A cascading standby sends not only WAL records received from the
+    master but also those restored from the archive. So even if the replication
+    connection in some upstream connection is terminated, streaming replication
+    continues downstream for as long as new WAL records are available.
+   </para>
+
+   <para>
+    Cascading replication is currently asynchronous. Synchronous replication
+    (see <xref linkend="synchronous-replication">) settings have no effect on
+    cascading replication at present.
+   </para>
+
+   <para>
+    Hot Standby feedback propagates upstream, whatever the cascaded arrangement.
+   </para>
+
+   <para>
+    Promoting a cascading standby terminates the immediate downstream replication
+    connections which it serves. This is because the timeline becomes different
+    between standbys, and they can no longer continue replication.  The
+    effected standby(s) may reconnect to reestablish streaming replication.
+   </para>
+
+   <para>
+    To use cascading replication, set up the cascading standby so that it can
+    accept replication connections, i.e., set <varname>max_wal_senders</>,
+    <varname>hot_standby</> and authentication option (see
+    <xref linkend="streaming-replication"> and <xref linkend="hot-standby">).
+    Also set <varname>primary_conninfo</> in the downstream standby to point
+    to the cascading standby.
+   </para>
+  </sect2>
+
   <sect2 id="synchronous-replication">
    <title>Synchronous Replication</title>
 
@@ -954,7 +1013,9 @@ primary_conninfo = 'host=192.168.1.50 port=5432 user=foo password=foopass'
     confirmation that the commit record has been received. These parameters
     allow the administrator to specify which standby servers should be
     synchronous standbys. Note that the configuration of synchronous
-    replication is mainly on the master.
+    replication is mainly on the master. Named standbys must be directly
+    connected to the master; the master knows nothing about downstream
+    standby servers using cascaded replication.
    </para>
 
    <para>
@@ -1143,7 +1204,7 @@ primary_conninfo = 'host=192.168.1.50 port=5432 user=foo password=foopass'
    <para>
     To trigger failover of a log-shipping standby server,
     run <command>pg_ctl promote</> or create a trigger
-    file with the filename and path specified by the <varname>trigger_file</>
+    file with the file name and path specified by the <varname>trigger_file</>
     setting in <filename>recovery.conf</>. If you're planning to use
     <command>pg_ctl promote</> to fail over, <varname>trigger_file</> is
     not required. If you're setting up the reporting servers that are
@@ -1584,7 +1645,7 @@ if (!triggered)
    <para>
     There are also additional types of conflict that can occur with Hot Standby.
     These conflicts are <emphasis>hard conflicts</> in the sense that queries
-    might need to be cancelled and, in some cases, sessions disconnected to resolve them.
+    might need to be canceled and, in some cases, sessions disconnected to resolve them.
     The user is provided with several ways to handle these
     conflicts. Conflict cases include:
 
@@ -1681,7 +1742,7 @@ if (!triggered)
    <para>
     Once the delay specified by <varname>max_standby_archive_delay</> or
     <varname>max_standby_streaming_delay</> has been exceeded, conflicting
-    queries will be cancelled.  This usually results just in a cancellation
+    queries will be canceled.  This usually results just in a cancellation
     error, although in the case of replaying a <command>DROP DATABASE</>
     the entire conflicting session will be terminated.  Also, if the conflict
     is over a lock held by an idle transaction, the conflicting session is
@@ -1689,10 +1750,10 @@ if (!triggered)
    </para>
 
    <para>
-    Cancelled queries may be retried immediately (after beginning a new
+    Canceled queries may be retried immediately (after beginning a new
     transaction, of course).  Since query cancellation depends on
     the nature of the WAL records being replayed, a query that was
-    cancelled may well succeed if it is executed again.
+    canceled may well succeed if it is executed again.
    </para>
 
    <para>
@@ -1750,7 +1811,7 @@ if (!triggered)
     Another option is to increase <xref linkend="guc-vacuum-defer-cleanup-age">
     on the primary server, so that dead rows will not be cleaned up as quickly
     as they normally would be.  This will allow more time for queries to
-    execute before they are cancelled on the standby, without having to set
+    execute before they are canceled on the standby, without having to set
     a high <varname>max_standby_streaming_delay</>.  However it is
     difficult to guarantee any specific execution-time window with this
     approach, since <varname>vacuum_defer_cleanup_age</> is measured in
@@ -1980,7 +2041,7 @@ LOG:  database system is ready to accept read only connections
     <command>DROP TABLESPACE</> can only succeed if the tablespace is empty.
     Some standby users may be actively using the tablespace via their
     <varname>temp_tablespaces</> parameter. If there are temporary files in the
-    tablespace, all active queries are cancelled to ensure that temporary
+    tablespace, all active queries are canceled to ensure that temporary
     files are removed, so the tablespace can be removed and WAL replay
     can continue.
    </para>

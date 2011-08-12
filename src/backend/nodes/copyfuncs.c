@@ -2312,6 +2312,7 @@ _copyColumnDef(ColumnDef *from)
 	COPY_NODE_FIELD(collClause);
 	COPY_SCALAR_FIELD(collOid);
 	COPY_NODE_FIELD(constraints);
+	COPY_NODE_FIELD(fdwoptions);
 
 	return newnode;
 }
@@ -2807,6 +2808,7 @@ _copyIndexStmt(IndexStmt *from)
 	COPY_NODE_FIELD(whereClause);
 	COPY_NODE_FIELD(excludeOpNames);
 	COPY_SCALAR_FIELD(indexOid);
+	COPY_SCALAR_FIELD(oldNode);
 	COPY_SCALAR_FIELD(unique);
 	COPY_SCALAR_FIELD(primary);
 	COPY_SCALAR_FIELD(isconstraint);
