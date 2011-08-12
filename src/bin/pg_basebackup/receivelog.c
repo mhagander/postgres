@@ -119,7 +119,6 @@ ReceiveXlogStream(PGconn *conn, XLogRecPtr startpos, uint32 timeline, char *base
 
 		/* Extract WAL location for this block */
 		memcpy(&blockstart, copybuf + 1, 8);
-
 		xlogoff = blockstart.xrecoff % XLOG_SEG_SIZE;
 
 		/*
@@ -210,7 +209,7 @@ ReceiveXlogStream(PGconn *conn, XLogRecPtr startpos, uint32 timeline, char *base
 				}
 			}
 		}
-		/* No more data left to send, get the next copy packet */
+		/* No more data left to write, start receiving next copy packet */
 	}
 
 	/*
