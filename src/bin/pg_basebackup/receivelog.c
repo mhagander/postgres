@@ -28,6 +28,12 @@
 #define XLogFileName(fname, tli, log, seg)	\
 	snprintf(fname, MAXFNAMELEN, "%08X%08X%08X", tli, log, seg)
 
+/* XXX: from xlogdefs.h */
+#define XLogSegSize		((uint32) XLOG_SEG_SIZE)
+#define XLogSegsPerFile (((uint32) 0xffffffff) / XLogSegSize)
+#define XLogFileSize	(XLogSegsPerFile * XLogSegSize)
+
+
 /* XXX: from walprotocol.h */
 typedef struct
 {
@@ -300,7 +306,7 @@ ReceiveXlogStream(PGconn *conn, XLogRecPtr startpos, uint32 timeline, char *base
 			/* Write was successful, advance our position */
 			bytes_written += bytes_to_write;
 			bytes_left -= bytes_to_write;
-			blockpos.xrecoff += bytes_to_write; /* XXX: use proper macro */
+			XLByteAdvance(blockpos, bytes_to_write);
 			xlogoff += bytes_to_write;
 
 			/* Did we reach the end of a WAL segment? */
