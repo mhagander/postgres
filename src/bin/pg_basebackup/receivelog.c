@@ -12,42 +12,25 @@
  *-------------------------------------------------------------------------
  */
 
-#include "postgres_fe.h"
-
+/*
+ * We have to use postgres.h not postgres_fe.h here, because there's so much
+ * backend-only stuff in the XLOG include files we need.  But we need a
+ * frontend-ish environment otherwise.	Hence this ugly hack.
+ */
+#define FRONTEND 1
+#include "postgres.h"
 #include "libpq-fe.h"
 
 #include <sys/time.h>
 #include <sys/types.h>
 #include <unistd.h>
 
+#include <access/xlog_internal.h>
+#include <replication/walprotocol.h>
+#include <utils/datetime.h>
+
 #include "receivelog.h"
 #include "streamutil.h"
-
-/* XXX: from xlog_internal.h */
-#define MAXFNAMELEN		64
-#define XLogFileName(fname, tli, log, seg)	\
-	snprintf(fname, MAXFNAMELEN, "%08X%08X%08X", tli, log, seg)
-
-#define XLogSegSize		((uint32) XLOG_SEG_SIZE)
-#define XLogSegsPerFile (((uint32) 0xffffffff) / XLogSegSize)
-#define XLogFileSize	(XLogSegsPerFile * XLogSegSize)
-
-
-/* XXX: from walprotocol.h */
-typedef struct
-{
-	XLogRecPtr	write;
-	XLogRecPtr	flush;
-	XLogRecPtr	apply;
-	int64		sendTime;
-} StandbyReplyMessage;
-
-/* XXX: from utils/datetime.h */
-#define POSTGRES_EPOCH_JDATE     2451545 /* == date2j(2000, 1, 1) */
-#define UNIX_EPOCH_JDATE         2440588 /* == date2j(1970, 1, 1) */
-/* XXX: from utils/timestamp.h */
-#define SECS_PER_DAY    86400
-#define USECS_PER_SEC   INT64CONST(1000000)
 
 /* Size of the streaming replication protocol header */
 #define STREAMING_HEADER_SIZE (1+8+8+8)
@@ -76,18 +59,26 @@ open_walfile(XLogRecPtr startpoint, uint32 timeline, char *basedir, char *namebu
 	return f;
 }
 
-static int64
-GetCurrentTimestamp(void)
+/*
+ * Local version of GetCurrentTimestamp(), since we are not linked with
+ * backend code.
+ */
+static TimestampTz
+localGetCurrentTimestamp(void)
 {
-	int64 result;
+	TimestampTz result;
 	struct timeval tp;
 
 	gettimeofday(&tp, NULL);
 
-	result = (int64) tp.tv_sec -
+	result = (TimestampTz) tp.tv_sec -
 		((POSTGRES_EPOCH_JDATE - UNIX_EPOCH_JDATE) * SECS_PER_DAY);
 
+#ifdef HAVE_INT64_TIMESTAMP
 	result = (result * USECS_PER_SEC) + tp.tv_usec;
+#else
+	result = result + (tp.tv_usec / 1000000.0);
+#endif
 
 	return result;
 }
@@ -139,7 +130,7 @@ ReceiveXlogStream(PGconn *conn, XLogRecPtr startpos, uint32 timeline, char *base
 		/*
 		 * Potentially send a status message to the master
 		 */
-		now = GetCurrentTimestamp();
+		now = localGetCurrentTimestamp();
 		if (standby_message_timeout > 0 &&
 			last_status < now - standby_message_timeout * 1000000)
 		{
