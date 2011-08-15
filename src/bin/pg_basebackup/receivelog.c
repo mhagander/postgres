@@ -16,6 +16,7 @@
 
 #include "libpq-fe.h"
 
+#include <sys/time.h>
 #include <sys/types.h>
 #include <unistd.h>
 
@@ -27,8 +28,26 @@
 #define XLogFileName(fname, tli, log, seg)	\
 	snprintf(fname, MAXFNAMELEN, "%08X%08X%08X", tli, log, seg)
 
+/* XXX: from walprotocol.h */
+typedef struct
+{
+	XLogRecPtr	write;
+	XLogRecPtr	flush;
+	XLogRecPtr	apply;
+	int64		sendTime;
+} StandbyReplyMessage;
+
+/* XXX: from utils/datetime.h */
+#define POSTGRES_EPOCH_JDATE     2451545 /* == date2j(2000, 1, 1) */
+#define UNIX_EPOCH_JDATE         2440588 /* == date2j(1970, 1, 1) */
+/* XXX: from utils/timestamp.h */
+#define SECS_PER_DAY    86400
+#define USECS_PER_SEC   INT64CONST(1000000)
+
 /* Size of the streaming replication protocol header */
 #define STREAMING_HEADER_SIZE (1+8+8+8)
+
+const XLogRecPtr InvalidXLogRecPtr = {0, 0};
 
 /*
  * Open a new WAL file in the specified directory. Store the name
@@ -52,19 +71,37 @@ open_walfile(XLogRecPtr startpoint, uint32 timeline, char *basedir, char *namebu
 	return f;
 }
 
+static int64
+GetCurrentTimestamp(void)
+{
+	int64 result;
+	struct timeval tp;
+
+	gettimeofday(&tp, NULL);
+
+	result = (int64) tp.tv_sec -
+		((POSTGRES_EPOCH_JDATE - UNIX_EPOCH_JDATE) * SECS_PER_DAY);
+
+	result = (result * USECS_PER_SEC) + tp.tv_usec;
+
+	return result;
+}
+
 /*
  * Receive a log stream starting at the specified position.
  *
  * Note: The log position *must* be at a log segment start!
  */
 bool
-ReceiveXlogStream(PGconn *conn, XLogRecPtr startpos, uint32 timeline, char *basedir, segment_finish_callback segment_finish)
+ReceiveXlogStream(PGconn *conn, XLogRecPtr startpos, uint32 timeline, char *basedir, segment_finish_callback segment_finish, int standby_message_timeout)
 {
 	char		query[128];
 	char		current_walfile_name[MAXPGPATH];
 	PGresult   *res;
 	char	   *copybuf = NULL;
 	int			walfile = -1;
+	int64		last_status = -1;
+	XLogRecPtr	blockstart = InvalidXLogRecPtr;
 
 	/* Initiate the replication stream at specified location */
 	snprintf(query, sizeof(query), "START_REPLICATION %X/%X", startpos.xlogid, startpos.xrecoff);
@@ -82,11 +119,11 @@ ReceiveXlogStream(PGconn *conn, XLogRecPtr startpos, uint32 timeline, char *base
 	 */
 	while (1)
 	{
-		XLogRecPtr	blockstart;
 		int			r;
 		int			xlogoff;
 		int			bytes_left;
 		int			bytes_written;
+		int64		now;
 
 		if (copybuf != NULL)
 		{
@@ -94,7 +131,83 @@ ReceiveXlogStream(PGconn *conn, XLogRecPtr startpos, uint32 timeline, char *base
 			copybuf = NULL;
 		}
 
-		r = PQgetCopyData(conn, &copybuf, 0);
+		/*
+		 * Potentially send a status message to the master
+		 */
+		now = GetCurrentTimestamp();
+		if (standby_message_timeout > 0 &&
+			last_status < now - standby_message_timeout * 1000000)
+		{
+			/* Time to send feedback! */
+			char replybuf[sizeof(StandbyReplyMessage) + 1];
+			StandbyReplyMessage *replymsg = (StandbyReplyMessage *)(replybuf + 1);
+
+			replymsg->write = blockstart;
+			replymsg->flush = InvalidXLogRecPtr;
+			replymsg->apply = InvalidXLogRecPtr;
+			replymsg->sendTime = now;
+			replybuf[0] = 'r';
+
+			if (PQputCopyData(conn, replybuf, sizeof(replybuf)) <= 0 ||
+				PQflush(conn))
+			{
+				fprintf(stderr, _("%s: could not send feedback packet: %s"),
+						progname, PQerrorMessage(conn));
+				return false;
+			}
+
+			last_status = now;
+		}
+
+		r = PQgetCopyData(conn, &copybuf, 1);
+		if (r == 0)
+		{
+			/*
+			 * In async mode, and no data available. We block on reading
+			 * but not more than the specified timeout, so that we can send
+			 * a response back to the client.
+			 */
+			fd_set input_mask;
+			struct timeval timeout;
+			struct timeval *timeoutptr;
+
+			FD_ZERO(&input_mask);
+			FD_SET(PQsocket(conn), &input_mask);
+			if (standby_message_timeout)
+			{
+				timeout.tv_sec = last_status + standby_message_timeout - now -1;
+				if (timeout.tv_sec <= 0)
+					timeout.tv_sec = 1; /* Always sleep at least 1 sec */
+				timeout.tv_usec = 0;
+				timeoutptr = &timeout;
+			}
+			else
+				timeoutptr = NULL;
+
+			r = select(PQsocket(conn) + 1, &input_mask, NULL, NULL, timeoutptr);
+			if (r == 0 || (r < 0 && errno == EINTR))
+			{
+				/*
+				 * Got a timeout or signal. Continue the loop and either
+				 * deliver a status packet to the server or just go back
+				 * into blocking.
+				 */
+				continue;
+			}
+			else if (r < 0)
+			{
+				fprintf(stderr, _("%s: select() failed: %m\n"), progname);
+				return false;
+			}
+			/* Else there is actually data on the socket */
+			if (PQconsumeInput(conn) == 0)
+			{
+				fprintf(stderr, _("%s: could not receive data from WAL stream: %s\n"),
+						progname, PQerrorMessage(conn));
+				return false;
+			}
+			continue;
+		}
 		if (r == -1)
 			/* End of copy stream */
 			break;

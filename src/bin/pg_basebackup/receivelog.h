@@ -10,4 +10,5 @@ bool ReceiveXlogStream(PGconn *conn,
 					   XLogRecPtr startpos,
 					   uint32 timeline,
 					   char *basedir,
-					   segment_finish_callback segment_finish);
+					   segment_finish_callback segment_finish,
+					   int standby_message_timeout);

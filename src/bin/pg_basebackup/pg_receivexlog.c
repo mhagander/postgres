@@ -30,6 +30,7 @@
 /* Global options */
 char	   *basedir = NULL;
 int			verbose = 0;
+int			standby_message_timeout = 10; /* 10 sec = default */
 
 
 static void usage(void);
@@ -67,6 +68,7 @@ usage(void)
 	printf(_("  -?, --help                show this help, then exit\n"));
 	printf(_("  -V, --version             output version information, then exit\n"));
 	printf(_("\nConnection options:\n"));
+	printf(_("  -s, --statusint=INTERVAL time between status packets sent to server (in seconds)\n"));
 	printf(_("  -h, --host=HOSTNAME      database server host or socket directory\n"));
 	printf(_("  -p, --port=PORT          database server port number\n"));
 	printf(_("  -U, --username=NAME      connect as specified database user\n"));
@@ -294,7 +296,8 @@ StreamLog(void)
 		fprintf(stderr, _("%s: starting log streaming at %X/%X (timeline %u)\n"),
 				progname, startpos.xlogid, startpos.xrecoff, timeline);
 
-	ReceiveXlogStream(conn, startpos, timeline, basedir, segment_callback);
+	ReceiveXlogStream(conn, startpos, timeline, basedir,
+					  segment_callback, standby_message_timeout);
 }
 
 int
@@ -309,6 +312,7 @@ main(int argc, char **argv)
 		{"username", required_argument, NULL, 'U'},
 		{"no-password", no_argument, NULL, 'w'},
 		{"password", no_argument, NULL, 'W'},
+		{"statusint", required_argument, NULL, 's'},
 		{"verbose", no_argument, NULL, 'v'},
 		{NULL, 0, NULL, 0}
 	};
@@ -334,7 +338,7 @@ main(int argc, char **argv)
 		}
 	}
 
-	while ((c = getopt_long(argc, argv, "D:h:p:U:wWv",
+	while ((c = getopt_long(argc, argv, "D:h:p:U:s:wWv",
 							long_options, &option_index)) != -1)
 	{
 		switch (c)
@@ -362,6 +366,15 @@ main(int argc, char **argv)
 				break;
 			case 'W':
 				dbgetpassword = 1;
+				break;
+			case 's':
+				standby_message_timeout = atoi(optarg);
+				if (standby_message_timeout < 0)
+				{
+					fprintf(stderr, _("%s: invalid status interval \"%s\"\n"),
+							progname, optarg);
+					exit(1);
+				}
 				break;
 			case 'v':
 				verbose++;

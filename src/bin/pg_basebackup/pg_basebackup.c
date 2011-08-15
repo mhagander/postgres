@@ -40,6 +40,7 @@ int			compresslevel = 0;
 bool		includewal = false;
 bool		streamwal = false;
 bool		fastcheckpoint = false;
+int			standby_message_timeout = 10; /* 10 sec = default */
 
 /* Progress counters */
 static uint64 totalsize;
@@ -107,6 +108,7 @@ usage(void)
 	printf(_("  --help                   show this help, then exit\n"));
 	printf(_("  --version                output version information, then exit\n"));
 	printf(_("\nConnection options:\n"));
+	printf(_("  -s, --statusint=INTERVAL time between status packets sent to server (in seconds)\n"));
 	printf(_("  -h, --host=HOSTNAME      database server host or socket directory\n"));
 	printf(_("  -p, --port=PORT          database server port number\n"));
 	printf(_("  -U, --username=NAME      connect as specified database user\n"));
@@ -216,8 +218,9 @@ typedef struct
 static int
 LogStreamerMain(logstreamer_param * param)
 {
-	if (!ReceiveXlogStream(param->bgconn, param->startptr, param->timeline, param->xlogdir, segment_callback))
-
+	if (!ReceiveXlogStream(param->bgconn, param->startptr, param->timeline,
+						   param->xlogdir, segment_callback,
+						   standby_message_timeout))
 		/*
 		 * Any errors will already have been reported in the function process,
 		 * but we need to tell the parent that we didn't shutdown in a nice
@@ -1143,6 +1146,7 @@ main(int argc, char **argv)
 		{"username", required_argument, NULL, 'U'},
 		{"no-password", no_argument, NULL, 'w'},
 		{"password", no_argument, NULL, 'W'},
+		{"statusint", required_argument, NULL, 's'},
 		{"verbose", no_argument, NULL, 'v'},
 		{"progress", no_argument, NULL, 'P'},
 		{NULL, 0, NULL, 0}
@@ -1169,7 +1173,7 @@ main(int argc, char **argv)
 		}
 	}
 
-	while ((c = getopt_long(argc, argv, "D:F:x:l:zZ:c:h:p:U:wWvP",
+	while ((c = getopt_long(argc, argv, "D:F:x:l:zZ:c:h:p:U:s:wWvP",
 							long_options, &option_index)) != -1)
 	{
 		switch (c)
@@ -1249,6 +1253,15 @@ main(int argc, char **argv)
 				break;
 			case 'W':
 				dbgetpassword = 1;
+				break;
+			case 's':
+				standby_message_timeout = atoi(optarg);
+				if (standby_message_timeout < 0)
+				{
+					fprintf(stderr, _("%s: invalid status interval \"%s\"\n"),
+							progname, optarg);
+					exit(1);
+				}
 				break;
 			case 'v':
 				verbose++;
