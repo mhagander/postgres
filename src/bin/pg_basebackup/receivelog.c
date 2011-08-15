@@ -28,7 +28,6 @@
 #define XLogFileName(fname, tli, log, seg)	\
 	snprintf(fname, MAXFNAMELEN, "%08X%08X%08X", tli, log, seg)
 
-/* XXX: from xlogdefs.h */
 #define XLogSegSize		((uint32) XLOG_SEG_SIZE)
 #define XLogSegsPerFile (((uint32) 0xffffffff) / XLogSegSize)
 #define XLogFileSize	(XLogSegsPerFile * XLogSegSize)
