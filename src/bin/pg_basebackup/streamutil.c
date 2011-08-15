@@ -18,11 +18,10 @@
  */
 #define FRONTEND 1
 #include "postgres.h"
+#include "streamutil.h"
 
 #include <stdio.h>
 #include <string.h>
-
-#include "streamutil.h"
 
 const char *progname;
 char	   *dbhost = NULL;

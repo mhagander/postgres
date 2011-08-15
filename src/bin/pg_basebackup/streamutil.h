@@ -1,4 +1,3 @@
-#include "access/xlogdefs.h"
 #include "libpq-fe.h"
 
 extern const char *progname;

@@ -22,16 +22,15 @@
 #include "libpq-fe.h"
 #include "access/xlog_internal.h"
 
+#include "receivelog.h"
+#include "streamutil.h"
+
 #include <dirent.h>
 #include <sys/stat.h>
 #include <sys/types.h>
 #include <unistd.h>
 
 #include "getopt_long.h"
-
-#include "receivelog.h"
-#include "streamutil.h"
-
 
 /* Global options */
 char	   *basedir = NULL;

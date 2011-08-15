@@ -20,17 +20,17 @@
 #define FRONTEND 1
 #include "postgres.h"
 #include "libpq-fe.h"
+#include "access/xlog_internal.h"
+#include "replication/walprotocol.h"
+#include "utils/datetime.h"
+
+#include "receivelog.h"
+#include "streamutil.h"
 
 #include <sys/time.h>
 #include <sys/types.h>
 #include <unistd.h>
 
-#include <access/xlog_internal.h>
-#include <replication/walprotocol.h>
-#include <utils/datetime.h>
-
-#include "receivelog.h"
-#include "streamutil.h"
 
 /* Size of the streaming replication protocol header */
 #define STREAMING_HEADER_SIZE (1+8+8+8)
