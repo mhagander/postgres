@@ -101,7 +101,7 @@ ReceiveXlogStream(PGconn *conn, XLogRecPtr startpos, uint32 timeline, char *base
 	char	   *copybuf = NULL;
 	int			walfile = -1;
 	int64		last_status = -1;
-	XLogRecPtr	blockstart = InvalidXLogRecPtr;
+	XLogRecPtr	blockpos = InvalidXLogRecPtr;
 
 	/* Initiate the replication stream at specified location */
 	snprintf(query, sizeof(query), "START_REPLICATION %X/%X", startpos.xlogid, startpos.xrecoff);
@@ -142,7 +142,7 @@ ReceiveXlogStream(PGconn *conn, XLogRecPtr startpos, uint32 timeline, char *base
 			char replybuf[sizeof(StandbyReplyMessage) + 1];
 			StandbyReplyMessage *replymsg = (StandbyReplyMessage *)(replybuf + 1);
 
-			replymsg->write = blockstart;
+			replymsg->write = blockpos;
 			replymsg->flush = InvalidXLogRecPtr;
 			replymsg->apply = InvalidXLogRecPtr;
 			replymsg->sendTime = now;
@@ -231,8 +231,8 @@ ReceiveXlogStream(PGconn *conn, XLogRecPtr startpos, uint32 timeline, char *base
 		}
 
 		/* Extract WAL location for this block */
-		memcpy(&blockstart, copybuf + 1, 8);
-		xlogoff = blockstart.xrecoff % XLOG_SEG_SIZE;
+		memcpy(&blockpos, copybuf + 1, 8);
+		xlogoff = blockpos.xrecoff % XLOG_SEG_SIZE;
 
 		/*
 		 * Verify that the initial location in the stream matches where
@@ -278,7 +278,7 @@ ReceiveXlogStream(PGconn *conn, XLogRecPtr startpos, uint32 timeline, char *base
 
 			if (walfile == -1)
 			{
-				walfile = open_walfile(blockstart, timeline,
+				walfile = open_walfile(blockpos, timeline,
 									   basedir, current_walfile_name);
 				if (walfile == -1)
 					/* Error logged by open_walfile */
@@ -300,11 +300,11 @@ ReceiveXlogStream(PGconn *conn, XLogRecPtr startpos, uint32 timeline, char *base
 			/* Write was successful, advance our position */
 			bytes_written += bytes_to_write;
 			bytes_left -= bytes_to_write;
-			blockstart.xrecoff += bytes_to_write;
+			blockpos.xrecoff += bytes_to_write; /* XXX: use proper macro */
 			xlogoff += bytes_to_write;
 
 			/* Did we reach the end of a WAL segment? */
-			if (blockstart.xrecoff % XLOG_SEG_SIZE == 0)
+			if (blockpos.xrecoff % XLOG_SEG_SIZE == 0)
 			{
 				fsync(walfile);
 				close(walfile);
@@ -317,7 +317,7 @@ ReceiveXlogStream(PGconn *conn, XLogRecPtr startpos, uint32 timeline, char *base
 					 * Callback when the segment finished, and return if it told
 					 * us to.
 					 */
-					if (segment_finish(blockstart, timeline))
+					if (segment_finish(blockpos, timeline))
 						return true;
 				}
 			}
