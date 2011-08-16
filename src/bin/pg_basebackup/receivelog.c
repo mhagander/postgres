@@ -89,7 +89,7 @@ localGetCurrentTimestamp(void)
  * Note: The log position *must* be at a log segment start!
  */
 bool
-ReceiveXlogStream(PGconn *conn, XLogRecPtr startpos, uint32 timeline, char *basedir, segment_finish_callback segment_finish, int standby_message_timeout)
+ReceiveXlogStream(PGconn *conn, XLogRecPtr startpos, uint32 timeline, char *basedir, segment_finish_callback segment_finish, stream_continue_callback stream_continue, int standby_message_timeout)
 {
 	char		query[128];
 	char		current_walfile_name[MAXPGPATH];
@@ -125,6 +125,20 @@ ReceiveXlogStream(PGconn *conn, XLogRecPtr startpos, uint32 timeline, char *base
 		{
 			PQfreemem(copybuf);
 			copybuf = NULL;
+		}
+
+		/*
+		 * Check if we should continue streaming, or abort at this
+		 * point.
+		 */
+		if (stream_continue && stream_continue())
+		{
+			if (walfile != -1)
+			{
+				fsync(walfile);
+				close(walfile);
+			}
+			return true;
 		}
 
 		/*

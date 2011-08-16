@@ -20,6 +20,7 @@
 #define FRONTEND 1
 #include "postgres.h"
 #include "libpq-fe.h"
+#include "libpq/pqsignal.h"
 #include "access/xlog_internal.h"
 
 #include "receivelog.h"
@@ -36,6 +37,7 @@
 char	   *basedir = NULL;
 int			verbose = 0;
 int			standby_message_timeout = 10; /* 10 sec = default */
+bool		time_to_abort = false;
 
 
 static void usage(void);
@@ -95,7 +97,22 @@ segment_callback(XLogRecPtr segendpos, uint32 timeline)
 		unlink(fn);
 	}
 
-	/* Never abort */
+	/*
+	 * Never abort from this - we handle all aborting in
+	 * continue_streaming()
+	 */
+	return false;
+}
+
+static bool
+continue_streaming()
+{
+	if (time_to_abort)
+	{
+		fprintf(stderr, _("%s: received interrupt signal, exiting.\n"),
+				progname);
+		return true;
+	}
 	return false;
 }
 
@@ -286,7 +303,18 @@ StreamLog(void)
 				progname, startpos.xlogid, startpos.xrecoff, timeline);
 
 	ReceiveXlogStream(conn, startpos, timeline, basedir,
-					  segment_callback, standby_message_timeout);
+					  segment_callback, continue_streaming,
+					  standby_message_timeout);
+}
+
+/*
+ * When sigint is called, just tell the system to exit at the next possible
+ * moment.
+ */
+static void
+sigint_handler(int signum)
+{
+	time_to_abort = true;
 }
 
 int
@@ -402,6 +430,10 @@ main(int argc, char **argv)
 				progname);
 		exit(1);
 	}
+
+#ifndef WIN32
+	pqsignal(SIGINT, sigint_handler);
+#endif
 
 	StreamLog();
 

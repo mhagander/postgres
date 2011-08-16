@@ -225,7 +225,7 @@ static int
 LogStreamerMain(logstreamer_param * param)
 {
 	if (!ReceiveXlogStream(param->bgconn, param->startptr, param->timeline,
-						   param->xlogdir, segment_callback,
+						   param->xlogdir, segment_callback, NULL,
 						   standby_message_timeout))
 		/*
 		 * Any errors will already have been reported in the function process,
