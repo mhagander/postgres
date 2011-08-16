@@ -1346,7 +1346,7 @@ main(int argc, char **argv)
 	}
 
 #ifndef HAVE_LIBZ
-	if (compresslevel > 0)
+	if (compresslevel != 0)
 	{
 		fprintf(stderr,
 				_("%s: this build does not support compression\n"),
