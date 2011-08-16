@@ -36,8 +36,8 @@
 /* Global options */
 char	   *basedir = NULL;
 int			verbose = 0;
-int			standby_message_timeout = 10; /* 10 sec = default */
-volatile bool	time_to_abort = false;
+int			standby_message_timeout = 10;		/* 10 sec = default */
+volatile bool time_to_abort = false;
 
 
 static void usage(void);
@@ -98,8 +98,7 @@ segment_callback(XLogRecPtr segendpos, uint32 timeline)
 	}
 
 	/*
-	 * Never abort from this - we handle all aborting in
-	 * continue_streaming()
+	 * Never abort from this - we handle all aborting in continue_streaming()
 	 */
 	return false;
 }

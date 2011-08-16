@@ -46,7 +46,7 @@ int			compresslevel = 0;
 bool		includewal = false;
 bool		streamwal = false;
 bool		fastcheckpoint = false;
-int			standby_message_timeout = 10; /* 10 sec = default */
+int			standby_message_timeout = 10;		/* 10 sec = default */
 
 /* Progress counters */
 static uint64 totalsize;
@@ -227,6 +227,7 @@ LogStreamerMain(logstreamer_param * param)
 	if (!ReceiveXlogStream(param->bgconn, param->startptr, param->timeline,
 						   param->xlogdir, segment_callback, NULL,
 						   standby_message_timeout))
+
 		/*
 		 * Any errors will already have been reported in the function process,
 		 * but we need to tell the parent that we didn't shutdown in a nice
@@ -749,7 +750,7 @@ ReceiveAndUnpackTarFile(PGconn *conn, PGresult *res, int rownum)
 					/*
 					 * Directory
 					 */
-					filename[strlen(filename) - 1] = '\0';	/* Remove trailing slash */
+					filename[strlen(filename) - 1] = '\0';		/* Remove trailing slash */
 					if (mkdir(filename, S_IRWXU) != 0)
 					{
 						/*
@@ -760,7 +761,7 @@ ReceiveAndUnpackTarFile(PGconn *conn, PGresult *res, int rownum)
 						if (!streamwal || strcmp(filename + strlen(filename) - 8, "/pg_xlog") != 0)
 						{
 							fprintf(stderr,
-									_("%s: could not create directory \"%s\": %s\n"),
+							_("%s: could not create directory \"%s\": %s\n"),
 									progname, filename, strerror(errno));
 							disconnect_and_exit(1);
 						}
@@ -776,12 +777,12 @@ ReceiveAndUnpackTarFile(PGconn *conn, PGresult *res, int rownum)
 					/*
 					 * Symbolic link
 					 */
-					filename[strlen(filename) - 1] = '\0';	/* Remove trailing slash */
+					filename[strlen(filename) - 1] = '\0';		/* Remove trailing slash */
 					if (symlink(&copybuf[157], filename) != 0)
 					{
 						fprintf(stderr,
 								_("%s: could not create symbolic link from \"%s\" to \"%s\": %s\n"),
-								progname, filename, &copybuf[157], strerror(errno));
+						 progname, filename, &copybuf[157], strerror(errno));
 						disconnect_and_exit(1);
 					}
 				}
@@ -1056,6 +1057,7 @@ BaseBackup(void)
 	if (bgchild > 0)
 	{
 		int			status;
+
 #ifndef WIN32
 		int			r;
 #endif

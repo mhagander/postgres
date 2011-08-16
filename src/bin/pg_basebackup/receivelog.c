@@ -128,8 +128,7 @@ ReceiveXlogStream(PGconn *conn, XLogRecPtr startpos, uint32 timeline, char *base
 		}
 
 		/*
-		 * Check if we should continue streaming, or abort at this
-		 * point.
+		 * Check if we should continue streaming, or abort at this point.
 		 */
 		if (stream_continue && stream_continue())
 		{
@@ -149,8 +148,8 @@ ReceiveXlogStream(PGconn *conn, XLogRecPtr startpos, uint32 timeline, char *base
 			last_status < now - standby_message_timeout * 1000000)
 		{
 			/* Time to send feedback! */
-			char replybuf[sizeof(StandbyReplyMessage) + 1];
-			StandbyReplyMessage *replymsg = (StandbyReplyMessage *)(replybuf + 1);
+			char		replybuf[sizeof(StandbyReplyMessage) + 1];
+			StandbyReplyMessage *replymsg = (StandbyReplyMessage *) (replybuf + 1);
 
 			replymsg->write = blockpos;
 			replymsg->flush = InvalidXLogRecPtr;
@@ -173,11 +172,11 @@ ReceiveXlogStream(PGconn *conn, XLogRecPtr startpos, uint32 timeline, char *base
 		if (r == 0)
 		{
 			/*
-			 * In async mode, and no data available. We block on reading
-			 * but not more than the specified timeout, so that we can send
-			 * a response back to the client.
+			 * In async mode, and no data available. We block on reading but
+			 * not more than the specified timeout, so that we can send a
+			 * response back to the client.
 			 */
-			fd_set input_mask;
+			fd_set		input_mask;
 			struct timeval timeout;
 			struct timeval *timeoutptr;
 
@@ -185,7 +184,7 @@ ReceiveXlogStream(PGconn *conn, XLogRecPtr startpos, uint32 timeline, char *base
 			FD_SET(PQsocket(conn), &input_mask);
 			if (standby_message_timeout)
 			{
-				timeout.tv_sec = last_status + standby_message_timeout - now -1;
+				timeout.tv_sec = last_status + standby_message_timeout - now - 1;
 				if (timeout.tv_sec <= 0)
 					timeout.tv_sec = 1; /* Always sleep at least 1 sec */
 				timeout.tv_usec = 0;
@@ -199,8 +198,8 @@ ReceiveXlogStream(PGconn *conn, XLogRecPtr startpos, uint32 timeline, char *base
 			{
 				/*
 				 * Got a timeout or signal. Continue the loop and either
-				 * deliver a status packet to the server or just go back
-				 * into blocking.
+				 * deliver a status packet to the server or just go back into
+				 * blocking.
 				 */
 				continue;
 			}
@@ -245,8 +244,8 @@ ReceiveXlogStream(PGconn *conn, XLogRecPtr startpos, uint32 timeline, char *base
 		xlogoff = blockpos.xrecoff % XLOG_SEG_SIZE;
 
 		/*
-		 * Verify that the initial location in the stream matches where
-		 * we think we are.
+		 * Verify that the initial location in the stream matches where we
+		 * think we are.
 		 */
 		if (walfile == -1)
 		{
@@ -275,7 +274,7 @@ ReceiveXlogStream(PGconn *conn, XLogRecPtr startpos, uint32 timeline, char *base
 
 		while (bytes_left)
 		{
-			int bytes_to_write;
+			int			bytes_to_write;
 
 			/*
 			 * If crossing a WAL boundary, only write up until we reach
@@ -324,8 +323,8 @@ ReceiveXlogStream(PGconn *conn, XLogRecPtr startpos, uint32 timeline, char *base
 				if (segment_finish != NULL)
 				{
 					/*
-					 * Callback when the segment finished, and return if it told
-					 * us to.
+					 * Callback when the segment finished, and return if it
+					 * told us to.
 					 */
 					if (segment_finish(blockpos, timeline))
 						return true;
