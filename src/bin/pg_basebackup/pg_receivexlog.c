@@ -37,7 +37,7 @@
 char	   *basedir = NULL;
 int			verbose = 0;
 int			standby_message_timeout = 10; /* 10 sec = default */
-bool		time_to_abort = false;
+volatile bool	time_to_abort = false;
 
 
 static void usage(void);
