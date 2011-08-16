@@ -264,7 +264,7 @@ ReceiveXlogStream(PGconn *conn, XLogRecPtr startpos, uint32 timeline, char *base
 			/* XXX: store seek value don't reseek all the time */
 			if (lseek(walfile, 0, SEEK_CUR) != xlogoff)
 			{
-				fprintf(stderr, _("%s: got WAL data offset %i, expected %i\n"),
+				fprintf(stderr, _("%s: got WAL data offset %08x, expected %08x\n"),
 						progname, xlogoff, (int) lseek(walfile, 0, SEEK_CUR));
 				return false;
 			}
