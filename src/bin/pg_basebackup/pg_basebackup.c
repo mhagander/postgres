@@ -1099,7 +1099,7 @@ BaseBackup(void)
 #else							/* WIN32 */
 
 		/*
-		 * On Windows, since we are in the same thread, we can just store the
+		 * On Windows, since we are in the same process, we can just store the
 		 * value directly in the variable, and then set the flag that says
 		 * it's there.
 		 */
@@ -1221,7 +1221,7 @@ main(int argc, char **argv)
 					streamwal = true;
 				else
 				{
-					fprintf(stderr, _("%s: invalid xlog option \"%s\", must be empty or \"stream\"\n"),
+					fprintf(stderr, _("%s: invalid xlog option \"%s\", must be empty, \"fetch\" or \"stream\"\n"),
 							progname, optarg);
 					exit(1);
 				}
