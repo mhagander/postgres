@@ -1056,7 +1056,9 @@ BaseBackup(void)
 	if (bgchild > 0)
 	{
 		int			status;
+#ifndef WIN32
 		int			r;
+#endif
 
 		if (verbose)
 			fprintf(stderr, _("%s: waiting for background process to finish streaming...\n"), progname);
