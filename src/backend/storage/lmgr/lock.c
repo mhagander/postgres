@@ -39,6 +39,7 @@
 #include "pg_trace.h"
 #include "pgstat.h"
 #include "storage/sinvaladt.h"
+#include "storage/spin.h"
 #include "storage/standby.h"
 #include "utils/memutils.h"
 #include "utils/ps_status.h"
@@ -3309,7 +3310,7 @@ DumpAllLocks(void)
  *
  * When switching from Hot Standby mode to normal operation, the locks will
  * be already held by the startup process. The locks are acquired for the new
- * procs without checking for conflicts, so we don'get a conflict between the
+ * procs without checking for conflicts, so we don't get a conflict between the
  * startup process and the dummy procs, even though we will momentarily have
  * a situation where two procs are holding the same AccessExclusiveLock,
  * which isn't normally possible because the conflict. If we're in standby

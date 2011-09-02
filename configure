@@ -7242,7 +7242,7 @@ fi
 $as_echo_n "checking Python configuration directory... " >&6; }
 python_majorversion=`${PYTHON} -c "import sys; print(sys.version[0])"`
 python_version=`${PYTHON} -c "import sys; print(sys.version[:3])"`
-python_configdir=`${PYTHON} -c "from distutils.sysconfig import get_python_lib as f; import os; print(os.path.join(f(plat_specific=1,standard_lib=1),'config'))"`
+python_configdir=`${PYTHON} -c "import distutils.sysconfig,string; print(' '.join(filter(None,distutils.sysconfig.get_config_vars('LIBPL'))))"`
 python_includespec=`${PYTHON} -c "import distutils.sysconfig; print('-I'+distutils.sysconfig.get_python_inc())"`
 
 # This should be enough of a message.
@@ -7266,7 +7266,12 @@ then
 else
 	# Old way: use libpython from python_configdir
 	python_libdir="${python_configdir}"
-	python_libspec="-L${python_libdir} -lpython${python_version}"
+	# LDVERSION was introduced in Python 3.2.
+	python_ldversion=`${PYTHON} -c "import distutils.sysconfig,string; print(' '.join(filter(None,distutils.sysconfig.get_config_vars('LDVERSION'))))"`
+	if test x"${python_ldversion}" = x""; then
+		python_ldversion=$python_version
+	fi
+	python_libspec="-L${python_libdir} -lpython${python_ldversion}"
 fi
 
 python_additional_libs=`${PYTHON} -c "import distutils.sysconfig,string; print(' '.join(filter(None,distutils.sysconfig.get_config_vars('LIBS','LIBC','LIBM','BASEMODLIBS'))))"`
@@ -9476,9 +9481,9 @@ fi
 # for contrib/sepgsql
 if test "$with_selinux" = yes; then
 
-{ $as_echo "$as_me:$LINENO: checking for selinux_sepgsql_context_path in -lselinux" >&5
-$as_echo_n "checking for selinux_sepgsql_context_path in -lselinux... " >&6; }
-if test "${ac_cv_lib_selinux_selinux_sepgsql_context_path+set}" = set; then
+{ $as_echo "$as_me:$LINENO: checking for selinux_status_open in -lselinux" >&5
+$as_echo_n "checking for selinux_status_open in -lselinux... " >&6; }
+if test "${ac_cv_lib_selinux_selinux_status_open+set}" = set; then
   $as_echo_n "(cached) " >&6
 else
   ac_check_lib_save_LIBS=$LIBS
@@ -9496,11 +9501,11 @@ cat >>conftest.$ac_ext <<_ACEOF
 #ifdef __cplusplus
 extern "C"
 #endif
-char selinux_sepgsql_context_path ();
+char selinux_status_open ();
 int
 main ()
 {
-return selinux_sepgsql_context_path ();
+return selinux_status_open ();
   ;
   return 0;
 }
@@ -9526,12 +9531,12 @@ $as_echo "$ac_try_echo") >&5
 	 test "$cross_compiling" = yes ||
 	 $as_test_x conftest$ac_exeext
        }; then
-  ac_cv_lib_selinux_selinux_sepgsql_context_path=yes
+  ac_cv_lib_selinux_selinux_status_open=yes
 else
   $as_echo "$as_me: failed program was:" >&5
 sed 's/^/| /' conftest.$ac_ext >&5
 
-	ac_cv_lib_selinux_selinux_sepgsql_context_path=no
+	ac_cv_lib_selinux_selinux_status_open=no
 fi
 
 rm -rf conftest.dSYM
@@ -9539,9 +9544,9 @@ rm -f core conftest.err conftest.$ac_objext conftest_ipa8_conftest.oo \
       conftest$ac_exeext conftest.$ac_ext
 LIBS=$ac_check_lib_save_LIBS
 fi
-{ $as_echo "$as_me:$LINENO: result: $ac_cv_lib_selinux_selinux_sepgsql_context_path" >&5
-$as_echo "$ac_cv_lib_selinux_selinux_sepgsql_context_path" >&6; }
-if test "x$ac_cv_lib_selinux_selinux_sepgsql_context_path" = x""yes; then
+{ $as_echo "$as_me:$LINENO: result: $ac_cv_lib_selinux_selinux_status_open" >&5
+$as_echo "$ac_cv_lib_selinux_selinux_status_open" >&6; }
+if test "x$ac_cv_lib_selinux_selinux_status_open" = x""yes; then
   cat >>confdefs.h <<_ACEOF
 #define HAVE_LIBSELINUX 1
 _ACEOF
@@ -9549,8 +9554,8 @@ _ACEOF
   LIBS="-lselinux $LIBS"
 
 else
-  { { $as_echo "$as_me:$LINENO: error: library 'libselinux', version 2.0.93 or newer, is required for SELinux support" >&5
-$as_echo "$as_me: error: library 'libselinux', version 2.0.93 or newer, is required for SELinux support" >&2;}
+  { { $as_echo "$as_me:$LINENO: error: library 'libselinux', version 2.0.99 or newer, is required for SELinux support" >&5
+$as_echo "$as_me: error: library 'libselinux', version 2.0.99 or newer, is required for SELinux support" >&2;}
    { (exit 1); exit 1; }; }
 fi
 
@@ -21144,6 +21149,12 @@ esac
  ;;
 esac
 
+  case " $LIBOBJS " in
+  *" win32setlocale.$ac_objext "* ) ;;
+  *) LIBOBJS="$LIBOBJS win32setlocale.$ac_objext"
+ ;;
+esac
+
 
 cat >>confdefs.h <<\_ACEOF
 #define HAVE_SYMLINK 1
@@ -29695,16 +29706,6 @@ fi
 
 fi
 
-
-# Begin output steps
-
-{ $as_echo "$as_me:$LINENO: using CFLAGS=$CFLAGS" >&5
-$as_echo "$as_me: using CFLAGS=$CFLAGS" >&6;}
-{ $as_echo "$as_me:$LINENO: using CPPFLAGS=$CPPFLAGS" >&5
-$as_echo "$as_me: using CPPFLAGS=$CPPFLAGS" >&6;}
-{ $as_echo "$as_me:$LINENO: using LDFLAGS=$LDFLAGS" >&5
-$as_echo "$as_me: using LDFLAGS=$LDFLAGS" >&6;}
-
 # Create compiler version string
 if test x"$GCC" = x"yes" ; then
   cc_string=`${CC} --version | sed q`
@@ -29732,6 +29733,17 @@ cat >>confdefs.h <<_ACEOF
 _ACEOF
 
 
+
+# Begin output steps
+
+{ $as_echo "$as_me:$LINENO: using compiler=$cc_string" >&5
+$as_echo "$as_me: using compiler=$cc_string" >&6;}
+{ $as_echo "$as_me:$LINENO: using CFLAGS=$CFLAGS" >&5
+$as_echo "$as_me: using CFLAGS=$CFLAGS" >&6;}
+{ $as_echo "$as_me:$LINENO: using CPPFLAGS=$CPPFLAGS" >&5
+$as_echo "$as_me: using CPPFLAGS=$CPPFLAGS" >&6;}
+{ $as_echo "$as_me:$LINENO: using LDFLAGS=$LDFLAGS" >&5
+$as_echo "$as_me: using LDFLAGS=$LDFLAGS" >&6;}
 
 # prepare build tree if outside source tree
 # Note 1: test -ef might not exist, but it's more reliable than `pwd`.

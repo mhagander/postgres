@@ -36,11 +36,8 @@
 #include "catalog/pg_ts_dict.h"
 #include "catalog/pg_ts_parser.h"
 #include "catalog/pg_ts_template.h"
-#include "catalog/pg_type.h"
 #include "commands/defrem.h"
-#include "miscadmin.h"
 #include "tsearch/ts_cache.h"
-#include "utils/array.h"
 #include "utils/builtins.h"
 #include "utils/fmgroids.h"
 #include "utils/inval.h"
@@ -90,7 +87,7 @@ static Oid	TSCurrentConfigCache = InvalidOid;
  * table address as the "arg".
  */
 static void
-InvalidateTSCacheCallBack(Datum arg, int cacheid, ItemPointer tuplePtr)
+InvalidateTSCacheCallBack(Datum arg, int cacheid, uint32 hashvalue)
 {
 	HTAB	   *hash = (HTAB *) DatumGetPointer(arg);
 	HASH_SEQ_STATUS status;

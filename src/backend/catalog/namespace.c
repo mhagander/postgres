@@ -21,7 +21,6 @@
 
 #include "access/xact.h"
 #include "catalog/dependency.h"
-#include "catalog/namespace.h"
 #include "catalog/pg_authid.h"
 #include "catalog/pg_collation.h"
 #include "catalog/pg_conversion.h"
@@ -42,17 +41,14 @@
 #include "miscadmin.h"
 #include "nodes/makefuncs.h"
 #include "parser/parse_func.h"
-#include "storage/backendid.h"
 #include "storage/ipc.h"
 #include "storage/lmgr.h"
 #include "storage/sinval.h"
 #include "utils/acl.h"
 #include "utils/builtins.h"
-#include "utils/guc.h"
 #include "utils/inval.h"
 #include "utils/lsyscache.h"
 #include "utils/memutils.h"
-#include "utils/rel.h"
 #include "utils/syscache.h"
 
 
@@ -192,7 +188,7 @@ static void recomputeNamespacePath(void);
 static void InitTempTableNamespace(void);
 static void RemoveTempRelations(Oid tempNamespaceId);
 static void RemoveTempRelationsCallback(int code, Datum arg);
-static void NamespaceCallback(Datum arg, int cacheid, ItemPointer tuplePtr);
+static void NamespaceCallback(Datum arg, int cacheid, uint32 hashvalue);
 static bool MatchNamedCall(HeapTuple proctup, int nargs, List *argnames,
 			   int **argnumbers);
 
@@ -3750,7 +3746,7 @@ InitializeSearchPath(void)
  *		Syscache inval callback function
  */
 static void
-NamespaceCallback(Datum arg, int cacheid, ItemPointer tuplePtr)
+NamespaceCallback(Datum arg, int cacheid, uint32 hashvalue)
 {
 	/* Force search path to be recomputed on next use */
 	baseSearchPathValid = false;

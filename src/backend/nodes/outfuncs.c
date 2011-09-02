@@ -23,10 +23,7 @@
 
 #include <ctype.h>
 
-#include "lib/stringinfo.h"
 #include "foreign/fdwapi.h"
-#include "nodes/plannodes.h"
-#include "nodes/relation.h"
 #include "utils/datum.h"
 
 
@@ -845,9 +842,7 @@ _outPlanInvalItem(StringInfo str, PlanInvalItem *node)
 	WRITE_NODE_TYPE("PLANINVALITEM");
 
 	WRITE_INT_FIELD(cacheId);
-	appendStringInfo(str, " :tupleId (%u,%u)",
-					 ItemPointerGetBlockNumber(&node->tupleId),
-					 ItemPointerGetOffsetNumber(&node->tupleId));
+	WRITE_UINT_FIELD(hashValue);
 }
 
 /*****************************************************************************

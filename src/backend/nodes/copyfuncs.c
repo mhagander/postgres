@@ -24,8 +24,6 @@
 
 #include "miscadmin.h"
 #include "foreign/fdwapi.h"
-#include "nodes/plannodes.h"
-#include "nodes/relation.h"
 #include "utils/datum.h"
 
 
@@ -964,8 +962,7 @@ _copyPlanInvalItem(PlanInvalItem *from)
 	PlanInvalItem *newnode = makeNode(PlanInvalItem);
 
 	COPY_SCALAR_FIELD(cacheId);
-	/* tupleId isn't really a "scalar", but this works anyway */
-	COPY_SCALAR_FIELD(tupleId);
+	COPY_SCALAR_FIELD(hashValue);
 
 	return newnode;
 }
