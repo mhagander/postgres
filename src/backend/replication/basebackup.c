@@ -96,6 +96,20 @@ perform_base_backup(basebackup_options *opt, DIR *tblspcdir)
 	startptr = do_pg_start_backup(opt->label, opt->fastcheckpoint, &labelfile);
 	SendXlogRecPtrResult(startptr);
 
+	/*
+	 * If we are including WAL, set a low watermark so that ordinary
+	 * WAL rotation won't remove the files for us.
+	 */
+	if (opt->includewal)
+	{
+		/* use volatile pointer to prevent code rearrangement */
+		volatile WalSnd *walsnd = MyWalSnd;
+
+		SpinLockAcquire(&walsnd->mutex);
+		walsnd->lowwater = startptr;
+		SpinLockRelease(&walsnd->mutex);
+	}
+
 	PG_ENSURE_ERROR_CLEANUP(base_backup_cleanup, (Datum) 0);
 	{
 		List	   *tablespaces = NIL;

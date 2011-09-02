@@ -899,6 +899,7 @@ InitWalSnd(void)
 			 */
 			walsnd->pid = MyProcPid;
 			MemSet(&walsnd->sentPtr, 0, sizeof(XLogRecPtr));
+			MemSet(&walsnd->lowwater, 0, sizeof(XLogRecPtr));
 			walsnd->state = WALSNDSTATE_STARTUP;
 			SpinLockRelease(&walsnd->mutex);
 			/* don't need the lock anymore */

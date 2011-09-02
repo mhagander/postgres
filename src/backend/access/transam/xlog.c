@@ -8194,6 +8194,13 @@ CreateRestartPoint(int flags)
  * Calculate the last segment that we need to retain because of
  * wal_keep_segments, by subtracting wal_keep_segments from
  * the given xlog location, recptr.
+ *
+ * Also check if there any in-progress base backup that has set
+ * a low watermark preventing us from removing it.
+ *
+ * NOTE! If the last segment calculated is later than the one
+ * passed in through logId and logSeg, do *not* update the
+ * values.
  */
 static void
 KeepLogSeg(XLogRecPtr recptr, uint32 *logId, uint32 *logSeg)
@@ -8202,10 +8209,52 @@ KeepLogSeg(XLogRecPtr recptr, uint32 *logId, uint32 *logSeg)
 	uint32		seg;
 	int			d_log;
 	int			d_seg;
+	XLogRecPtr	lowwater = {0,0};
+	uint32		lowwater_log = 0;
+	uint32		lowwater_seg = 0;
+
+	if (max_wal_senders > 0)
+	{
+		int i;
+
+		/* Check if there is a WAL sender with a low watermark */
+		for (i = 0; i < max_wal_senders; i++)
+		{
+			/* use volatile pointer to prevent code rearrangement */
+			volatile WalSnd *walsnd = &WalSndCtl->walsnds[i];
+			XLogRecPtr	this_lowwater;
+
+			if (walsnd->pid == 0)
+				continue;
+
+			SpinLockAcquire(&walsnd->mutex);
+			this_lowwater = walsnd->lowwater;
+			SpinLockRelease(&walsnd->mutex);
+
+			if (XLByteLT(lowwater, this_lowwater))
+				lowwater = this_lowwater;
+		}
+
+		XLByteToSeg(lowwater, lowwater_log, lowwater_seg);
+	}
 
 	if (wal_keep_segments == 0)
-		return;
+	{
+		/* No wal_keep_segments, so let low watermark decide */
+		if (lowwater_log == 0 && lowwater_seg == 0)
+			return;
 
+		if (lowwater_log < *logId || (lowwater_log == *logId && lowwater_seg < *logSeg))
+		{
+			*logId = lowwater_log;
+			*logSeg = lowwater_seg;
+		}
+		return;
+	}
+
+	/*
+	 * Calculate the cutoff point caused by wal_keep_segments
+	 */
 	XLByteToSeg(recptr, log, seg);
 
 	d_seg = wal_keep_segments % XLogSegsPerFile;
@@ -8225,6 +8274,19 @@ KeepLogSeg(XLogRecPtr recptr, uint32 *logId, uint32 *logSeg)
 	}
 	else
 		log = log - d_log;
+
+	/*
+	 * If the low watermark is earlier than wal_keep_segments, let
+	 * it decide if we keep or not.
+	 */
+	if (lowwater_log > 0 || lowwater_seg > 0)
+	{
+		if (lowwater_log < log || (lowwater_log == log && lowwater_seg < seg))
+		{
+			log = lowwater_log;
+			seg = lowwater_seg;
+		}
+	}
 
 	/* don't delete WAL segments newer than the calculated segment */
 	if (log < *logId || (log == *logId && seg < *logSeg))

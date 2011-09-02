@@ -46,6 +46,12 @@ typedef struct WalSnd
 	XLogRecPtr	flush;
 	XLogRecPtr	apply;
 
+	/*
+	 * Prevent xlog rotation prior to the low watermark (used during base
+	 * backups that include the transaction log)
+	 */
+	XLogRecPtr	lowwater;
+
 	/* Protects shared variables shown above. */
 	slock_t		mutex;
 
