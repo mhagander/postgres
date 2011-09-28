@@ -71,6 +71,7 @@
 #include "utils/acl.h"
 #include "utils/builtins.h"
 #include "utils/fmgroids.h"
+#include "utils/guc.h"
 #include "utils/lsyscache.h"
 #include "utils/syscache.h"
 #include "utils/tqual.h"
@@ -2446,12 +2447,11 @@ getObjectDescription(const ObjectAddress *object)
 				initStringInfo(&opfam);
 				getOpFamilyDescription(&opfam, amopForm->amopfamily);
 
-				/*
-				 * translator: %d is the operator strategy (a number), the
-				 * first two %s's are data type names, the third %s is the
-				 * description of the operator family, and the last %s is the
-				 * textual form of the operator with arguments.
-				 */
+				/*------
+				   translator: %d is the operator strategy (a number), the
+				   first two %s's are data type names, the third %s is the
+				   description of the operator family, and the last %s is the
+				   textual form of the operator with arguments.  */
 				appendStringInfo(&buffer, _("operator %d (%s, %s) of %s: %s"),
 								 amopForm->amopstrategy,
 								 format_type_be(amopForm->amoplefttype),
@@ -2497,12 +2497,11 @@ getObjectDescription(const ObjectAddress *object)
 				initStringInfo(&opfam);
 				getOpFamilyDescription(&opfam, amprocForm->amprocfamily);
 
-				/*
-				 * translator: %d is the function number, the first two %s's
-				 * are data type names, the third %s is the description of the
-				 * operator family, and the last %s is the textual form of the
-				 * function with arguments.
-				 */
+				/*------
+				   translator: %d is the function number, the first two %s's
+				   are data type names, the third %s is the description of the
+				   operator family, and the last %s is the textual form of the
+				   function with arguments.  */
 				appendStringInfo(&buffer, _("function %d (%s, %s) of %s: %s"),
 								 amprocForm->amprocnum,
 								 format_type_be(amprocForm->amproclefttype),

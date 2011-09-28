@@ -30,6 +30,7 @@
 #include "pgstat.h"
 #include "storage/fd.h"
 #include "storage/ipc.h"
+#include "storage/spin.h"
 #include "tcop/utility.h"
 #include "utils/builtins.h"
 
@@ -972,8 +973,8 @@ entry_alloc(pgssHashKey *key)
 static int
 entry_cmp(const void *lhs, const void *rhs)
 {
-	double		l_usage = (*(const pgssEntry **) lhs)->counters.usage;
-	double		r_usage = (*(const pgssEntry **) rhs)->counters.usage;
+	double		l_usage = (*(pgssEntry * const *) lhs)->counters.usage;
+	double		r_usage = (*(pgssEntry * const *) rhs)->counters.usage;
 
 	if (l_usage < r_usage)
 		return -1;

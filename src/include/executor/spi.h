@@ -13,6 +13,7 @@
 #ifndef SPI_H
 #define SPI_H
 
+#include "nodes/parsenodes.h"
 #include "utils/portal.h"
 
 
@@ -92,6 +93,7 @@ extern SPIPlanPtr SPI_prepare_params(const char *src,
 				   ParserSetupHook parserSetup,
 				   void *parserSetupArg,
 				   int cursorOptions);
+extern int	SPI_keepplan(SPIPlanPtr plan);
 extern SPIPlanPtr SPI_saveplan(SPIPlanPtr plan);
 extern int	SPI_freeplan(SPIPlanPtr plan);
 

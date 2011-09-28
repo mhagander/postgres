@@ -142,6 +142,7 @@ static void exec_prepare_plan(PLpgSQL_execstate *estate,
 				  PLpgSQL_expr *expr, int cursorOptions);
 static bool exec_simple_check_node(Node *node);
 static void exec_simple_check_plan(PLpgSQL_expr *expr);
+static void exec_simple_recheck_plan(PLpgSQL_expr *expr, CachedPlan *cplan);
 static bool exec_eval_simple_expr(PLpgSQL_execstate *estate,
 					  PLpgSQL_expr *expr,
 					  Datum *result,
@@ -873,7 +874,8 @@ copy_plpgsql_datum(PLpgSQL_datum *datum)
 
 			/*
 			 * These datum records are read-only at runtime, so no need to
-			 * copy them
+			 * copy them (well, ARRAYELEM contains some cached type data,
+			 * but we'd just as soon centralize the caching anyway)
 			 */
 			result = datum;
 			break;
@@ -2020,8 +2022,7 @@ exec_stmt_forc(PLpgSQL_execstate *estate, PLpgSQL_stmt_forc *stmt)
 		exec_prepare_plan(estate, query, curvar->cursor_options);
 
 	/*
-	 * Set up ParamListInfo (note this is only carrying a hook function, not
-	 * any actual data values, at this point)
+	 * Set up ParamListInfo (hook function and possibly data values)
 	 */
 	paramLI = setup_param_list(estate, query);
 
@@ -2991,8 +2992,10 @@ exec_prepare_plan(PLpgSQL_execstate *estate,
 					 expr->query, SPI_result_code_string(SPI_result));
 		}
 	}
-	expr->plan = SPI_saveplan(plan);
-	SPI_freeplan(plan);
+	SPI_keepplan(plan);
+	expr->plan = plan;
+
+	/* Check to see if it's a simple expression */
 	exec_simple_check_plan(expr);
 }
 
@@ -3025,16 +3028,16 @@ exec_stmt_execsql(PLpgSQL_execstate *estate,
 			CachedPlanSource *plansource = (CachedPlanSource *) lfirst(l);
 			ListCell   *l2;
 
-			foreach(l2, plansource->plan->stmt_list)
+			foreach(l2, plansource->query_list)
 			{
-				PlannedStmt *p = (PlannedStmt *) lfirst(l2);
+				Query  *q = (Query *) lfirst(l2);
 
-				if (IsA(p, PlannedStmt) &&
-					p->canSetTag)
+				Assert(IsA(q, Query));
+				if (q->canSetTag)
 				{
-					if (p->commandType == CMD_INSERT ||
-						p->commandType == CMD_UPDATE ||
-						p->commandType == CMD_DELETE)
+					if (q->commandType == CMD_INSERT ||
+						q->commandType == CMD_UPDATE ||
+						q->commandType == CMD_DELETE)
 						stmt->mod_stmt = true;
 				}
 			}
@@ -3042,8 +3045,7 @@ exec_stmt_execsql(PLpgSQL_execstate *estate,
 	}
 
 	/*
-	 * Set up ParamListInfo (note this is only carrying a hook function, not
-	 * any actual data values, at this point)
+	 * Set up ParamListInfo (hook function and possibly data values)
 	 */
 	paramLI = setup_param_list(estate, expr);
 
@@ -3520,8 +3522,7 @@ exec_stmt_open(PLpgSQL_execstate *estate, PLpgSQL_stmt_open *stmt)
 	}
 
 	/*
-	 * Set up ParamListInfo (note this is only carrying a hook function, not
-	 * any actual data values, at this point)
+	 * Set up ParamListInfo (hook function and possibly data values)
 	 */
 	paramLI = setup_param_list(estate, query);
 
@@ -3986,20 +3987,16 @@ exec_assign_value(PLpgSQL_execstate *estate,
 				/*
 				 * Target is an element of an array
 				 */
+				PLpgSQL_arrayelem *arrayelem;
 				int			nsubscripts;
 				int			i;
 				PLpgSQL_expr *subscripts[MAXDIM];
 				int			subscriptvals[MAXDIM];
-				bool		oldarrayisnull;
-				Oid			arraytypeid,
-							arrayelemtypeid;
-				int32		arraytypmod;
-				int16		arraytyplen,
-							elemtyplen;
-				bool		elemtypbyval;
-				char		elemtypalign;
 				Datum		oldarraydatum,
 							coerced_value;
+				bool		oldarrayisnull;
+				Oid			parenttypoid;
+				int32		parenttypmod;
 				ArrayType  *oldarrayval;
 				ArrayType  *newarrayval;
 				SPITupleTable *save_eval_tuptable;
@@ -4020,13 +4017,14 @@ exec_assign_value(PLpgSQL_execstate *estate,
 				 * back to find the base array datum, and save the subscript
 				 * expressions as we go.  (We are scanning right to left here,
 				 * but want to evaluate the subscripts left-to-right to
-				 * minimize surprises.)
+				 * minimize surprises.)  Note that arrayelem is left pointing
+				 * to the leftmost arrayelem datum, where we will cache the
+				 * array element type data.
 				 */
 				nsubscripts = 0;
 				do
 				{
-					PLpgSQL_arrayelem *arrayelem = (PLpgSQL_arrayelem *) target;
-
+					arrayelem = (PLpgSQL_arrayelem *) target;
 					if (nsubscripts >= MAXDIM)
 						ereport(ERROR,
 								(errcode(ERRCODE_PROGRAM_LIMIT_EXCEEDED),
@@ -4038,24 +4036,51 @@ exec_assign_value(PLpgSQL_execstate *estate,
 
 				/* Fetch current value of array datum */
 				exec_eval_datum(estate, target,
-								&arraytypeid, &arraytypmod,
+								&parenttypoid, &parenttypmod,
 								&oldarraydatum, &oldarrayisnull);
 
-				/* If target is domain over array, reduce to base type */
-				arraytypeid = getBaseTypeAndTypmod(arraytypeid, &arraytypmod);
+				/* Update cached type data if necessary */
+				if (arrayelem->parenttypoid != parenttypoid ||
+					arrayelem->parenttypmod != parenttypmod)
+				{
+					Oid			arraytypoid;
+					int32		arraytypmod = parenttypmod;
+					int16		arraytyplen;
+					Oid			elemtypoid;
+					int16		elemtyplen;
+					bool		elemtypbyval;
+					char		elemtypalign;
 
-				/* ... and identify the element type */
-				arrayelemtypeid = get_element_type(arraytypeid);
-				if (!OidIsValid(arrayelemtypeid))
-					ereport(ERROR,
-							(errcode(ERRCODE_DATATYPE_MISMATCH),
-							 errmsg("subscripted object is not an array")));
+					/* If target is domain over array, reduce to base type */
+					arraytypoid = getBaseTypeAndTypmod(parenttypoid,
+													   &arraytypmod);
 
-				get_typlenbyvalalign(arrayelemtypeid,
-									 &elemtyplen,
-									 &elemtypbyval,
-									 &elemtypalign);
-				arraytyplen = get_typlen(arraytypeid);
+					/* ... and identify the element type */
+					elemtypoid = get_element_type(arraytypoid);
+					if (!OidIsValid(elemtypoid))
+						ereport(ERROR,
+								(errcode(ERRCODE_DATATYPE_MISMATCH),
+								 errmsg("subscripted object is not an array")));
+
+					/* Collect needed data about the types */
+					arraytyplen = get_typlen(arraytypoid);
+
+					get_typlenbyvalalign(elemtypoid,
+										 &elemtyplen,
+										 &elemtypbyval,
+										 &elemtypalign);
+
+					/* Now safe to update the cached data */
+					arrayelem->parenttypoid = parenttypoid;
+					arrayelem->parenttypmod = parenttypmod;
+					arrayelem->arraytypoid = arraytypoid;
+					arrayelem->arraytypmod = arraytypmod;
+					arrayelem->arraytyplen = arraytyplen;
+					arrayelem->elemtypoid = elemtypoid;
+					arrayelem->elemtyplen = elemtyplen;
+					arrayelem->elemtypbyval = elemtypbyval;
+					arrayelem->elemtypalign = elemtypalign;
+				}
 
 				/*
 				 * Evaluate the subscripts, switch into left-to-right order.
@@ -4093,8 +4118,8 @@ exec_assign_value(PLpgSQL_execstate *estate,
 				/* Coerce source value to match array element type. */
 				coerced_value = exec_simple_cast_value(value,
 													   valtype,
-													   arrayelemtypeid,
-													   arraytypmod,
+													   arrayelem->elemtypoid,
+													   arrayelem->arraytypmod,
 													   *isNull);
 
 				/*
@@ -4107,12 +4132,12 @@ exec_assign_value(PLpgSQL_execstate *estate,
 				 * array, either, so that's a no-op too.  This is all ugly but
 				 * corresponds to the current behavior of ExecEvalArrayRef().
 				 */
-				if (arraytyplen > 0 &&	/* fixed-length array? */
+				if (arrayelem->arraytyplen > 0 &&	/* fixed-length array? */
 					(oldarrayisnull || *isNull))
 					return;
 
 				if (oldarrayisnull)
-					oldarrayval = construct_empty_array(arrayelemtypeid);
+					oldarrayval = construct_empty_array(arrayelem->elemtypoid);
 				else
 					oldarrayval = (ArrayType *) DatumGetPointer(oldarraydatum);
 
@@ -4124,16 +4149,17 @@ exec_assign_value(PLpgSQL_execstate *estate,
 										subscriptvals,
 										coerced_value,
 										*isNull,
-										arraytyplen,
-										elemtyplen,
-										elemtypbyval,
-										elemtypalign);
+										arrayelem->arraytyplen,
+										arrayelem->elemtyplen,
+										arrayelem->elemtypbyval,
+										arrayelem->elemtypalign);
 
 				/*
 				 * Avoid leaking the result of exec_simple_cast_value, if it
 				 * performed a conversion to a pass-by-ref type.
 				 */
-				if (!*isNull && coerced_value != value && !elemtypbyval)
+				if (!*isNull && coerced_value != value &&
+					!arrayelem->elemtypbyval)
 					pfree(DatumGetPointer(coerced_value));
 
 				/*
@@ -4145,7 +4171,7 @@ exec_assign_value(PLpgSQL_execstate *estate,
 				*isNull = false;
 				exec_assign_value(estate, target,
 								  PointerGetDatum(newarrayval),
-								  arraytypeid, isNull);
+								  arrayelem->arraytypoid, isNull);
 
 				/*
 				 * Avoid leaking the modified array value, too.
@@ -4613,8 +4639,7 @@ exec_run_select(PLpgSQL_execstate *estate,
 		exec_prepare_plan(estate, expr, 0);
 
 	/*
-	 * Set up ParamListInfo (note this is only carrying a hook function, not
-	 * any actual data values, at this point)
+	 * Set up ParamListInfo (hook function and possibly data values)
 	 */
 	paramLI = setup_param_list(estate, expr);
 
@@ -4833,11 +4858,10 @@ loop_exit:
  *
  * It is possible though unlikely for a simple expression to become non-simple
  * (consider for example redefining a trivial view).  We must handle that for
- * correctness; fortunately it's normally inexpensive to do
- * RevalidateCachedPlan on a simple expression.  We do not consider the other
- * direction (non-simple expression becoming simple) because we'll still give
- * correct results if that happens, and it's unlikely to be worth the cycles
- * to check.
+ * correctness; fortunately it's normally inexpensive to do GetCachedPlan on a
+ * simple expression.  We do not consider the other direction (non-simple
+ * expression becoming simple) because we'll still give correct results if
+ * that happens, and it's unlikely to be worth the cycles to check.
  *
  * Note: if pass-by-reference, the result is in the eval_econtext's
  * temporary memory context.  It will be freed when exec_eval_cleanup
@@ -4873,17 +4897,21 @@ exec_eval_simple_expr(PLpgSQL_execstate *estate,
 
 	/*
 	 * Revalidate cached plan, so that we will notice if it became stale. (We
-	 * also need to hold a refcount while using the plan.)	Note that even if
-	 * replanning occurs, the length of plancache_list can't change, since it
-	 * is a property of the raw parsetree generated from the query text.
+	 * need to hold a refcount while using the plan, anyway.)  Note that even
+	 * if replanning occurs, the length of plancache_list can't change, since
+	 * it is a property of the raw parsetree generated from the query text.
 	 */
 	Assert(list_length(expr->plan->plancache_list) == 1);
 	plansource = (CachedPlanSource *) linitial(expr->plan->plancache_list);
-	cplan = RevalidateCachedPlan(plansource, true);
+
+	/* Get the generic plan for the query */
+	cplan = GetCachedPlan(plansource, NULL, true);
+	Assert(cplan == plansource->gplan);
+
 	if (cplan->generation != expr->expr_simple_generation)
 	{
 		/* It got replanned ... is it still simple? */
-		exec_simple_check_plan(expr);
+		exec_simple_recheck_plan(expr, cplan);
 		if (expr->expr_simple_expr == NULL)
 		{
 			/* Ooops, release refcount and fail */
@@ -4900,7 +4928,7 @@ exec_eval_simple_expr(PLpgSQL_execstate *estate,
 	/*
 	 * Prepare the expression for execution, if it's not been done already in
 	 * the current transaction.  (This will be forced to happen if we called
-	 * exec_simple_check_plan above.)
+	 * exec_simple_recheck_plan above.)
 	 */
 	if (expr->expr_simple_lxid != curlxid)
 	{
@@ -4930,9 +4958,6 @@ exec_eval_simple_expr(PLpgSQL_execstate *estate,
 	 * Create the param list in econtext's temporary memory context. We won't
 	 * need to free it explicitly, since it will go away at the next reset of
 	 * that context.
-	 *
-	 * XXX think about avoiding repeated palloc's for param lists?  It should
-	 * be possible --- this routine isn't re-entrant anymore.
 	 *
 	 * Just for paranoia's sake, save and restore the prior value of
 	 * estate->cur_expr, which setup_param_list() sets.
@@ -4982,10 +5007,15 @@ exec_eval_simple_expr(PLpgSQL_execstate *estate,
 /*
  * Create a ParamListInfo to pass to SPI
  *
- * The ParamListInfo array is initially all zeroes, in particular the
- * ptype values are all InvalidOid.  This causes the executor to call the
- * paramFetch hook each time it wants a value.	We thus evaluate only the
- * parameters actually demanded.
+ * We fill in the values for any expression parameters that are plain
+ * PLpgSQL_var datums; these are cheap and safe to evaluate, and by setting
+ * them with PARAM_FLAG_CONST flags, we allow the planner to use those values
+ * in custom plans.  However, parameters that are not plain PLpgSQL_vars
+ * should not be evaluated here, because they could throw errors (for example
+ * "no such record field") and we do not want that to happen in a part of
+ * the expression that might never be evaluated at runtime.  To handle those
+ * parameters, we set up a paramFetch hook for the executor to call when it
+ * wants a not-presupplied value.
  *
  * The result is a locally palloc'd array that should be pfree'd after use;
  * but note it can be NULL.
@@ -4996,21 +5026,48 @@ setup_param_list(PLpgSQL_execstate *estate, PLpgSQL_expr *expr)
 	ParamListInfo paramLI;
 
 	/*
-	 * Could we re-use these arrays instead of palloc'ing a new one each time?
-	 * However, we'd have to zero the array each time anyway, since new values
-	 * might have been assigned to the variables.
+	 * We must have created the SPIPlan already (hence, query text has been
+	 * parsed/analyzed at least once); else we cannot rely on expr->paramnos.
 	 */
-	if (estate->ndatums > 0)
+	Assert(expr->plan != NULL);
+
+	/*
+	 * Could we re-use these arrays instead of palloc'ing a new one each time?
+	 * However, we'd have to re-fill the array each time anyway, since new
+	 * values might have been assigned to the variables.
+	 */
+	if (!bms_is_empty(expr->paramnos))
 	{
-		/* sizeof(ParamListInfoData) includes the first array element */
+		Bitmapset  *tmpset;
+		int			dno;
+
 		paramLI = (ParamListInfo)
-			palloc0(sizeof(ParamListInfoData) +
-					(estate->ndatums - 1) * sizeof(ParamExternData));
+			palloc0(offsetof(ParamListInfoData, params) +
+					estate->ndatums * sizeof(ParamExternData));
 		paramLI->paramFetch = plpgsql_param_fetch;
 		paramLI->paramFetchArg = (void *) estate;
 		paramLI->parserSetup = (ParserSetupHook) plpgsql_parser_setup;
 		paramLI->parserSetupArg = (void *) expr;
 		paramLI->numParams = estate->ndatums;
+
+		/* Instantiate values for "safe" parameters of the expression */
+		tmpset = bms_copy(expr->paramnos);
+		while ((dno = bms_first_member(tmpset)) >= 0)
+		{
+			PLpgSQL_datum *datum = estate->datums[dno];
+
+			if (datum->dtype == PLPGSQL_DTYPE_VAR)
+			{
+				PLpgSQL_var *var = (PLpgSQL_var *) datum;
+				ParamExternData *prm = &paramLI->params[dno];
+
+				prm->value = var->value;
+				prm->isnull = var->isnull;
+				prm->pflags = PARAM_FLAG_CONST;
+				prm->ptype = var->datatype->typoid;
+			}
+		}
+		bms_free(tmpset);
 
 		/*
 		 * Set up link to active expr where the hook functions can find it.
@@ -5022,12 +5079,19 @@ setup_param_list(PLpgSQL_execstate *estate, PLpgSQL_expr *expr)
 		/*
 		 * Also make sure this is set before parser hooks need it.	There is
 		 * no need to save and restore, since the value is always correct once
-		 * set.
+		 * set.  (Should be set already, but let's be sure.)
 		 */
 		expr->func = estate->func;
 	}
 	else
+	{
+		/*
+		 * Expression requires no parameters.  Be sure we represent this case
+		 * as a NULL ParamListInfo, so that plancache.c knows there is no
+		 * point in a custom plan.
+		 */
 		paramLI = NULL;
+	}
 	return paramLI;
 }
 
@@ -5628,30 +5692,113 @@ static void
 exec_simple_check_plan(PLpgSQL_expr *expr)
 {
 	CachedPlanSource *plansource;
-	PlannedStmt *stmt;
-	Plan	   *plan;
-	TargetEntry *tle;
+	Query	   *query;
+	CachedPlan *cplan;
 
 	/*
 	 * Initialize to "not simple", and remember the plan generation number we
-	 * last checked.  (If the query produces more or less than one parsetree
+	 * last checked.  (If we don't get as far as obtaining a plan to check,
 	 * we just leave expr_simple_generation set to 0.)
 	 */
 	expr->expr_simple_expr = NULL;
 	expr->expr_simple_generation = 0;
 
 	/*
-	 * 1. We can only evaluate queries that resulted in one single execution
-	 * plan
+	 * We can only test queries that resulted in exactly one CachedPlanSource
 	 */
 	if (list_length(expr->plan->plancache_list) != 1)
 		return;
 	plansource = (CachedPlanSource *) linitial(expr->plan->plancache_list);
-	expr->expr_simple_generation = plansource->generation;
-	if (list_length(plansource->plan->stmt_list) != 1)
+
+	/*
+	 * Do some checking on the analyzed-and-rewritten form of the query.
+	 * These checks are basically redundant with the tests in
+	 * exec_simple_recheck_plan, but the point is to avoid building a plan if
+	 * possible.  Since this function is only
+	 * called immediately after creating the CachedPlanSource, we need not
+	 * worry about the query being stale.
+	 */
+
+	/*
+	 * 1. There must be one single querytree.
+	 */
+	if (list_length(plansource->query_list) != 1)
+		return;
+	query = (Query *) linitial(plansource->query_list);
+
+	/*
+	 * 2. It must be a plain SELECT query without any input tables
+	 */
+	if (!IsA(query, Query))
+		return;
+	if (query->commandType != CMD_SELECT || query->intoClause)
+		return;
+	if (query->rtable != NIL)
 		return;
 
-	stmt = (PlannedStmt *) linitial(plansource->plan->stmt_list);
+	/*
+	 * 3. Can't have any subplans, aggregates, qual clauses either
+	 */
+	if (query->hasAggs ||
+		query->hasWindowFuncs ||
+		query->hasSubLinks ||
+		query->hasForUpdate ||
+		query->cteList ||
+		query->jointree->quals ||
+		query->groupClause ||
+		query->havingQual ||
+		query->windowClause ||
+		query->distinctClause ||
+		query->sortClause ||
+		query->limitOffset ||
+		query->limitCount ||
+		query->setOperations)
+		return;
+
+	/*
+	 * 4. The query must have a single attribute as result
+	 */
+	if (list_length(query->targetList) != 1)
+		return;
+
+	/*
+	 * OK, it seems worth constructing a plan for more careful checking.
+	 */
+
+	/* Get the generic plan for the query */
+	cplan = GetCachedPlan(plansource, NULL, true);
+	Assert(cplan == plansource->gplan);
+
+	/* Share the remaining work with recheck code path */
+	exec_simple_recheck_plan(expr, cplan);
+
+	/* Release our plan refcount */
+	ReleaseCachedPlan(cplan, true);
+}
+
+/*
+ * exec_simple_recheck_plan --- check for simple plan once we have CachedPlan
+ */
+static void
+exec_simple_recheck_plan(PLpgSQL_expr *expr, CachedPlan *cplan)
+{
+	PlannedStmt *stmt;
+	Plan	   *plan;
+	TargetEntry *tle;
+
+	/*
+	 * Initialize to "not simple", and remember the plan generation number we
+	 * last checked.
+	 */
+	expr->expr_simple_expr = NULL;
+	expr->expr_simple_generation = cplan->generation;
+
+	/*
+	 * 1. There must be one single plantree
+	 */
+	if (list_length(cplan->stmt_list) != 1)
+		return;
+	stmt = (PlannedStmt *) linitial(cplan->stmt_list);
 
 	/*
 	 * 2. It must be a RESULT plan --> no scan's required

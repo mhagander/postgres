@@ -796,21 +796,6 @@ PostmasterMain(int argc, char *argv[])
 	CreateDataDirLockFile(true);
 
 	/*
-	 * If timezone is not set, determine what the OS uses.	(In theory this
-	 * should be done during GUC initialization, but because it can take as
-	 * much as several seconds, we delay it until after we've created the
-	 * postmaster.pid file.  This prevents problems with boot scripts that
-	 * expect the pidfile to appear quickly.  Also, we avoid problems with
-	 * trying to locate the timezone files too early in initialization.)
-	 */
-	pg_timezone_initialize();
-
-	/*
-	 * Likewise, init timezone_abbreviations if not already set.
-	 */
-	pg_timezone_abbrev_initialize();
-
-	/*
 	 * Initialize SSL library, if specified.
 	 */
 #ifdef USE_SSL
@@ -2328,10 +2313,11 @@ reaper(SIGNAL_ARGS)
 			 * XXX should avoid the need for disconnection. When we do,
 			 * am_cascading_walsender should be replaced with RecoveryInProgress()
 			 */
-			if (max_wal_senders > 0)
+			if (max_wal_senders > 0 && CountChildren(BACKEND_TYPE_WALSND) > 0)
 			{
 				ereport(LOG,
-						(errmsg("terminating all walsender processes to force cascaded standby(s) to update timeline and reconnect")));
+						(errmsg("terminating all walsender processes to force cascaded "
+								"standby(s) to update timeline and reconnect")));
 				SignalSomeChildren(SIGUSR2, BACKEND_TYPE_WALSND);
 			}
 

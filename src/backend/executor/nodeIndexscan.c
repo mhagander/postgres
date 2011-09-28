@@ -29,6 +29,7 @@
 #include "executor/execdebug.h"
 #include "executor/nodeIndexscan.h"
 #include "optimizer/clauses.h"
+#include "utils/array.h"
 #include "utils/lsyscache.h"
 #include "utils/memutils.h"
 #include "utils/rel.h"
@@ -95,7 +96,11 @@ IndexNext(IndexScanState *node)
 			econtext->ecxt_scantuple = slot;
 			ResetExprContext(econtext);
 			if (!ExecQual(node->indexqualorig, econtext, false))
-				continue;		/* nope, so ask index for another one */
+			{
+				/* Fails recheck, so drop it and loop back for another */
+				InstrCountFiltered2(node, 1);
+				continue;
+			}
 		}
 
 		return slot;

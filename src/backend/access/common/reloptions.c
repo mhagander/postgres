@@ -23,8 +23,10 @@
 #include "commands/defrem.h"
 #include "commands/tablespace.h"
 #include "nodes/makefuncs.h"
+#include "utils/array.h"
 #include "utils/attoptcache.h"
 #include "utils/builtins.h"
+#include "utils/guc.h"
 #include "utils/memutils.h"
 #include "utils/rel.h"
 
@@ -217,6 +219,17 @@ static relopt_real realRelOpts[] =
 
 static relopt_string stringRelOpts[] =
 {
+	{
+		{
+			"buffering",
+			"Enables buffering build for this GiST index",
+			RELOPT_KIND_GIST
+		},
+		4,
+		false,
+		gistValidateBufferingOption,
+		"auto"
+	},
 	/* list terminator */
 	{{NULL}}
 };

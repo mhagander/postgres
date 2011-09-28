@@ -36,16 +36,20 @@
 #include "libpq/be-fsstubs.h"
 #include "miscadmin.h"
 #include "pgstat.h"
+#include "replication/walsender.h"
+#include "replication/syncrep.h"
 #include "storage/lmgr.h"
 #include "storage/predicate.h"
 #include "storage/procarray.h"
 #include "storage/sinvaladt.h"
 #include "storage/smgr.h"
 #include "utils/combocid.h"
+#include "utils/guc.h"
 #include "utils/inval.h"
 #include "utils/memutils.h"
 #include "utils/relmapper.h"
 #include "utils/snapmgr.h"
+#include "utils/timestamp.h"
 #include "pg_trace.h"
 
 
@@ -266,7 +270,7 @@ static TransactionId RecordTransactionAbort(bool isSubXact);
 static void StartTransaction(void);
 
 static void StartSubTransaction(void);
-static void CommitSubTransaction(bool isTopLevel);
+static void CommitSubTransaction(void);
 static void AbortSubTransaction(void);
 static void CleanupSubTransaction(void);
 static void PushTransaction(void);
@@ -1902,9 +1906,6 @@ CommitTransaction(void)
 	/* Clean up the relation cache */
 	AtEOXact_RelationCache(true);
 
-	/* Clean up the snapshot manager */
-	AtEarlyCommit_Snapshot();
-
 	/*
 	 * Make catalog changes visible to all backends.  This has to happen after
 	 * relcache references are dropped (see comments for
@@ -2154,9 +2155,6 @@ PrepareTransaction(void)
 	/* Clean up the relation cache */
 	AtEOXact_RelationCache(true);
 
-	/* Clean up the snapshot manager */
-	AtEarlyCommit_Snapshot();
-
 	/* notify doesn't need a postprepare call */
 
 	PostPrepare_PgStat();
@@ -2335,7 +2333,6 @@ AbortTransaction(void)
 		AtEOXact_ComboCid();
 		AtEOXact_HashTables(false);
 		AtEOXact_PgStat(false);
-		AtEOXact_Snapshot(false);
 		pgstat_report_xact_timestamp(0);
 	}
 
@@ -2364,6 +2361,7 @@ CleanupTransaction(void)
 	 * do abort cleanup processing
 	 */
 	AtCleanup_Portals();		/* now safe to release portal memory */
+	AtEOXact_Snapshot(false);	/* and release the transaction's snapshots */
 
 	CurrentResourceOwner = NULL;	/* and resource owner */
 	if (TopTransactionResourceOwner)
@@ -2575,7 +2573,7 @@ CommitTransactionCommand(void)
 		case TBLOCK_SUBRELEASE:
 			do
 			{
-				CommitSubTransaction(false);
+				CommitSubTransaction();
 				s = CurrentTransactionState;	/* changed by pop */
 			} while (s->blockState == TBLOCK_SUBRELEASE);
 
@@ -2585,12 +2583,17 @@ CommitTransactionCommand(void)
 
 			/*
 			 * We were issued a COMMIT, so we end the current subtransaction
-			 * hierarchy and perform final commit.
+			 * hierarchy and perform final commit. We do this by rolling up
+			 * any subtransactions into their parent, which leads to O(N^2)
+			 * operations with respect to resource owners - this isn't that
+			 * bad until we approach a thousands of savepoints but is necessary
+			 * for correctness should after triggers create new resource
+			 * owners.
 			 */
 		case TBLOCK_SUBCOMMIT:
 			do
 			{
-				CommitSubTransaction(true);
+				CommitSubTransaction();
 				s = CurrentTransactionState;	/* changed by pop */
 			} while (s->blockState == TBLOCK_SUBCOMMIT);
 			/* If we had a COMMIT command, finish off the main xact too */
@@ -3742,7 +3745,7 @@ ReleaseCurrentSubTransaction(void)
 			 BlockStateAsString(s->blockState));
 	Assert(s->state == TRANS_INPROGRESS);
 	MemoryContextSwitchTo(CurTransactionContext);
-	CommitSubTransaction(false);
+	CommitSubTransaction();
 	s = CurrentTransactionState;	/* changed by pop */
 	Assert(s->state == TRANS_INPROGRESS);
 }
@@ -4006,13 +4009,9 @@ StartSubTransaction(void)
  *
  *	The caller has to make sure to always reassign CurrentTransactionState
  *	if it has a local pointer to it after calling this function.
- *
- *	isTopLevel means that this CommitSubTransaction() is being issued as a
- *	sequence of actions leading directly to a main transaction commit
- *	allowing some actions to be optimised.
  */
 static void
-CommitSubTransaction(bool isTopLevel)
+CommitSubTransaction(void)
 {
 	TransactionState s = CurrentTransactionState;
 
@@ -4066,14 +4065,10 @@ CommitSubTransaction(bool isTopLevel)
 
 	/*
 	 * Other locks should get transferred to their parent resource owner.
-	 * Doing that is an O(N^2) operation, so if isTopLevel then we can just
-	 * leave the lock records as they are, knowing they will all get released
-	 * by the top level commit using ProcReleaseLocks(). We only optimize
-	 * this for commit; aborts may need to do other cleanup.
 	 */
 	ResourceOwnerRelease(s->curTransactionOwner,
 						 RESOURCE_RELEASE_LOCKS,
-						 true, isTopLevel);
+						 true, false);
 	ResourceOwnerRelease(s->curTransactionOwner,
 						 RESOURCE_RELEASE_AFTER_LOCKS,
 						 true, false);
