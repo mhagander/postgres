@@ -219,6 +219,10 @@ FindStreamingStart(XLogRecPtr currentpos, uint32 currenttimeline)
 
 			if (stat(newfn, &statbuf) == 0)
 			{
+				/*
+				 * XXX: perhaps we should only error out if the existing file
+				 * is larger?
+				 */
 				fprintf(stderr, _("%s: file \"%s\" already exists. Check and clean up manually.\n"),
 						progname, newfn);
 				disconnect_and_exit(1);
