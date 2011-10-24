@@ -86,10 +86,14 @@ localGetCurrentTimestamp(void)
 /*
  * Receive a log stream starting at the specified position.
  *
+ * If sysidentifier is specified, validate that both the system
+ * identifier and the timeline matches the specified ones
+ * (by sending an extra IDENTIFY_SYSTEM command)
+ *
  * Note: The log position *must* be at a log segment start!
  */
 bool
-ReceiveXlogStream(PGconn *conn, XLogRecPtr startpos, uint32 timeline, char *basedir, segment_finish_callback segment_finish, stream_continue_callback stream_continue, int standby_message_timeout)
+ReceiveXlogStream(PGconn *conn, XLogRecPtr startpos, uint32 timeline, char *sysidentifier, char *basedir, segment_finish_callback segment_finish, stream_continue_callback stream_continue, int standby_message_timeout)
 {
 	char		query[128];
 	char		current_walfile_name[MAXPGPATH];
@@ -98,6 +102,32 @@ ReceiveXlogStream(PGconn *conn, XLogRecPtr startpos, uint32 timeline, char *base
 	int			walfile = -1;
 	int64		last_status = -1;
 	XLogRecPtr	blockpos = InvalidXLogRecPtr;
+
+	if (sysidentifier != NULL)
+	{
+		/* Validate system identifier and timeline hasn't changed */
+		res = PQexec(conn, "IDENTIFY_SYSTEM");
+		if (PQresultStatus(res) != PGRES_TUPLES_OK)
+		{
+			fprintf(stderr, _("%s: could not identify system: %s\n"),
+					progname, PQerrorMessage(conn));
+			PQclear(res);
+			return false;
+		}
+		if (strcmp(sysidentifier, PQgetvalue(res, 0, 0)) != 0)
+		{
+			fprintf(stderr, _("%s: system identifier does not match between base backup and streaming connection\n"), progname);
+			PQclear(res);
+			return false;
+		}
+		if (timeline != atoi(PQgetvalue(res, 0, 1)))
+		{
+			fprintf(stderr, _("%s: timeline does not match between base backup and streaming connection\n"), progname);
+			PQclear(res);
+			return false;
+		}
+		PQclear(res);
+	}
 
 	/* Initiate the replication stream at specified location */
 	snprintf(query, sizeof(query), "START_REPLICATION %X/%X", startpos.xlogid, startpos.xrecoff);

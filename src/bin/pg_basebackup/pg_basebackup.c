@@ -218,6 +218,7 @@ typedef struct
 	PGconn	   *bgconn;
 	XLogRecPtr	startptr;
 	char		xlogdir[MAXPGPATH];
+	char	   *sysidentifier;
 	int			timeline;
 }	logstreamer_param;
 
@@ -225,8 +226,8 @@ static int
 LogStreamerMain(logstreamer_param * param)
 {
 	if (!ReceiveXlogStream(param->bgconn, param->startptr, param->timeline,
-						   param->xlogdir, segment_callback, NULL,
-						   standby_message_timeout))
+						   param->sysidentifier, param->xlogdir,
+						   segment_callback, NULL, standby_message_timeout))
 
 		/*
 		 * Any errors will already have been reported in the function process,
@@ -245,12 +246,13 @@ LogStreamerMain(logstreamer_param * param)
  * stream the logfile in parallel with the backups.
  */
 static void
-StartLogStreamer(char *startpos, uint32 timeline)
+StartLogStreamer(char *startpos, uint32 timeline, char *sysidentifier)
 {
 	logstreamer_param *param;
 
 	param = xmalloc0(sizeof(logstreamer_param));
 	param->timeline = timeline;
+	param->sysidentifier = sysidentifier;
 
 	/* Convert the starting position */
 	if (sscanf(startpos, "%X/%X", &param->startptr.xlogid, &param->startptr.xrecoff) != 2)
@@ -890,6 +892,7 @@ static void
 BaseBackup(void)
 {
 	PGresult   *res;
+	char	   *sysidentifier;
 	uint32		timeline;
 	char		current_path[MAXPGPATH];
 	char		escaped_label[MAXPGPATH];
@@ -918,6 +921,7 @@ BaseBackup(void)
 				progname, PQntuples(res));
 		disconnect_and_exit(1);
 	}
+	sysidentifier = strdup(PQgetvalue(res, 0, 0));
 	timeline = atoi(PQgetvalue(res, 0, 1));
 	PQclear(res);
 
@@ -1015,7 +1019,7 @@ BaseBackup(void)
 		if (verbose)
 			fprintf(stderr, _("%s: starting background WAL receiver\n"),
 					progname);
-		StartLogStreamer(xlogstart, timeline);
+		StartLogStreamer(xlogstart, timeline, sysidentifier);
 	}
 
 	/*

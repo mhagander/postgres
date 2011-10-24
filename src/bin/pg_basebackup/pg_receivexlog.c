@@ -301,7 +301,7 @@ StreamLog(void)
 		fprintf(stderr, _("%s: starting log streaming at %X/%X (timeline %u)\n"),
 				progname, startpos.xlogid, startpos.xrecoff, timeline);
 
-	ReceiveXlogStream(conn, startpos, timeline, basedir,
+	ReceiveXlogStream(conn, startpos, timeline, NULL, basedir,
 					  segment_callback, continue_streaming,
 					  standby_message_timeout);
 }
