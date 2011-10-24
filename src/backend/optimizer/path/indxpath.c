@@ -18,6 +18,7 @@
 #include <math.h>
 
 #include "access/skey.h"
+#include "access/sysattr.h"
 #include "catalog/pg_am.h"
 #include "catalog/pg_collation.h"
 #include "catalog/pg_operator.h"
@@ -41,12 +42,15 @@
 #define IsBooleanOpfamily(opfamily) \
 	((opfamily) == BOOL_BTREE_FAM_OID || (opfamily) == BOOL_HASH_FAM_OID)
 
+#define IndexCollMatchesExprColl(idxcollation, exprcollation) \
+	((idxcollation) == InvalidOid || (idxcollation) == (exprcollation))
+
 /* Whether to use ScalarArrayOpExpr to build index qualifications */
 typedef enum
 {
-	SAOP_FORBID,				/* Do not use ScalarArrayOpExpr */
-	SAOP_ALLOW,					/* OK to use ScalarArrayOpExpr */
-	SAOP_REQUIRE				/* Require ScalarArrayOpExpr */
+	SAOP_PER_AM,				/* Use ScalarArrayOpExpr if amsearcharray */
+	SAOP_ALLOW,					/* Use ScalarArrayOpExpr for all indexes */
+	SAOP_REQUIRE				/* Require ScalarArrayOpExpr to be used */
 } SaOpControl;
 
 /* Whether we are looking for plain indexscan, bitmap scan, or either */
@@ -85,6 +89,7 @@ static PathClauseUsage *classify_index_clause_usage(Path *path,
 							List **clauselist);
 static void find_indexpath_quals(Path *bitmapqual, List **quals, List **preds);
 static int	find_list_position(Node *node, List **nodelist);
+static bool check_index_only(RelOptInfo *rel, IndexOptInfo *index);
 static List *group_clauses_by_indexkey(IndexOptInfo *index,
 						  List *clauses, List *outer_clauses,
 						  Relids outer_relids,
@@ -191,17 +196,18 @@ create_index_paths(PlannerInfo *root, RelOptInfo *rel)
 	 */
 	indexpaths = find_usable_indexes(root, rel,
 									 rel->baserestrictinfo, NIL,
-									 true, NULL, SAOP_FORBID, ST_ANYSCAN);
+									 true, NULL, SAOP_PER_AM, ST_ANYSCAN);
 
 	/*
-	 * Submit all the ones that can form plain IndexScan plans to add_path. (A
-	 * plain IndexPath always represents a plain IndexScan plan; however some
-	 * of the indexes might support only bitmap scans, and those we mustn't
-	 * submit to add_path here.)  Also, pick out the ones that might be useful
-	 * as bitmap scans.  For that, we must discard indexes that don't support
-	 * bitmap scans, and we also are only interested in paths that have some
-	 * selectivity; we should discard anything that was generated solely for
-	 * ordering purposes.
+	 * Submit all the ones that can form plain IndexScan plans to add_path.
+	 * (A plain IndexPath might represent either a plain IndexScan or an
+	 * IndexOnlyScan, but for our purposes here the distinction does not
+	 * matter.  However, some of the indexes might support only bitmap scans,
+	 * and those we mustn't submit to add_path here.)  Also, pick out the ones
+	 * that might be useful as bitmap scans.  For that, we must discard
+	 * indexes that don't support bitmap scans, and we also are only
+	 * interested in paths that have some selectivity; we should discard
+	 * anything that was generated solely for ordering purposes.
 	 */
 	bitindexpaths = NIL;
 	foreach(l, indexpaths)
@@ -227,8 +233,9 @@ create_index_paths(PlannerInfo *root, RelOptInfo *rel)
 	bitindexpaths = list_concat(bitindexpaths, indexpaths);
 
 	/*
-	 * Likewise, generate paths using ScalarArrayOpExpr clauses; these can't
-	 * be simple indexscans but they can be used in bitmap scans.
+	 * Likewise, generate paths using executor-managed ScalarArrayOpExpr
+	 * clauses; these can't be simple indexscans but they can be used in
+	 * bitmap scans.
 	 */
 	indexpaths = find_saop_paths(root, rel,
 								 rel->baserestrictinfo, NIL,
@@ -311,6 +318,7 @@ find_usable_indexes(PlannerInfo *root, RelOptInfo *rel,
 		bool		useful_predicate;
 		bool		found_clause;
 		bool		index_is_ordered;
+		bool		index_only_scan;
 
 		/*
 		 * Check that index supports the desired scan type(s)
@@ -329,6 +337,14 @@ find_usable_indexes(PlannerInfo *root, RelOptInfo *rel,
 				/* either or both are OK */
 				break;
 		}
+
+		/*
+		 * If we're doing find_saop_paths(), we can skip indexes that support
+		 * ScalarArrayOpExpr natively.  We already generated all the potential
+		 * indexpaths for them, so no need to do anything more.
+		 */
+		if (saop_control == SAOP_REQUIRE && index->amsearcharray)
+			continue;
 
 		/*
 		 * Ignore partial indexes that do not match the query.	If a partial
@@ -428,12 +444,19 @@ find_usable_indexes(PlannerInfo *root, RelOptInfo *rel,
 		}
 
 		/*
-		 * 3. Generate an indexscan path if there are relevant restriction
+		 * 3. Check if an index-only scan is possible.
+		 */
+		index_only_scan = check_index_only(rel, index);
+
+		/*
+		 * 4. Generate an indexscan path if there are relevant restriction
 		 * clauses in the current clauses, OR the index ordering is
 		 * potentially useful for later merging or final output ordering, OR
-		 * the index has a predicate that was proven by the current clauses.
+		 * the index has a predicate that was proven by the current clauses,
+		 * OR an index-only scan is possible.
 		 */
-		if (found_clause || useful_pathkeys != NIL || useful_predicate)
+		if (found_clause || useful_pathkeys != NIL || useful_predicate ||
+			index_only_scan)
 		{
 			ipath = create_index_path(root, index,
 									  restrictclauses,
@@ -442,12 +465,13 @@ find_usable_indexes(PlannerInfo *root, RelOptInfo *rel,
 									  index_is_ordered ?
 									  ForwardScanDirection :
 									  NoMovementScanDirection,
+									  index_only_scan,
 									  outer_rel);
 			result = lappend(result, ipath);
 		}
 
 		/*
-		 * 4. If the index is ordered, a backwards scan might be interesting.
+		 * 5. If the index is ordered, a backwards scan might be interesting.
 		 * Again, this is only interesting at top level.
 		 */
 		if (index_is_ordered && possibly_useful_pathkeys &&
@@ -464,6 +488,7 @@ find_usable_indexes(PlannerInfo *root, RelOptInfo *rel,
 										  NIL,
 										  useful_pathkeys,
 										  BackwardScanDirection,
+										  index_only_scan,
 										  outer_rel);
 				result = lappend(result, ipath);
 			}
@@ -476,10 +501,10 @@ find_usable_indexes(PlannerInfo *root, RelOptInfo *rel,
 
 /*
  * find_saop_paths
- *		Find all the potential indexpaths that make use of ScalarArrayOpExpr
- *		clauses.  The executor only supports these in bitmap scans, not
- *		plain indexscans, so we need to segregate them from the normal case.
- *		Otherwise, same API as find_usable_indexes().
+ *		Find all the potential indexpaths that make use of executor-managed
+ *		ScalarArrayOpExpr clauses.  The executor only supports these in bitmap
+ *		scans, not plain indexscans, so we need to segregate them from the
+ *		normal case.  Otherwise, same API as find_usable_indexes().
  *		Returns a list of IndexPaths.
  */
 static List *
@@ -1037,6 +1062,80 @@ find_list_position(Node *node, List **nodelist)
 }
 
 
+/*
+ * check_index_only
+ *		Determine whether an index-only scan is possible for this index.
+ */
+static bool
+check_index_only(RelOptInfo *rel, IndexOptInfo *index)
+{
+	bool		result;
+	Bitmapset  *attrs_used = NULL;
+	Bitmapset  *index_attrs = NULL;
+	ListCell   *lc;
+	int			i;
+
+	/* Index-only scans must be enabled, and AM must be capable of it */
+	if (!enable_indexonlyscan)
+		return false;
+	if (!index->amcanreturn)
+		return false;
+
+	/*
+	 * Check that all needed attributes of the relation are available from
+	 * the index.
+	 *
+	 * XXX this is overly conservative for partial indexes, since we will
+	 * consider attributes involved in the index predicate as required even
+	 * though the predicate won't need to be checked at runtime.  (The same
+	 * is true for attributes used only in index quals, if we are certain
+	 * that the index is not lossy.)  However, it would be quite expensive
+	 * to determine that accurately at this point, so for now we take the
+	 * easy way out.
+	 */
+
+	/*
+	 * Add all the attributes needed for joins or final output.  Note: we must
+	 * look at reltargetlist, not the attr_needed data, because attr_needed
+	 * isn't computed for inheritance child rels.
+	 */
+	pull_varattnos((Node *) rel->reltargetlist, rel->relid, &attrs_used);
+
+	/* Add all the attributes used by restriction clauses. */
+	foreach(lc, rel->baserestrictinfo)
+	{
+		RestrictInfo   *rinfo = (RestrictInfo *) lfirst(lc);
+
+		pull_varattnos((Node *) rinfo->clause, rel->relid, &attrs_used);
+	}
+
+	/* Construct a bitmapset of columns stored in the index. */
+	for (i = 0; i < index->ncolumns; i++)
+	{
+		int		attno = index->indexkeys[i];
+
+		/*
+		 * For the moment, we just ignore index expressions.  It might be nice
+		 * to do something with them, later.
+		 */
+		if (attno == 0)
+			continue;
+
+		index_attrs =
+			bms_add_member(index_attrs,
+						   attno - FirstLowInvalidHeapAttributeNumber);
+	}
+
+	/* Do we have all the necessary attributes? */
+	result = bms_is_subset(attrs_used, index_attrs);
+
+	bms_free(attrs_used);
+	bms_free(index_attrs);
+
+	return result;
+}
+
+
 /****************************************************************************
  *				----  ROUTINES TO CHECK RESTRICTIONS  ----
  ****************************************************************************/
@@ -1181,6 +1280,13 @@ group_clauses_by_indexkey(IndexOptInfo *index,
  *	  We do not actually do the commuting here, but we check whether a
  *	  suitable commutator operator is available.
  *
+ *	  If the index has a collation, the clause must have the same collation.
+ *	  For collation-less indexes, we assume it doesn't matter; this is
+ *	  necessary for cases like "hstore ? text", wherein hstore's operators
+ *	  don't care about collation but the clause will get marked with a
+ *	  collation anyway because of the text argument.  (This logic is
+ *	  embodied in the macro IndexCollMatchesExprColl.)
+ *
  *	  It is also possible to match RowCompareExpr clauses to indexes (but
  *	  currently, only btree indexes handle this).  In this routine we will
  *	  report a match if the first column of the row comparison matches the
@@ -1190,9 +1296,10 @@ group_clauses_by_indexkey(IndexOptInfo *index,
  *	  expand_indexqual_rowcompare().
  *
  *	  It is also possible to match ScalarArrayOpExpr clauses to indexes, when
- *	  the clause is of the form "indexkey op ANY (arrayconst)".  Since the
- *	  executor can only handle these in the context of bitmap index scans,
- *	  our caller specifies whether to allow these or not.
+ *	  the clause is of the form "indexkey op ANY (arrayconst)".  Since not
+ *	  all indexes handle these natively, and the executor implements them
+ *	  only in the context of bitmap index scans, our caller specifies whether
+ *	  to allow these or not.
  *
  *	  For boolean indexes, it is also possible to match the clause directly
  *	  to the indexkey; or perhaps the clause is (NOT indexkey).
@@ -1260,8 +1367,8 @@ match_clause_to_indexcol(IndexOptInfo *index,
 		expr_coll = ((OpExpr *) clause)->inputcollid;
 		plain_op = true;
 	}
-	else if (saop_control != SAOP_FORBID &&
-			 clause && IsA(clause, ScalarArrayOpExpr))
+	else if (clause && IsA(clause, ScalarArrayOpExpr) &&
+			 (index->amsearcharray || saop_control != SAOP_PER_AM))
 	{
 		ScalarArrayOpExpr *saop = (ScalarArrayOpExpr *) clause;
 
@@ -1303,7 +1410,7 @@ match_clause_to_indexcol(IndexOptInfo *index,
 		bms_is_subset(right_relids, outer_relids) &&
 		!contain_volatile_functions(rightop))
 	{
-		if (idxcollation == expr_coll &&
+		if (IndexCollMatchesExprColl(idxcollation, expr_coll) &&
 			is_indexable_operator(expr_op, opfamily, true))
 			return true;
 
@@ -1322,7 +1429,7 @@ match_clause_to_indexcol(IndexOptInfo *index,
 		bms_is_subset(left_relids, outer_relids) &&
 		!contain_volatile_functions(leftop))
 	{
-		if (idxcollation == expr_coll &&
+		if (IndexCollMatchesExprColl(idxcollation, expr_coll) &&
 			is_indexable_operator(expr_op, opfamily, false))
 			return true;
 
@@ -1398,8 +1505,8 @@ match_rowcompare_to_indexcol(IndexOptInfo *index,
 	expr_op = linitial_oid(clause->opnos);
 	expr_coll = linitial_oid(clause->inputcollids);
 
-	/* Collations must match */
-	if (expr_coll != idxcollation)
+	/* Collations must match, if relevant */
+	if (!IndexCollMatchesExprColl(idxcollation, expr_coll))
 		return false;
 
 	/*
@@ -1571,7 +1678,7 @@ match_clause_to_ordering_op(IndexOptInfo *index,
 	/*
 	 * We can forget the whole thing right away if wrong collation.
 	 */
-	if (expr_coll != idxcollation)
+	if (!IndexCollMatchesExprColl(idxcollation, expr_coll))
 		return NULL;
 
 	/*
@@ -1862,7 +1969,7 @@ eclass_matches_any_index(EquivalenceClass *ec, EquivalenceMember *em,
 			 */
 			if ((index->relam != BTREE_AM_OID ||
 				 list_member_oid(ec->ec_opfamilies, curFamily)) &&
-				ec->ec_collation == curCollation &&
+				IndexCollMatchesExprColl(curCollation, ec->ec_collation) &&
 				match_index_to_operand((Node *) em->em_expr, indexcol, index))
 				return true;
 		}
@@ -1992,12 +2099,12 @@ best_inner_indexscan(PlannerInfo *root, RelOptInfo *rel,
 
 	/*
 	 * Find all the index paths that are usable for this join, except for
-	 * stuff involving OR and ScalarArrayOpExpr clauses.
+	 * stuff involving OR and executor-managed ScalarArrayOpExpr clauses.
 	 */
 	allindexpaths = find_usable_indexes(root, rel,
 										clause_list, NIL,
 										false, outer_rel,
-										SAOP_FORBID,
+										SAOP_PER_AM,
 										ST_ANYSCAN);
 
 	/*
@@ -2026,8 +2133,9 @@ best_inner_indexscan(PlannerInfo *root, RelOptInfo *rel,
 														 outer_rel));
 
 	/*
-	 * Likewise, generate paths using ScalarArrayOpExpr clauses; these can't
-	 * be simple indexscans but they can be used in bitmap scans.
+	 * Likewise, generate paths using executor-managed ScalarArrayOpExpr
+	 * clauses; these can't be simple indexscans but they can be used in
+	 * bitmap scans.
 	 */
 	bitindexpaths = list_concat(bitindexpaths,
 								find_saop_paths(root, rel,
@@ -2169,10 +2277,11 @@ relation_has_unique_index_for(PlannerInfo *root, RelOptInfo *rel,
 		int			c;
 
 		/*
-		 * If the index is not unique or if it's a partial index that doesn't
-		 * match the query, it's useless here.
+		 * If the index is not unique, or not immediately enforced, or if it's
+		 * a partial index that doesn't match the query, it's useless here.
 		 */
-		if (!ind->unique || (ind->indpred != NIL && !ind->predOK))
+		if (!ind->unique || !ind->immediate ||
+			(ind->indpred != NIL && !ind->predOK))
 			continue;
 
 		/*
@@ -2967,7 +3076,8 @@ expand_indexqual_rowcompare(RestrictInfo *rinfo,
 			break;
 
 		/* Does collation match? */
-		if (lfirst_oid(collids_cell) != index->indexcollations[i])
+		if (!IndexCollMatchesExprColl(index->indexcollations[i],
+									  lfirst_oid(collids_cell)))
 			break;
 
 		/* Add opfamily and datatypes to lists */

@@ -4129,7 +4129,9 @@ get_join_variables(PlannerInfo *root, List *args, SpecialJoinInfo *sjinfo,
  *		commonly the same as the exposed type of the variable argument,
  *		but can be different in binary-compatible-type cases.
  *	isunique: TRUE if we were able to match the var to a unique index,
- *		implying its values are unique for this query.
+ *		implying its values are unique for this query.  (Caution: this
+ *		should be trusted for statistical purposes only, since we do not
+ *		check indimmediate.)
  *
  * Caller is responsible for doing ReleaseVariableStats() before exiting.
  */
@@ -4381,6 +4383,17 @@ examine_simple_variable(PlannerInfo *root, Var *var,
 
 		/* Subquery should have been planned already */
 		Assert(rel->subroot && IsA(rel->subroot, PlannerInfo));
+
+		/*
+		 * Switch our attention to the subquery as mangled by the planner.
+		 * It was okay to look at the pre-planning version for the tests
+		 * above, but now we need a Var that will refer to the subroot's
+		 * live RelOptInfos.  For instance, if any subquery pullup happened
+		 * during planning, Vars in the targetlist might have gotten replaced,
+		 * and we need to see the replacement expressions.
+		 */
+		subquery = rel->subroot->parse;
+		Assert(IsA(subquery, Query));
 
 		/* Get the subquery output expression referenced by the upper Var */
 		ste = get_tle_by_resno(subquery->targetList, var->varattno);
@@ -6374,14 +6387,7 @@ btcostestimate(PG_FUNCTION_ARGS)
 	 * is that multiple columns dilute the importance of the first column's
 	 * ordering, but don't negate it entirely.  Before 8.0 we divided the
 	 * correlation by the number of columns, but that seems too strong.)
-	 *
-	 * We can skip all this if we found a ScalarArrayOpExpr, because then the
-	 * call must be for a bitmap index scan, and the caller isn't going to
-	 * care what the index correlation is.
 	 */
-	if (found_saop)
-		PG_RETURN_VOID();
-
 	MemSet(&vardata, 0, sizeof(vardata));
 
 	if (index->indexkeys[0] != 0)

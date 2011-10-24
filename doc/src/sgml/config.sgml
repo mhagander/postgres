@@ -101,7 +101,9 @@ include 'filename'
     value. Alternatively, you can send the signal to a single server
     process directly.  Some parameters can only be set at server start;
     any changes to their entries in the configuration file will be ignored
-    until the server is restarted.
+    until the server is restarted.  Invalid parameter settings in the
+    configuration file are likewise ignored (but logged) during
+    <systemitem>SIGHUP</> processing.
    </para>
 
    <para>
@@ -2402,6 +2404,22 @@ SET ENABLE_SEQSCAN TO OFF;
       </listitem>
      </varlistentry>
 
+     <varlistentry id="guc-enable-indexonlyscan" xreflabel="enable_indexonlyscan">
+      <term><varname>enable_indexonlyscan</varname> (<type>boolean</type>)</term>
+      <indexterm>
+       <primary>index-only scan</primary>
+      </indexterm>
+      <indexterm>
+       <primary><varname>enable_indexonlyscan</> configuration parameter</primary>
+      </indexterm>
+      <listitem>
+       <para>
+        Enables or disables the query planner's use of index-only-scan plan
+        types. The default is <literal>on</>.
+       </para>
+      </listitem>
+     </varlistentry>
+
      <varlistentry id="guc-enable-material" xreflabel="enable_material">
       <term><varname>enable_material</varname> (<type>boolean</type>)</term>
       <indexterm>
@@ -2533,8 +2551,8 @@ SET ENABLE_SEQSCAN TO OFF;
        <para>
         Sets the planner's estimate of the cost of a disk page fetch
         that is part of a series of sequential fetches.  The default is 1.0.
-        This value can be overridden for a particular tablespace by setting
-        the tablespace parameter of the same name
+        This value can be overridden for tables and indexes in a particular
+        tablespace by setting the tablespace parameter of the same name
         (see <xref linkend="sql-altertablespace">).
        </para>
       </listitem>
@@ -2549,8 +2567,8 @@ SET ENABLE_SEQSCAN TO OFF;
        <para>
         Sets the planner's estimate of the cost of a
         non-sequentially-fetched disk page.  The default is 4.0.
-        This value can be overridden for a particular tablespace by setting
-        the tablespace parameter of the same name
+        This value can be overridden for tables and indexes in a particular
+        tablespace by setting the tablespace parameter of the same name
         (see <xref linkend="sql-altertablespace">).
        </para>
 
@@ -5938,58 +5956,25 @@ dynamic_library_path = 'C:\tools\postgresql;H:\my_project\lib;$libdir'
     <para>
      This feature was designed to allow parameters not normally known to
      <productname>PostgreSQL</productname> to be added by add-on modules
-     (such as procedural languages).  This allows add-on modules to be
+     (such as procedural languages).  This allows extension modules to be
      configured in the standard ways.
     </para>
 
-    <variablelist>
-
-     <varlistentry id="guc-custom-variable-classes" xreflabel="custom_variable_classes">
-      <term><varname>custom_variable_classes</varname> (<type>string</type>)</term>
-      <indexterm>
-       <primary><varname>custom_variable_classes</> configuration parameter</primary>
-      </indexterm>
-      <listitem>
-       <para>
-        This variable specifies one or several class names to be used for
-        custom variables, in the form of a comma-separated list. A custom
-        variable is a variable not normally known
-        to <productname>PostgreSQL</productname> proper but used by some
-        add-on module.  Such variables must have names consisting of a class
-        name, a dot, and a variable name.  <varname>custom_variable_classes</>
-        specifies all the class names in use in a particular installation.
-        This parameter can only be set in the <filename>postgresql.conf</>
-        file or on the server command line.
-       </para>
-
-      </listitem>
-     </varlistentry>
-    </variablelist>
-
     <para>
-     The difficulty with setting custom variables in
-     <filename>postgresql.conf</> is that the file must be read before add-on
-     modules have been loaded, and so custom variables would ordinarily be
-     rejected as unknown.  When <varname>custom_variable_classes</> is set,
-     the server will accept definitions of arbitrary variables within each
-     specified class.  These variables will be treated as placeholders and
-     will have no function until the module that defines them is loaded. When a
-     module for a specific class is loaded, it will add the proper variable
-     definitions for its class name, convert any placeholder
-     values according to those definitions, and issue warnings for any
-     unrecognized placeholders of its class that remain.
+     Custom options have two-part names: an extension name, then a dot, then
+     the parameter name proper, much like qualified names in SQL.  An example
+     is <literal>plpgsql.variable_conflict</>.
     </para>
 
     <para>
-     Here is an example of what <filename>postgresql.conf</> might contain
-     when using custom variables:
-
-<programlisting>
-custom_variable_classes = 'plpgsql,plperl'
-plpgsql.variable_conflict = use_variable
-plperl.use_strict = true
-plruby.use_strict = true        # generates error: unknown class name
-</programlisting>
+     Because custom options may need to be set in processes that have not
+     loaded the relevant extension module, <productname>PostgreSQL</>
+     will accept a setting for any two-part parameter name.  Such variables
+     are treated as placeholders and have no function until the module that
+     defines them is loaded. When an extension module is loaded, it will add
+     its variable definitions, convert any placeholder values according to
+     those definitions, and issue warnings for any unrecognized placeholders
+     that begin with its extension name.
     </para>
    </sect1>
 
@@ -6208,28 +6193,6 @@ LOG:  CleanUpLock: deleting: lock(0xb7acd844) id(24688,24696,0,0,0,1)
      </varlistentry>
 
      <varlistentry>
-      <term><varname>trace_userlocks</varname> (<type>boolean</type>)</term>
-      <indexterm>
-       <primary><varname>trace_userlocks</> configuration parameter</primary>
-      </indexterm>
-      <listitem>
-       <para>
-        If on, emit information about user lock usage.  Output is the same
-        as for <symbol>trace_locks</symbol>, only for user locks.
-       </para>
-       <para>
-        User locks were removed as of PostgreSQL version 8.2.  This option
-        currently has no effect.
-       </para>
-       <para>
-        This parameter is only available if the <symbol>LOCK_DEBUG</symbol>
-        macro was defined when <productname>PostgreSQL</productname> was
-        compiled.
-       </para>
-      </listitem>
-     </varlistentry>
-
-     <varlistentry>
       <term><varname>trace_lock_oidmin</varname> (<type>integer</type>)</term>
       <indexterm>
        <primary><varname>trace_lock_oidmin</> configuration parameter</primary>
@@ -6384,7 +6347,7 @@ LOG:  CleanUpLock: deleting: lock(0xb7acd844) id(24688,24696,0,0,0,1)
        <row>
         <entry>
           <option>-fb</option>, <option>-fh</option>, <option>-fi</option>,
-          <option>-fm</option>, <option>-fn</option>,
+          <option>-fm</option>, <option>-fn</option>, <option>-fo</option>,
           <option>-fs</option>, <option>-ft</option>
          </entry>
          <entry>
@@ -6393,6 +6356,7 @@ LOG:  CleanUpLock: deleting: lock(0xb7acd844) id(24688,24696,0,0,0,1)
           <literal>enable_indexscan = off</>,
           <literal>enable_mergejoin = off</>,
           <literal>enable_nestloop = off</>,
+          <literal>enable_indexonlyscan = off</>,
           <literal>enable_seqscan = off</>,
           <literal>enable_tidscan = off</>
          </entry>

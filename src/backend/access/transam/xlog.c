@@ -58,6 +58,7 @@
 #include "utils/guc.h"
 #include "utils/ps_status.h"
 #include "utils/relmapper.h"
+#include "utils/snapmgr.h"
 #include "utils/timestamp.h"
 #include "pg_trace.h"
 
@@ -5295,10 +5296,12 @@ readRecoveryCommandFile(void)
 	}
 
 	/*
-	 * Since we're asking ParseConfigFp() to error out at FATAL, there's no
-	 * need to check the return value.
+	 * Since we're asking ParseConfigFp() to report errors as FATAL, there's
+	 * no need to check the return value.
 	 */
-	ParseConfigFp(fd, RECOVERY_COMMAND_FILE, 0, FATAL, &head, &tail);
+	(void) ParseConfigFp(fd, RECOVERY_COMMAND_FILE, 0, FATAL, &head, &tail);
+
+	FreeFile(fd);
 
 	for (item = head; item; item = item->next)
 	{
@@ -5504,7 +5507,6 @@ readRecoveryCommandFile(void)
 	}
 
 	FreeConfigVariables(head);
-	FreeFile(fd);
 }
 
 /*
@@ -6379,6 +6381,12 @@ StartupXLOG(void)
 		 * garbage is left over from before.
 		 */
 		ResetUnloggedRelations(UNLOGGED_RELATION_CLEANUP);
+
+		/*
+		 * Likewise, delete any saved transaction snapshot files that got
+		 * left behind by crashed backends.
+		 */
+		DeleteAllExportedSnapshotFiles();
 
 		/*
 		 * Initialize for Hot Standby, if enabled. We won't let backends in
@@ -9066,8 +9074,10 @@ do_pg_start_backup(const char *backupidstr, bool fast, char **labelfile)
 						(errcode_for_file_access(),
 						 errmsg("could not create file \"%s\": %m",
 								BACKUP_LABEL_FILE)));
-			fwrite(labelfbuf.data, labelfbuf.len, 1, fp);
-			if (fflush(fp) || ferror(fp) || FreeFile(fp))
+			if (fwrite(labelfbuf.data, labelfbuf.len, 1, fp) != 1 ||
+				fflush(fp) != 0 ||
+				ferror(fp) ||
+				FreeFile(fp))
 				ereport(ERROR,
 						(errcode_for_file_access(),
 						 errmsg("could not write file \"%s\": %m",
