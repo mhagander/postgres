@@ -83,11 +83,12 @@ segment_callback(XLogRecPtr segendpos, uint32 timeline)
 	 * there is, remove it under the assumption that we have now got all the
 	 * data we need.
 	 */
+	segendpos.xrecoff /= XLOG_SEG_SIZE;
 	PrevLogSeg(segendpos.xlogid, segendpos.xrecoff);
 	snprintf(fn, sizeof(fn), "%s/%08X%08X%08X.partial",
 			 basedir, timeline,
 			 segendpos.xlogid,
-			 segendpos.xrecoff / XLOG_SEG_SIZE);
+			 segendpos.xrecoff);
 	if (stat(fn, &statbuf) == 0)
 	{
 		/* File existed, get rid of it */
