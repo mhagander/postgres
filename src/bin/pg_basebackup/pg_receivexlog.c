@@ -170,7 +170,7 @@ FindStreamingStart(XLogRecPtr currentpos, uint32 currenttimeline)
 			continue;
 
 		/*
-		 * Looks like an xlog file. Parse it's position.
+		 * Looks like an xlog file. Parse its position.
 		 */
 		if (sscanf(dirent->d_name, "%08X%08X%08X", &tli, &log, &seg) != 3)
 		{
@@ -259,7 +259,7 @@ StreamLog(void)
 	conn = GetConnection();
 
 	/*
-	 * Run IDENFITY_SYSTEM so we can get the timeline and current xlog
+	 * Run IDENTIFY_SYSTEM so we can get the timeline and current xlog
 	 * position.
 	 */
 	res = PQexec(conn, "IDENTIFY_SYSTEM");

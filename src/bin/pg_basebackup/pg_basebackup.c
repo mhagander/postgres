@@ -903,7 +903,7 @@ BaseBackup(void)
 	conn = GetConnection();
 
 	/*
-	 * Run IDENFITY_SYSTEM so we can get the timeline
+	 * Run IDENTIFY_SYSTEM so we can get the timeline
 	 */
 	res = PQexec(conn, "IDENTIFY_SYSTEM");
 	if (PQresultStatus(res) != PGRES_TUPLES_OK)
