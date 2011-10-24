@@ -239,8 +239,8 @@ FindStreamingStart(XLogRecPtr currentpos, uint32 currenttimeline)
 
 	if (high.xlogid > 0 && high.xrecoff > 0)
 		return high;
-
-	return currentpos;
+	else
+		return currentpos;
 }
 
 /*
