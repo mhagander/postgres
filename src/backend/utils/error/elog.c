@@ -123,7 +123,7 @@ static void write_syslog(int level, const char *line);
 static void write_console(const char *line, int len);
 
 #ifdef WIN32
-extern char *event_source; /* guc */
+extern char *event_source;
 static void write_eventlog(int level, const char *line, int len);
 #endif
 
