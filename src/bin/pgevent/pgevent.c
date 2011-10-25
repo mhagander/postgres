@@ -86,7 +86,7 @@ DllRegisterServer(void)
 	 * Add PostgreSQL source name as a subkey under the Application key in the
 	 * EventLog registry key.
 	 */
-	snprintf(key_name, sizeof(key_name),
+	_snprintf(key_name, sizeof(key_name),
 		"SYSTEM\\CurrentControlSet\\Services\\EventLog\\Application\\%s",
 		event_source);
 	if (RegCreateKey(HKEY_LOCAL_MACHINE, key_name, &key))
@@ -139,7 +139,7 @@ DllUnregisterServer(void)
 	 * the EventLog registry key.
 	 */
 
-	snprintf(key_name, sizeof(key_name),
+	_snprintf(key_name, sizeof(key_name),
 		"SYSTEM\\CurrentControlSet\\Services\\EventLog\\Application\\%s",
 		event_source);
 	if (RegDeleteKey(HKEY_LOCAL_MACHINE, key_name))
