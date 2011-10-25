@@ -131,7 +131,9 @@ FindStreamingStart(XLogRecPtr currentpos, uint32 currenttimeline)
 	struct dirent *dirent;
 	int			i;
 	bool		b;
-	XLogRecPtr	high = {0, 0};
+	uint32		high_log = 0;
+	uint32		high_seg = 0;
+	bool		partial = false;
 
 	dir = opendir(basedir);
 	if (dir == NULL)
@@ -179,7 +181,6 @@ FindStreamingStart(XLogRecPtr currentpos, uint32 currenttimeline)
 					progname, dirent->d_name);
 			disconnect_and_exit(1);
 		}
-		log *= XLOG_SEG_SIZE;
 
 		/* Ignore any files that are for another timeline */
 		if (tli != currenttimeline)
@@ -197,11 +198,11 @@ FindStreamingStart(XLogRecPtr currentpos, uint32 currenttimeline)
 		if (statbuf.st_size == 16 * 1024 * 1024)
 		{
 			/* Completed segment */
-			if (log > high.xlogid ||
-				(log == high.xlogid && seg > high.xrecoff))
+			if (log > high_log ||
+				(log == high_log && seg > high_seg))
 			{
-				high.xlogid = log;
-				high.xrecoff = seg;
+				high_log = log;
+				high_seg = seg;
 				continue;
 			}
 		}
@@ -236,14 +237,33 @@ FindStreamingStart(XLogRecPtr currentpos, uint32 currenttimeline)
 			}
 
 			/* Don't continue looking for more, we assume this is the last */
+			partial = true;
 			break;
 		}
 	}
 
 	closedir(dir);
 
-	if (high.xlogid > 0 && high.xrecoff > 0)
-		return high;
+	if (high_log > 0 || high_seg > 0)
+	{
+		XLogRecPtr	high_ptr;
+
+		if (!partial)
+		{
+			/*
+			 * If the segment was partial, the pointer is already at the right
+			 * location since we want to re-transmit that segment. If it was
+			 * not, we need to move it to the next segment, since we are
+			 * tracking the last one that was complete.
+			 */
+			NextLogSeg(high_log, high_seg);
+		}
+
+		high_ptr.xlogid = high_log;
+		high_ptr.xrecoff = high_seg * XLOG_SEG_SIZE;
+
+		return high_ptr;
+	}
 	else
 		return currentpos;
 }
