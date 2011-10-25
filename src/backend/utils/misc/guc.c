@@ -412,6 +412,7 @@ bool		log_executor_stats = false;
 bool		log_statement_stats = false;		/* this is sort of all three
 												 * above together */
 bool		log_btree_build_stats = false;
+char	   *event_source;
 
 bool		check_function_bodies = true;
 bool		default_with_oids = false;
@@ -452,6 +453,9 @@ int			tcp_keepalives_count;
 static char *log_destination_string;
 
 static char *syslog_ident_str;
+#ifdef WIN32
+static char *event_source_str;
+#endif
 static bool phony_autocommit;
 static bool session_auth_is_superuser;
 static double phony_random_seed;
@@ -2818,6 +2822,19 @@ static struct config_string ConfigureNamesString[] =
 		"postgres",
 		NULL, assign_syslog_ident, NULL
 	},
+
+#ifdef WIN32
+	{
+		{"event_source", PGC_POSTMASTER, LOGGING_WHERE,
+			gettext_noop("Sets the application name used to identify"
+						 "PostgreSQL messages in the event log."),
+			NULL
+		},
+		&event_source,
+		"PostgreSQL",
+		NULL, NULL, NULL
+	},
+#endif
 
 	{
 		{"TimeZone", PGC_USERSET, CLIENT_CONN_LOCALE,
@@ -8286,7 +8303,6 @@ assign_syslog_ident(const char *newval, void *extra)
 #endif
 	/* Without syslog support, it will always be set to "none", so ignore */
 }
-
 
 static void
 assign_session_replication_role(int newval, void *extra)

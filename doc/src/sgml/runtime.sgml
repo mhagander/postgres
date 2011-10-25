@@ -2295,4 +2295,54 @@ ssh -L 63333:db.foo.com:5432 joe@shell.foo.com
 
  </sect1>
 
+ <sect1 id="event-log-registration">
+  <title>Registering <application>Event Log</> on <systemitem
+  class="osname">Windows</></title>
+
+  <indexterm zone="event-log-registration">
+   <primary>event log</primary>
+   <secondary>event log</secondary>
+  </indexterm>
+
+  <para>
+   To register a <systemitem class="osname">Windows</> <application>event log</>
+   library with the operating system, issue this command:
+<screen>
+<userinput>regsvr32 <replaceable>pgsql_library_directory</>/pgevent.dll</>
+</screen>
+   This creates registry entries used by the event viewer, under the default event
+   source named "PostgreSQL".
+   </para>
+
+   <para>
+   You can specify the event source name with /i option. In this case, -n option
+   is necessary, too:
+<screen>
+<userinput>regsvr32 /n /i:<replaceable>event_source_name</>
+ <replaceable>pgsql_library_directory</>/pgevent.dll</>
+</screen>
+   You also need to set <xref linkend="guc-event-source"> in
+   <filename>postgresql.conf</filename>. Note that the event source specification
+   only takes effect for the database server. Other applications like
+   <command>pg_ctl</command> always use "PostgreSQL" event source.
+   </para>
+
+   <para>
+   To unregister the <application>event log</> library from
+   the operating system, issue this command:
+<screen>
+<userinput>regsvr32 /u [/i:<replaceable>event_source_name</>]
+ <replaceable>pgsql_library_directory</>/pgevent.dll</>
+</screen>
+   </para>
+
+  <note>
+   <para>
+    To enable event logging in the database server, modify
+    <xref linkend="guc-log-destination"> to include
+    <systemitem>eventlog</systemitem> in <filename>postgresql.conf</filename>.
+   </para>
+  </note>
+ </sect1>
+
 </chapter>
