@@ -453,9 +453,6 @@ int			tcp_keepalives_count;
 static char *log_destination_string;
 
 static char *syslog_ident_str;
-#ifdef WIN32
-static char *event_source_str;
-#endif
 static bool phony_autocommit;
 static bool session_auth_is_superuser;
 static double phony_random_seed;
