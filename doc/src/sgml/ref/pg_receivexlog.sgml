@@ -173,15 +173,15 @@ PostgreSQL documentation
       <term><option>--password</option></term>
       <listitem>
        <para>
-        Force <application>pg_basebackup</application> to prompt for a
+        Force <application>pg_receivexlog</application> to prompt for a
         password before connecting to a database.
        </para>
 
        <para>
         This option is never essential, since
-        <application>pg_bsaebackup</application> will automatically prompt
+        <application>pg_receivexlog</application> will automatically prompt
         for a password if the server demands password authentication.
-        However, <application>pg_basebackup</application> will waste a
+        However, <application>pg_receivexlog</application> will waste a
         connection attempt finding out that the server wants a password.
         In some cases it is worth typing <option>-W</> to avoid the extra
         connection attempt.
