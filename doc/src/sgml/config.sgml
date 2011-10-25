@@ -3300,17 +3300,17 @@ local0.*    /var/log/postgresql
       <indexterm>
        <primary><varname>event_source</> configuration parameter</primary>
       </indexterm>
-       <listitem>
-        <para>
-         When logging to <application>event log</> is enabled, this parameter
-         determines the program name used to identify
-         <productname>PostgreSQL</productname> messages in
-         the log. The default is <literal>PostgreSQL</literal>.
-         This parameter can only be set in the <filename>postgresql.conf</>
-         file or on the server command line.
-        </para>
-       </listitem>
-      </varlistentry>
+      <listitem>
+       <para>
+        When logging to <application>event log</> is enabled, this parameter
+        determines the program name used to identify
+        <productname>PostgreSQL</productname> messages in
+        the log. The default is <literal>PostgreSQL</literal>.
+        This parameter can only be set in the <filename>postgresql.conf</>
+        file or on the server command line.
+       </para>
+      </listitem>
+     </varlistentry>
 
       </variablelist>
     </sect2>
