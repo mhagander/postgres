@@ -28,7 +28,7 @@ HANDLE		g_module = NULL;	/* hModule of DLL */
 char		event_source[256] = "PostgreSQL";
 
 /* Prototypes */
-HRESULT DllInstall(BOOL bInstall, __in_opt LPCWSTR pszCmdLine);
+HRESULT		DllInstall(BOOL bInstall, __in_opt LPCWSTR pszCmdLine);
 STDAPI		DllRegisterServer(void);
 STDAPI		DllUnregisterServer(void);
 BOOL WINAPI DllMain(HANDLE hModule, DWORD ul_reason_for_call, LPVOID lpReserved);
@@ -44,13 +44,13 @@ DllInstall(BOOL bInstall,
 	size_t ret;
 
 	if (pszCmdLine && *pszCmdLine != '\0')
-		wcstombs_s(&ret, event_source, sizeof(event_source), 
+		wcstombs_s(&ret, event_source, sizeof(event_source),
 			pszCmdLine, sizeof(event_source));
 
 	/*
 	 * This is an ugry part due to the strange behavior of "regsvr32 /i".
 	 * When installing, regsvr32 calls DllRegisterServer before DllInstall.
-	 * When uninstalling (i.e. "regsvr32 /u /i"), on the other hand, 
+	 * When uninstalling (i.e. "regsvr32 /u /i"), on the other hand,
 	 * regsvr32 calls DllInstall and then DllUnregisterServer as expected.
 	 * This strange behavior forces us to specify -n (i.e. "regsvr32 /n /i").
 	 * Without -n, DllRegisterServer called before DllInstall would
@@ -84,7 +84,7 @@ DllRegisterServer(void)
 	 * Add PostgreSQL source name as a subkey under the Application key in the
 	 * EventLog registry key.
 	 */
-	snprintf(key_name, sizeof(key_name), 
+	snprintf(key_name, sizeof(key_name),
 		"SYSTEM\\CurrentControlSet\\Services\\EventLog\\Application\\%s",
 		event_source);
 	if (RegCreateKey(HKEY_LOCAL_MACHINE, key_name, &key))
@@ -137,7 +137,7 @@ DllUnregisterServer(void)
 	 * the EventLog registry key.
 	 */
 
-	snprintf(key_name, sizeof(key_name), 
+	snprintf(key_name, sizeof(key_name),
 		"SYSTEM\\CurrentControlSet\\Services\\EventLog\\Application\\%s",
 		event_source);
 	if (RegDeleteKey(HKEY_LOCAL_MACHINE, key_name))
