@@ -105,7 +105,7 @@ segment_callback(XLogRecPtr segendpos, uint32 timeline)
 }
 
 static bool
-continue_streaming()
+continue_streaming(void)
 {
 	if (time_to_abort)
 	{
