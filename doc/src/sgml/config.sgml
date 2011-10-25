@@ -3040,7 +3040,7 @@ local0.*    /var/log/postgresql
         <para>
          On Windows, when you use the <systemitem>eventlog</systemitem>
          option for <varname>log_destination</>, you should
-         register an event sourceand its library with the operating
+         register an event source and its library with the operating
          system so that the Windows Event Viewer can display event
          log messages cleanly.
          See <xref linkend="event-log-registration"> for details.
