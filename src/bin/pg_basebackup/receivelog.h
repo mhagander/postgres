@@ -12,11 +12,11 @@ typedef bool (*segment_finish_callback)(XLogRecPtr segendpos, uint32 timeline);
  */
 typedef bool (*stream_continue_callback)(void);
 
-bool ReceiveXlogStream(PGconn *conn,
-					   XLogRecPtr startpos,
-					   uint32 timeline,
-					   char *sysidentifier,
-					   char *basedir,
-					   segment_finish_callback segment_finish,
-					   stream_continue_callback stream_continue,
-					   int standby_message_timeout);
+extern bool ReceiveXlogStream(PGconn *conn,
+							  XLogRecPtr startpos,
+							  uint32 timeline,
+							  char *sysidentifier,
+							  char *basedir,
+							  segment_finish_callback segment_finish,
+							  stream_continue_callback stream_continue,
+							  int standby_message_timeout);
