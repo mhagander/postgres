@@ -8301,6 +8301,7 @@ assign_syslog_ident(const char *newval, void *extra)
 	/* Without syslog support, it will always be set to "none", so ignore */
 }
 
+
 static void
 assign_session_replication_role(int newval, void *extra)
 {
