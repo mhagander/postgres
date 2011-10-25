@@ -3038,7 +3038,7 @@ local0.*    /var/log/postgresql
          to make it work.
         </para>
         <para>
-         On Windows, when you use the <systemitem>eventlog</systemitem>
+         On Windows, when you use the <literal>eventlog</literal>
          option for <varname>log_destination</>, you should
          register an event source and its library with the operating
          system so that the Windows Event Viewer can display event
@@ -3305,8 +3305,7 @@ local0.*    /var/log/postgresql
          When logging to <application>event log</> is enabled, this parameter
          determines the program name used to identify
          <productname>PostgreSQL</productname> messages in
-         <application>event log</application>. The default is
-         <literal>PostgreSQL</literal>.
+         the log. The default is <literal>PostgreSQL</literal>.
          This parameter can only be set in the <filename>postgresql.conf</>
          file or on the server command line.
         </para>
