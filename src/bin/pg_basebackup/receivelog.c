@@ -90,6 +90,21 @@ localGetCurrentTimestamp(void)
  * identifier and the timeline matches the specified ones
  * (by sending an extra IDENTIFY_SYSTEM command)
  *
+ * All received segments will be written to the directory
+ * specified by basedir.
+ *
+ * The segment_finish callback will be called after each segment
+ * has been finished, and the stream_continue callback will be
+ * called every time data is received. If either of these callbacks
+ * return true, the streaming will stop and the function
+ * return. As long as they return false, streaming will continue
+ * indefinitely.
+ *
+ * standby_message_timeout controls how often we send a message
+ * back to the master letting it know our progress, in seconds.
+ * This message will only contain the write location, and never
+ * flush or replay.
+ *
  * Note: The log position *must* be at a log segment start!
  */
 bool
