@@ -2305,36 +2305,36 @@ ssh -L 63333:db.foo.com:5432 joe@shell.foo.com
   </indexterm>
 
   <para>
-   To register a <systemitem class="osname">Windows</> <application>event log</>
-   library with the operating system, issue this command:
+   To register a <systemitem class="osname">Windows</>
+   <application>event log</> library with the operating system,
+   issue this command:
 <screen>
 <userinput>regsvr32 <replaceable>pgsql_library_directory</>/pgevent.dll</>
 </screen>
-   This creates registry entries used by the event viewer, under the default event
-   source named "PostgreSQL".
-   </para>
+   This creates registry entries used by the event viewer, under the default
+   event source named "PostgreSQL".
+  </para>
 
-   <para>
-   You can specify the event source name with /i option. In this case, -n option
-   is necessary, too:
+  <para>
+   You can specify the event source name with /i option. In this case,
+   the <literal>-n</> option is necessary:
 <screen>
-<userinput>regsvr32 /n /i:<replaceable>event_source_name</>
- <replaceable>pgsql_library_directory</>/pgevent.dll</>
+<userinput>regsvr32 /n /i:<replaceable>event_source_name</> <replaceable>pgsql_library_directory</>/pgevent.dll</>
 </screen>
    You also need to set <xref linkend="guc-event-source"> in
-   <filename>postgresql.conf</filename>. Note that the event source specification
-   only takes effect for the database server. Other applications like
-   <command>pg_ctl</command> always use "PostgreSQL" event source.
-   </para>
+   <filename>postgresql.conf</filename>. Note that the event source
+   specification only takes effect for the database server. Other
+   applications like <command>pg_ctl</command> always use
+   <literal>PostgreSQL</literal> event source.
+  </para>
 
-   <para>
+  <para>
    To unregister the <application>event log</> library from
    the operating system, issue this command:
 <screen>
-<userinput>regsvr32 /u [/i:<replaceable>event_source_name</>]
- <replaceable>pgsql_library_directory</>/pgevent.dll</>
+<userinput>regsvr32 /u [/i:<replaceable>event_source_name</>] <replaceable>pgsql_library_directory</>/pgevent.dll</>
 </screen>
-   </para>
+  </para>
 
   <note>
    <para>
