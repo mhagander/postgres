@@ -51,13 +51,62 @@ open_walfile(XLogRecPtr startpoint, uint32 timeline, char *basedir, char *namebu
 	XLogFileName(namebuf, timeline, startpoint.xlogid,
 				 startpoint.xrecoff / XLOG_SEG_SIZE);
 
-	snprintf(fn, sizeof(fn), "%s/%s", basedir, namebuf);
-	f = open(fn, O_WRONLY | O_CREAT | O_EXCL | PG_BINARY, 0666);
+	snprintf(fn, sizeof(fn), "%s/%s.partial", basedir, namebuf);
+	f = open(fn, O_WRONLY | O_CREAT | PG_BINARY, 0666);
 	if (f == -1)
 		fprintf(stderr, _("%s: Could not open WAL segment %s: %s\n"),
-				progname, namebuf, strerror(errno));
+				progname, fn, strerror(errno));
+
 	return f;
 }
+
+static bool
+close_walfile(int walfile, char *basedir, char *walname)
+{
+	off_t		size = lseek(walfile, 0, SEEK_END);
+
+	if (size == -1)
+	{
+		fprintf(stderr, _("%s: could not get size of written file %s: %s\n"),
+				progname, walname, strerror(errno));
+		return false;
+	}
+
+	if (fsync(walfile) != 0)
+	{
+		fprintf(stderr, _("%s: could not fsync file %s: %s\n"),
+				progname, walname, strerror(errno));
+		return false;
+	}
+
+	if (close(walfile) != 0)
+	{
+		fprintf(stderr, _("%s: could not close file %s: %s\n"),
+				progname, walname, strerror(errno));
+		return false;
+	}
+
+	/* Rename the .partial file only if it's 16Mb */
+	if (size == XLOG_SEG_SIZE)
+	{
+		char		oldfn[MAXPGPATH];
+		char		newfn[MAXPGPATH];
+
+		snprintf(oldfn, sizeof(oldfn), "%s/%s.partial", basedir, walname);
+		snprintf(newfn, sizeof(newfn), "%s/%s", basedir, walname);
+		if (rename(oldfn, newfn) != 0)
+		{
+			fprintf(stderr, _("%s: could not rename file %s: %s\n"),
+					progname, walname, strerror(errno));
+			return false;
+		}
+	}
+	else
+		fprintf(stderr, "Not renaming %s, segment is not complete.\n", walname);
+
+	return true;
+}
+
 
 /*
  * Local version of GetCurrentTimestamp(), since we are not linked with
@@ -178,10 +227,8 @@ ReceiveXlogStream(PGconn *conn, XLogRecPtr startpos, uint32 timeline, char *sysi
 		if (stream_continue && stream_continue())
 		{
 			if (walfile != -1)
-			{
-				fsync(walfile);
-				close(walfile);
-			}
+				/* Potential error message is written by close_walfile */
+				return close_walfile(walfile, basedir, current_walfile_name);
 			return true;
 		}
 
@@ -360,8 +407,10 @@ ReceiveXlogStream(PGconn *conn, XLogRecPtr startpos, uint32 timeline, char *sysi
 			/* Did we reach the end of a WAL segment? */
 			if (blockpos.xrecoff % XLOG_SEG_SIZE == 0)
 			{
-				fsync(walfile);
-				close(walfile);
+				if (!close_walfile(walfile, basedir, current_walfile_name))
+					/* Error message written in close_walfile() */
+					return false;
+
 				walfile = -1;
 				xlogoff = 0;
 
