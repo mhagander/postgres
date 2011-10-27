@@ -102,7 +102,8 @@ close_walfile(int walfile, char *basedir, char *walname)
 		}
 	}
 	else
-		fprintf(stderr, "Not renaming %s, segment is not complete.\n", walname);
+		fprintf(stderr, _("%s: not renaming %s, segment is not complete.\n"),
+				progname, walname);
 
 	return true;
 }
