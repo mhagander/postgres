@@ -27,6 +27,7 @@
 #include "receivelog.h"
 #include "streamutil.h"
 
+#include <sys/stat.h>
 #include <sys/time.h>
 #include <sys/types.h>
 #include <unistd.h>
@@ -41,12 +42,17 @@ const XLogRecPtr InvalidXLogRecPtr = {0, 0};
  * Open a new WAL file in the specified directory. Store the name
  * (not including the full directory) in namebuf. Assumes there is
  * enough room in this buffer...
+ *
+ * The file will be padded to 16Mb with zeroes.
  */
 static int
 open_walfile(XLogRecPtr startpoint, uint32 timeline, char *basedir, char *namebuf)
 {
 	int			f;
 	char		fn[MAXPGPATH];
+	struct stat	statbuf;
+	char	   *zerobuf;
+	int			bytes;
 
 	XLogFileName(namebuf, timeline, startpoint.xlogid,
 				 startpoint.xrecoff / XLOG_SEG_SIZE);
@@ -57,17 +63,57 @@ open_walfile(XLogRecPtr startpoint, uint32 timeline, char *basedir, char *namebu
 		fprintf(stderr, _("%s: Could not open WAL segment %s: %s\n"),
 				progname, fn, strerror(errno));
 
+	/*
+	 * Verify that the file is either empty (just created), or a complete
+	 * XLogSegSize segment. Anything in between indicates a corrupt file.
+	 */
+	if (fstat(f, &statbuf) != 0)
+	{
+		fprintf(stderr, _("%s: could not stat WAL segment %s: %s\n"),
+				progname, fn, strerror(errno));
+		close(f);
+		return -1;
+	}
+	if (statbuf.st_size == XLogSegSize)
+		return f; /* File is open and ready to use */
+	if (statbuf.st_size != 0)
+	{
+		fprintf(stderr, _("%s: WAL segment %s is %d bytes, should be 0 or %d\n"),
+				progname, fn, (int) statbuf.st_size, XLogSegSize);
+		close(f);
+		return -1;
+	}
+
+	/* New, empty, file. So pad it to 16Mb with zeroes */
+	zerobuf = xmalloc0(XLOG_BLCKSZ);
+	for (bytes = 0; bytes < XLogSegSize; bytes += XLOG_BLCKSZ)
+	{
+		if (write(f, zerobuf, XLOG_BLCKSZ) != XLOG_BLCKSZ)
+		{
+			fprintf(stderr, _("%s: could not pad WAL segment %s: %s\n"),
+					progname, fn, strerror(errno));
+			close(f);
+			return -1;
+		}
+	}
+	if (lseek(f, SEEK_SET, 0) != 0)
+	{
+		fprintf(stderr, _("%s: could not seek back to beginning of WAL segment %s: %s\n"),
+				progname, fn, strerror(errno));
+		close(f);
+		return -1;
+	}
 	return f;
 }
 
 static bool
 close_walfile(int walfile, char *basedir, char *walname)
 {
-	off_t		size = lseek(walfile, 0, SEEK_END);
+	off_t		currpos = lseek(walfile, 0, SEEK_CUR);
 
-	if (size == -1)
+	if (currpos == -1)
 	{
-		fprintf(stderr, _("%s: could not get size of written file %s: %s\n"),
+		fprintf(stderr, _("%s: could not get current position in file %s: %s\n"),
 				progname, walname, strerror(errno));
 		return false;
 	}
@@ -86,8 +132,11 @@ close_walfile(int walfile, char *basedir, char *walname)
 		return false;
 	}
 
-	/* Rename the .partial file only if it's 16Mb */
-	if (size == XLOG_SEG_SIZE)
+	/*
+	 * Rename the .partial file only if we've completed writing the
+	 * whole segment.
+	 */
+	if (currpos == XLOG_SEG_SIZE)
 	{
 		char		oldfn[MAXPGPATH];
 		char		newfn[MAXPGPATH];
