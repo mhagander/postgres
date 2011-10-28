@@ -96,9 +96,8 @@ continue_streaming(void)
 /*
  * Determine starting location for streaming, based on:
  * 1. If there are existing xlog segments, start at the end of the last one
- * 2. If the last one is a partial segment, rename it and start over, since
- *	  we don't sync after every write.
- * 3. If no existing xlog exists, start from the beginning of the current
+ *    that is complete (size matches XLogSegSize)
+ * 2. If no valid xlog exists, start from the beginning of the current
  *	  WAL segment.
  */
 static XLogRecPtr
