@@ -96,6 +96,8 @@ open_walfile(XLogRecPtr startpoint, uint32 timeline, char *basedir, char *namebu
 			return -1;
 		}
 	}
+	free(zerobuf);
+
 	if (lseek(f, SEEK_SET, 0) != 0)
 	{
 		fprintf(stderr, _("%s: could not seek back to beginning of WAL segment %s: %s\n"),
