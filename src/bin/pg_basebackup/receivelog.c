@@ -58,7 +58,7 @@ open_walfile(XLogRecPtr startpoint, uint32 timeline, char *basedir, char *namebu
 				 startpoint.xrecoff / XLOG_SEG_SIZE);
 
 	snprintf(fn, sizeof(fn), "%s/%s.partial", basedir, namebuf);
-	f = open(fn, O_WRONLY | O_CREAT | PG_BINARY, 0666);
+	f = open(fn, O_WRONLY | O_CREAT | PG_BINARY, S_IRUSR | S_IWUSR);
 	if (f == -1)
 		fprintf(stderr, _("%s: Could not open WAL segment %s: %s\n"),
 				progname, fn, strerror(errno));
