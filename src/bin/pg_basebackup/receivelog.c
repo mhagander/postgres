@@ -93,6 +93,7 @@ open_walfile(XLogRecPtr startpoint, uint32 timeline, char *basedir, char *namebu
 			fprintf(stderr, _("%s: could not pad WAL segment %s: %s\n"),
 					progname, fn, strerror(errno));
 			close(f);
+			unlink(fn);
 			return -1;
 		}
 	}
