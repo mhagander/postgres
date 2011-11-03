@@ -60,8 +60,11 @@ open_walfile(XLogRecPtr startpoint, uint32 timeline, char *basedir, char *namebu
 	snprintf(fn, sizeof(fn), "%s/%s.partial", basedir, namebuf);
 	f = open(fn, O_WRONLY | O_CREAT | PG_BINARY, S_IRUSR | S_IWUSR);
 	if (f == -1)
+	{
 		fprintf(stderr, _("%s: Could not open WAL segment %s: %s\n"),
 				progname, fn, strerror(errno));
+		return -1;
+	}
 
 	/*
 	 * Verify that the file is either empty (just created), or a complete
