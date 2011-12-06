@@ -18,6 +18,7 @@
 #include <signal.h>
 #include <dirent.h>
 #include <math.h>
+#include <unistd.h>
 
 #include "catalog/catalog.h"
 #include "catalog/pg_tablespace.h"
@@ -260,6 +261,38 @@ pg_tablespace_databases(PG_FUNCTION_ARGS)
 	SRF_RETURN_DONE(funcctx);
 }
 
+
+/*
+ * pg_tablespace_location - get location for a tablespace
+ */
+Datum
+pg_tablespace_location(PG_FUNCTION_ARGS)
+{
+	Oid		tablespaceOid = PG_GETARG_OID(0);
+	char	sourcepath[MAXPGPATH];
+	char	targetpath[MAXPGPATH];
+
+	/*
+	 * Return empty string for our two default tablespace
+	 */
+	if (tablespaceOid == DEFAULTTABLESPACE_OID ||
+		tablespaceOid == GLOBALTABLESPACE_OID)
+		PG_RETURN_TEXT_P(cstring_to_text(""));
+
+	/*
+	 * Find the location of the tablespace by reading the symbolic link that is
+	 * in pg_tblspc/<oid>.
+	 */
+	snprintf(sourcepath, sizeof(sourcepath), "pg_tblspc/%d", tablespaceOid);
+	MemSet(targetpath, 0, sizeof(targetpath));
+	if (readlink(sourcepath, targetpath, sizeof(targetpath)) == -1)
+	{
+		ereport(ERROR,
+				(errmsg("could not read symbolic link \"%s\": %m", sourcepath)));
+	}
+
+	PG_RETURN_TEXT_P(cstring_to_text(targetpath));
+}
 
 /*
  * pg_sleep - delay for N seconds
