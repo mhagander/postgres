@@ -286,10 +286,8 @@ pg_tablespace_location(PG_FUNCTION_ARGS)
 	snprintf(sourcepath, sizeof(sourcepath), "pg_tblspc/%d", tablespaceOid);
 	MemSet(targetpath, 0, sizeof(targetpath));
 	if (readlink(sourcepath, targetpath, sizeof(targetpath)) == -1)
-	{
 		ereport(ERROR,
 				(errmsg("could not read symbolic link \"%s\": %m", sourcepath)));
-	}
 
 	PG_RETURN_TEXT_P(cstring_to_text(targetpath));
 }
