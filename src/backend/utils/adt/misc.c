@@ -283,7 +283,7 @@ pg_tablespace_location(PG_FUNCTION_ARGS)
 	 * Find the location of the tablespace by reading the symbolic link that is
 	 * in pg_tblspc/<oid>.
 	 */
-	snprintf(sourcepath, sizeof(sourcepath), "pg_tblspc/%d", tablespaceOid);
+	snprintf(sourcepath, sizeof(sourcepath), "pg_tblspc/%u", tablespaceOid);
 	MemSet(targetpath, 0, sizeof(targetpath));
 	if (readlink(sourcepath, targetpath, sizeof(targetpath)) == -1)
 		ereport(ERROR,
