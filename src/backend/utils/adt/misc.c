@@ -271,7 +271,7 @@ pg_tablespace_location(PG_FUNCTION_ARGS)
 	Oid		tablespaceOid = PG_GETARG_OID(0);
 	char	sourcepath[MAXPGPATH];
 	char	targetpath[MAXPGPATH];
-	int		r;
+	int		rllen;
 
 	/*
 	 * Return empty string for our two default tablespace
@@ -286,11 +286,11 @@ pg_tablespace_location(PG_FUNCTION_ARGS)
 	 * in pg_tblspc/<oid>.
 	 */
 	snprintf(sourcepath, sizeof(sourcepath), "pg_tblspc/%u", tablespaceOid);
-	r =readlink(sourcepath, targetpath, sizeof(targetpath));
-	if (r < 0 || r >= sizeof(targetpath))
+	rllen =readlink(sourcepath, targetpath, sizeof(targetpath));
+	if (rllen < 0 || rllen >= sizeof(targetpath))
 		ereport(ERROR,
 				(errmsg("could not read symbolic link \"%s\": %m", sourcepath)));
-	targetpath[r] = '\0';
+	targetpath[rllen] = '\0';
 
 	PG_RETURN_TEXT_P(cstring_to_text(targetpath));
 #else
