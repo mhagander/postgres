@@ -271,6 +271,7 @@ pg_tablespace_location(PG_FUNCTION_ARGS)
 	Oid		tablespaceOid = PG_GETARG_OID(0);
 	char	sourcepath[MAXPGPATH];
 	char	targetpath[MAXPGPATH];
+	int		r;
 
 	/*
 	 * Return empty string for our two default tablespace
@@ -279,17 +280,24 @@ pg_tablespace_location(PG_FUNCTION_ARGS)
 		tablespaceOid == GLOBALTABLESPACE_OID)
 		PG_RETURN_TEXT_P(cstring_to_text(""));
 
+#if defined(HAVE_READLINK) || defined(WIN32)
 	/*
 	 * Find the location of the tablespace by reading the symbolic link that is
 	 * in pg_tblspc/<oid>.
 	 */
 	snprintf(sourcepath, sizeof(sourcepath), "pg_tblspc/%u", tablespaceOid);
-	MemSet(targetpath, 0, sizeof(targetpath));
-	if (readlink(sourcepath, targetpath, sizeof(targetpath)) == -1)
+	r =readlink(sourcepath, targetpath, sizeof(targetpath));
+	if (r < 0 || r >= sizeof(targetpath))
 		ereport(ERROR,
 				(errmsg("could not read symbolic link \"%s\": %m", sourcepath)));
+	targetpath[r] = '\0';
 
 	PG_RETURN_TEXT_P(cstring_to_text(targetpath));
+#else
+	ereport(ERROR,
+			(errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
+			 errmsg("tablespaces are not supported on this platform")));
+#endif
 }
 
 /*
