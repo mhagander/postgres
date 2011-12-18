@@ -103,8 +103,7 @@ pg_signal_backend(int pid, int sig, bool allow_same_role)
 		else
 			ereport(ERROR,
 					(errcode(ERRCODE_INSUFFICIENT_PRIVILEGE),
-					 errmsg("must be superuser to terminate other server processes"),
-					 errhint("You can cancel your own processes with pg_cancel_backend().")));
+					 errmsg("must be superuser to signal other server processes")));
 	}
 
 	if (!IsBackendPid(pid))
