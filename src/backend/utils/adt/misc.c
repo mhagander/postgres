@@ -76,22 +76,23 @@ current_query(PG_FUNCTION_ARGS)
 static bool
 pg_signal_backend(int pid, int sig, bool allow_same_role)
 {
-	PGPROC	*proc;
+	PGPROC	   *proc;
 
-	if (!superuser()) 
+	if (!superuser())
 	{
 		if (allow_same_role)
 		{
 			/*
-			 * When same role permission is allowed, check for matching roles. Trust
-			 * that BackendPidGetProc will return NULL if the pid isn't valid, even
-			 * though the check for whether it's a backend process is below. The
-			 * IsBackendPid check can't be relied on as definitive even if it was
-			 * first. The process might end between successive checks regardless of
-			 * their order. There's no way to acquire a lock on an arbitrary
-			 * process to prevent that. But since so far all the callers of this
-			 * mechanism involve some request for ending the process anyway, that
-			 * it might end on its own first is not a problem.
+			 * When same role permission is allowed, check for matching roles.
+			 * Trust that BackendPidGetProc will return NULL if the pid isn't
+			 * valid, even though the check for whether it's a backend process
+			 * is below. The IsBackendPid check can't be relied on as
+			 * definitive even if it was first. The process might end between
+			 * successive checks regardless of their order. There's no way to
+			 * acquire a lock on an arbitrary process to prevent that. But
+			 * since so far all the callers of this mechanism involve some
+			 * request for ending the process anyway, that it might end on its
+			 * own first is not a problem.
 			 */
 			proc = BackendPidGetProc(pid);
 
@@ -103,7 +104,7 @@ pg_signal_backend(int pid, int sig, bool allow_same_role)
 		else
 			ereport(ERROR,
 					(errcode(ERRCODE_INSUFFICIENT_PRIVILEGE),
-					 errmsg("must be superuser to signal other server processes")));
+			  errmsg("must be superuser to signal other server processes")));
 	}
 
 	if (!IsBackendPid(pid))
@@ -119,10 +120,10 @@ pg_signal_backend(int pid, int sig, bool allow_same_role)
 
 	/*
 	 * Can the process we just validated above end, followed by the pid being
-	 * recycled for a new process, before reaching here?  Then we'd be trying to
-	 * kill the wrong thing.  Seems near impossible when sequential pid
+	 * recycled for a new process, before reaching here?  Then we'd be trying
+	 * to kill the wrong thing.  Seems near impossible when sequential pid
 	 * assignment and wraparound is used.  Perhaps it could happen on a system
-	 * where pid re-use is randomized.  That race condition possibility seems
+	 * where pid re-use is randomized.	That race condition possibility seems
 	 * too unlikely to worry about.
 	 */
 
@@ -142,7 +143,7 @@ pg_signal_backend(int pid, int sig, bool allow_same_role)
 }
 
 /*
- * Signal to cancel a backend process.  This is allowed if you are superuser or
+ * Signal to cancel a backend process.	This is allowed if you are superuser or
  * have the same role as the process being canceled.
  */
 Datum
