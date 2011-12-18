@@ -77,37 +77,35 @@ static bool
 pg_signal_backend(int pid, int sig, bool allow_same_role)
 {
 	PGPROC	*proc;
-	bool	allowed = superuser();
 
-	if (!allowed && allow_same_role)
+	if (!superuser()) 
 	{
-		/*
-		 * When same role permission is allowed, check for matching roles.  Trust
-		 * that BackendPidGetProc will return NULL if the pid isn't valid, even
-		 * though the check for whether it's a backend process is below.  The
-		 * IsBackendPid check can't be relied on as definitive even if it was
-		 * first.  The process might end between successive checks regardless of
-		 * their order.  There's no way to acquire a lock on an arbitrary
-		 * process to prevent that.  But since so far all the callers of this
-		 * mechanism involve some request for ending the process anyway, that
-		 * it might end on its own first is not a problem.
-		 */
-		proc = BackendPidGetProc(pid);
+		if (allow_same_role)
+		{
+			/*
+			 * When same role permission is allowed, check for matching roles. Trust
+			 * that BackendPidGetProc will return NULL if the pid isn't valid, even
+			 * though the check for whether it's a backend process is below. The
+			 * IsBackendPid check can't be relied on as definitive even if it was
+			 * first. The process might end between successive checks regardless of
+			 * their order. There's no way to acquire a lock on an arbitrary
+			 * process to prevent that. But since so far all the callers of this
+			 * mechanism involve some request for ending the process anyway, that
+			 * it might end on its own first is not a problem.
+			 */
+			proc = BackendPidGetProc(pid);
 
-		if ((proc != NULL) && (proc->roleId == GetUserId()))
-			allowed = true;
+			if (proc == NULL || proc->roleId != GetUserId())
+				ereport(ERROR,
+						(errcode(ERRCODE_INSUFFICIENT_PRIVILEGE),
+						 (errmsg("must be superuser or have the same role to signal other server processes"))));
+		}
 		else
 			ereport(ERROR,
 					(errcode(ERRCODE_INSUFFICIENT_PRIVILEGE),
-					(errmsg("must be superuser or have the same role to signal other server processes"))));
+					 errmsg("must be superuser to terminate other server processes"),
+					 errhint("You can cancel your own processes with pg_cancel_backend().")));
 	}
-
-	/* Rejected the same role case above, must be superuser only by here */
-	if (!allowed)
-		ereport(ERROR,
-				(errcode(ERRCODE_INSUFFICIENT_PRIVILEGE),
-				errmsg("must be superuser to terminate other server processes"),
-				errhint("You can cancel your own processes with pg_cancel_backend().")));
 
 	if (!IsBackendPid(pid))
 	{
