@@ -30,6 +30,7 @@
 #include "postmaster/syslogger.h"
 #include "storage/fd.h"
 #include "storage/pmsignal.h"
+#include "storage/proc.h"
 #include "storage/procarray.h"
 #include "tcop/tcopprot.h"
 #include "utils/builtins.h"
@@ -70,15 +71,43 @@ current_query(PG_FUNCTION_ARGS)
 }
 
 /*
- * Functions to send signals to other backends.
+ * Send a signal to another backend
  */
 static bool
-pg_signal_backend(int pid, int sig)
+pg_signal_backend(int pid, int sig, bool allow_same_role)
 {
-	if (!superuser())
+	PGPROC	*proc;
+	bool	allowed = superuser();
+
+	if (!allowed && allow_same_role)
+	{
+		/*
+		 * When same role permission is allowed, check for matching roles.  Trust
+		 * that BackendPidGetProc will return NULL if the pid isn't valid, even
+		 * though the check for whether it's a backend process is below.  The
+		 * IsBackendPid check can't be relied on as definitive even if it was
+		 * first.  The process might end between successive checks regardless of
+		 * their order.  There's no way to acquire a lock on an arbitrary
+		 * process to prevent that.  But since so far all the callers of this
+		 * mechanism involve some request for ending the process anyway, that
+		 * it might end on its own first is not a problem.
+		 */
+		proc = BackendPidGetProc(pid);
+
+		if ((proc != NULL) && (proc->roleId == GetUserId()))
+			allowed = true;
+		else
+			ereport(ERROR,
+					(errcode(ERRCODE_INSUFFICIENT_PRIVILEGE),
+					(errmsg("must be superuser or have the same role to signal other server processes"))));
+	}
+
+	/* Rejected the same role case above, must be superuser only by here */
+	if (!allowed)
 		ereport(ERROR,
 				(errcode(ERRCODE_INSUFFICIENT_PRIVILEGE),
-			(errmsg("must be superuser to signal other server processes"))));
+				errmsg("must be superuser to terminate other server processes"),
+				errhint("You can cancel your own processes with pg_cancel_backend().")));
 
 	if (!IsBackendPid(pid))
 	{
@@ -90,6 +119,15 @@ pg_signal_backend(int pid, int sig)
 				(errmsg("PID %d is not a PostgreSQL server process", pid)));
 		return false;
 	}
+
+	/*
+	 * Can the process we just validated above end, followed by the pid being
+	 * recycled for a new process, before reaching here?  Then we'd be trying to
+	 * kill the wrong thing.  Seems near impossible when sequential pid
+	 * assignment and wraparound is used.  Perhaps it could happen on a system
+	 * where pid re-use is randomized.  That race condition possibility seems
+	 * too unlikely to worry about.
+	 */
 
 	/* If we have setsid(), signal the backend's whole process group */
 #ifdef HAVE_SETSID
@@ -106,18 +144,28 @@ pg_signal_backend(int pid, int sig)
 	return true;
 }
 
+/*
+ * Signal to cancel a backend process.  This is allowed if you are superuser or
+ * have the same role as the process being canceled.
+ */
 Datum
 pg_cancel_backend(PG_FUNCTION_ARGS)
 {
-	PG_RETURN_BOOL(pg_signal_backend(PG_GETARG_INT32(0), SIGINT));
+	PG_RETURN_BOOL(pg_signal_backend(PG_GETARG_INT32(0), SIGINT, true));
 }
 
+/*
+ * Signal to terminate a backend process.  Only allowed by superuser.
+ */
 Datum
 pg_terminate_backend(PG_FUNCTION_ARGS)
 {
-	PG_RETURN_BOOL(pg_signal_backend(PG_GETARG_INT32(0), SIGTERM));
+	PG_RETURN_BOOL(pg_signal_backend(PG_GETARG_INT32(0), SIGTERM, false));
 }
 
+/*
+ * Signal to reload the database configuration
+ */
 Datum
 pg_reload_conf(PG_FUNCTION_ARGS)
 {
