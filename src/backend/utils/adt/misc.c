@@ -71,10 +71,13 @@ current_query(PG_FUNCTION_ARGS)
 }
 
 /*
- * Send a signal to another backend
+ * Send a signal to another backend.
+ * If allow_same_role is false, actionstr must be set to a string
+ * indicating what the signal does, to be inserted in the error message, and
+ * hint should be set to a hint to be sent along with this message.
  */
 static bool
-pg_signal_backend(int pid, int sig, bool allow_same_role)
+pg_signal_backend(int pid, int sig, bool allow_same_role, const char *actionstr, const char *hint)
 {
 	PGPROC	   *proc;
 
@@ -104,7 +107,8 @@ pg_signal_backend(int pid, int sig, bool allow_same_role)
 		else
 			ereport(ERROR,
 					(errcode(ERRCODE_INSUFFICIENT_PRIVILEGE),
-			  errmsg("must be superuser to signal other server processes")));
+					 errmsg("must be superuser to %s other server processes", actionstr),
+					 errhint("%s", hint)));
 	}
 
 	if (!IsBackendPid(pid))
@@ -149,7 +153,7 @@ pg_signal_backend(int pid, int sig, bool allow_same_role)
 Datum
 pg_cancel_backend(PG_FUNCTION_ARGS)
 {
-	PG_RETURN_BOOL(pg_signal_backend(PG_GETARG_INT32(0), SIGINT, true));
+	PG_RETURN_BOOL(pg_signal_backend(PG_GETARG_INT32(0), SIGINT, true, NULL, NULL));
 }
 
 /*
@@ -158,7 +162,9 @@ pg_cancel_backend(PG_FUNCTION_ARGS)
 Datum
 pg_terminate_backend(PG_FUNCTION_ARGS)
 {
-	PG_RETURN_BOOL(pg_signal_backend(PG_GETARG_INT32(0), SIGTERM, false));
+	PG_RETURN_BOOL(pg_signal_backend(PG_GETARG_INT32(0), SIGTERM, false,
+									 gettext_noop("terminate"),
+									 gettext_noop("You can cancel your own processes with pg_cancel_backend().")));
 }
 
 /*
