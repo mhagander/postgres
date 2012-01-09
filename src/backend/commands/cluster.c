@@ -6,7 +6,7 @@
  * There is hardly anything left of Paul Brown's original implementation...
  *
  *
- * Portions Copyright (c) 1996-2011, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2012, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994-5, Regents of the University of California
  *
  *
@@ -25,6 +25,7 @@
 #include "catalog/dependency.h"
 #include "catalog/heap.h"
 #include "catalog/index.h"
+#include "catalog/namespace.h"
 #include "catalog/toasting.h"
 #include "commands/cluster.h"
 #include "commands/tablecmds.h"
@@ -106,15 +107,12 @@ cluster(ClusterStmt *stmt, bool isTopLevel)
 					indexOid = InvalidOid;
 		Relation	rel;
 
-		/* Find and lock the table */
-		rel = heap_openrv(stmt->relation, AccessExclusiveLock);
-
-		tableOid = RelationGetRelid(rel);
-
-		/* Check permissions */
-		if (!pg_class_ownercheck(tableOid, GetUserId()))
-			aclcheck_error(ACLCHECK_NOT_OWNER, ACL_KIND_CLASS,
-						   RelationGetRelationName(rel));
+		/* Find, lock, and check permissions on the table */
+		tableOid = RangeVarGetRelidExtended(stmt->relation,
+											AccessExclusiveLock,
+											false, false,
+											RangeVarCallbackOwnsTable, NULL);
+		rel = heap_open(tableOid, NoLock);
 
 		/*
 		 * Reject clustering a remote temp table ... their local buffer

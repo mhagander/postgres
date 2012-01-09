@@ -3,7 +3,7 @@
  * alter.c
  *	  Drivers for generic alter commands
  *
- * Portions Copyright (c) 1996-2011, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2012, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  *
@@ -134,8 +134,9 @@ ExecRenameStmt(RenameStmt *stmt)
 			RenameTSConfiguration(stmt->object, stmt->newname);
 			break;
 
+		case OBJECT_DOMAIN:
 		case OBJECT_TYPE:
-			RenameType(stmt->object, stmt->newname);
+			RenameType(stmt);
 			break;
 
 		default:
@@ -191,8 +192,7 @@ ExecAlterObjectSchemaStmt(AlterObjectSchemaStmt *stmt)
 		case OBJECT_TABLE:
 		case OBJECT_VIEW:
 		case OBJECT_FOREIGN_TABLE:
-			AlterTableNamespace(stmt->relation, stmt->newschema,
-								stmt->objectType, AccessExclusiveLock);
+			AlterTableNamespace(stmt);
 			break;
 
 		case OBJECT_TSPARSER:

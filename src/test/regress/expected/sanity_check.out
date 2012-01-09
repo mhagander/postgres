@@ -39,6 +39,7 @@ SELECT relname, relhasindex
  default_tbl             | f
  defaultexpr_tbl         | f
  dept                    | f
+ dupindexcols            | t
  e_star                  | f
  emp                     | f
  equipment_r             | f
@@ -54,7 +55,6 @@ SELECT relname, relhasindex
  hobbies_r               | f
  ihighway                | t
  inet_tbl                | f
- inhe                    | f
  inhf                    | f
  inhx                    | t
  insert_tbl              | f
