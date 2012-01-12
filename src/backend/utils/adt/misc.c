@@ -72,43 +72,38 @@ current_query(PG_FUNCTION_ARGS)
 
 /*
  * Send a signal to another backend.
- * If allow_same_role is false, actionstr must be set to a string
- * indicating what the signal does, to be inserted in the error message, and
- * hint should be set to a hint to be sent along with this message.
+ * The signal is delivered if the user is either a superuser or the same
+ * role as the backend being signaled. For "dangerous" signals, an explicit
+ * check for superuser needs to be done prior to calling this function.
+ *
+ * Returns 0 on success, 1 on general failure, and 2 on permission error.
+ * In the event of a general failure (returncode 1), a warning message will
+ * be emitted. For permission errors, doing that is the responsibility of
+ * the caller.
  */
-static bool
-pg_signal_backend(int pid, int sig, bool allow_same_role, const char *actionstr, const char *hint)
+static int
+pg_signal_backend(int pid, int sig)
 {
 	PGPROC	   *proc;
 
 	if (!superuser())
 	{
-		if (allow_same_role)
-		{
-			/*
-			 * When same role permission is allowed, check for matching roles.
-			 * Trust that BackendPidGetProc will return NULL if the pid isn't
-			 * valid, even though the check for whether it's a backend process
-			 * is below. The IsBackendPid check can't be relied on as
-			 * definitive even if it was first. The process might end between
-			 * successive checks regardless of their order. There's no way to
-			 * acquire a lock on an arbitrary process to prevent that. But
-			 * since so far all the callers of this mechanism involve some
-			 * request for ending the process anyway, that it might end on its
-			 * own first is not a problem.
-			 */
-			proc = BackendPidGetProc(pid);
+		/*
+		 * Since the user is not superuser, check for matching roles.
+		 * Trust that BackendPidGetProc will return NULL if the pid isn't
+		 * valid, even though the check for whether it's a backend process
+		 * is below. The IsBackendPid check can't be relied on as
+		 * definitive even if it was first. The process might end between
+		 * successive checks regardless of their order. There's no way to
+		 * acquire a lock on an arbitrary process to prevent that. But
+		 * since so far all the callers of this mechanism involve some
+		 * request for ending the process anyway, that it might end on its
+		 * own first is not a problem.
+		 */
+		proc = BackendPidGetProc(pid);
 
-			if (proc == NULL || proc->roleId != GetUserId())
-				ereport(ERROR,
-						(errcode(ERRCODE_INSUFFICIENT_PRIVILEGE),
-						 (errmsg("must be superuser or have the same role to signal other server processes"))));
-		}
-		else
-			ereport(ERROR,
-					(errcode(ERRCODE_INSUFFICIENT_PRIVILEGE),
-					 errmsg("must be superuser to %s other server processes", actionstr),
-					 errhint("%s", hint)));
+		if (proc == NULL || proc->roleId != GetUserId())
+			return 2;
 	}
 
 	if (!IsBackendPid(pid))
@@ -119,7 +114,7 @@ pg_signal_backend(int pid, int sig, bool allow_same_role, const char *actionstr,
 		 */
 		ereport(WARNING,
 				(errmsg("PID %d is not a PostgreSQL server process", pid)));
-		return false;
+		return 1;
 	}
 
 	/*
@@ -141,9 +136,9 @@ pg_signal_backend(int pid, int sig, bool allow_same_role, const char *actionstr,
 		/* Again, just a warning to allow loops */
 		ereport(WARNING,
 				(errmsg("could not send signal to process %d: %m", pid)));
-		return false;
+		return 1;
 	}
-	return true;
+	return 0;
 }
 
 /*
@@ -153,7 +148,13 @@ pg_signal_backend(int pid, int sig, bool allow_same_role, const char *actionstr,
 Datum
 pg_cancel_backend(PG_FUNCTION_ARGS)
 {
-	PG_RETURN_BOOL(pg_signal_backend(PG_GETARG_INT32(0), SIGINT, true, NULL, NULL));
+	int r = pg_signal_backend(PG_GETARG_INT32(0), SIGINT);
+	if (r == 2)
+		ereport(ERROR,
+				(errcode(ERRCODE_INSUFFICIENT_PRIVILEGE),
+				 (errmsg("must be superuser or have the same role to cancel other server processes"))));
+
+	PG_RETURN_BOOL(r==0);
 }
 
 /*
@@ -162,9 +163,13 @@ pg_cancel_backend(PG_FUNCTION_ARGS)
 Datum
 pg_terminate_backend(PG_FUNCTION_ARGS)
 {
-	PG_RETURN_BOOL(pg_signal_backend(PG_GETARG_INT32(0), SIGTERM, false,
-									 gettext_noop("terminate"),
-									 gettext_noop("You can cancel your own processes with pg_cancel_backend().")));
+	if (!superuser())
+		ereport(ERROR,
+				(errcode(ERRCODE_INSUFFICIENT_PRIVILEGE),
+				 errmsg("must be superuser to terminate other server processes"),
+				 errhint("You can cancel your own processes with pg_cancel_backend().")));
+
+	PG_RETURN_BOOL(pg_signal_backend(PG_GETARG_INT32(0), SIGTERM) == 0);
 }
 
 /*
