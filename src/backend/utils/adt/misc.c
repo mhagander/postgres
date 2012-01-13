@@ -152,7 +152,7 @@ pg_cancel_backend(PG_FUNCTION_ARGS)
 	if (r == 2)
 		ereport(ERROR,
 				(errcode(ERRCODE_INSUFFICIENT_PRIVILEGE),
-				 (errmsg("must be superuser or have the same role to cancel other server processes"))));
+				 (errmsg("must be superuser or have the same role to cancel queries running in other server processes"))));
 
 	PG_RETURN_BOOL(r==0);
 }
