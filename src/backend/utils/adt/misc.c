@@ -81,6 +81,9 @@ current_query(PG_FUNCTION_ARGS)
  * be emitted. For permission errors, doing that is the responsibility of
  * the caller.
  */
+#define SIGNAL_BACKEND_SUCCESS 0
+#define SIGNAL_BACKEND_ERROR 1
+#define SIGNAL_BACKEND_NOPERMISSION 2
 static int
 pg_signal_backend(int pid, int sig)
 {
@@ -103,7 +106,7 @@ pg_signal_backend(int pid, int sig)
 		proc = BackendPidGetProc(pid);
 
 		if (proc == NULL || proc->roleId != GetUserId())
-			return 2;
+			return SIGNAL_BACKEND_NOPERMISSION;
 	}
 
 	if (!IsBackendPid(pid))
@@ -114,7 +117,7 @@ pg_signal_backend(int pid, int sig)
 		 */
 		ereport(WARNING,
 				(errmsg("PID %d is not a PostgreSQL server process", pid)));
-		return 1;
+		return SIGNAL_BACKEND_ERROR;
 	}
 
 	/*
@@ -136,9 +139,9 @@ pg_signal_backend(int pid, int sig)
 		/* Again, just a warning to allow loops */
 		ereport(WARNING,
 				(errmsg("could not send signal to process %d: %m", pid)));
-		return 1;
+		return SIGNAL_BACKEND_ERROR;
 	}
-	return 0;
+	return SIGNAL_BACKEND_SUCCESS;
 }
 
 /*
@@ -149,12 +152,12 @@ Datum
 pg_cancel_backend(PG_FUNCTION_ARGS)
 {
 	int r = pg_signal_backend(PG_GETARG_INT32(0), SIGINT);
-	if (r == 2)
+	if (r == SIGNAL_BACKEND_NOPERMISSION)
 		ereport(ERROR,
 				(errcode(ERRCODE_INSUFFICIENT_PRIVILEGE),
 				 (errmsg("must be superuser or have the same role to cancel queries running in other server processes"))));
 
-	PG_RETURN_BOOL(r==0);
+	PG_RETURN_BOOL(r==SIGNAL_BACKEND_SUCCESS);
 }
 
 /*
@@ -169,7 +172,7 @@ pg_terminate_backend(PG_FUNCTION_ARGS)
 				 errmsg("must be superuser to terminate other server processes"),
 				 errhint("You can cancel your own processes with pg_cancel_backend().")));
 
-	PG_RETURN_BOOL(pg_signal_backend(PG_GETARG_INT32(0), SIGTERM) == 0);
+	PG_RETURN_BOOL(pg_signal_backend(PG_GETARG_INT32(0), SIGTERM) == SIGNAL_BACKEND_SUCCESS);
 }
 
 /*
