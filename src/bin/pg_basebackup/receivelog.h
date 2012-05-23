@@ -1,22 +1,16 @@
 #include "access/xlogdefs.h"
 
 /*
- * Called whenever a segment is finished, return true to stop
- * the streaming at this point.
+ * Called before trying to read more data or when a segment is
+ * finished. Also called when the streaming stops to check
+ * whether the current log segment can be treated as a complete one.
  */
-typedef bool (*segment_finish_callback)(XLogRecPtr segendpos, uint32 timeline);
-
-/*
- * Called before trying to read more data. Return true to stop
- * the streaming at this point.
- */
-typedef bool (*stream_continue_callback)(void);
+typedef bool (*stream_continue_callback)(XLogRecPtr segendpos, uint32 timeline);
 
 extern bool ReceiveXlogStream(PGconn *conn,
 							  XLogRecPtr startpos,
 							  uint32 timeline,
 							  char *sysidentifier,
 							  char *basedir,
-							  segment_finish_callback segment_finish,
 							  stream_continue_callback stream_continue,
 							  int standby_message_timeout);
