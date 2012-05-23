@@ -297,13 +297,13 @@ ReceiveXlogStream(PGconn *conn, XLogRecPtr startpos, uint32 timeline, char *sysi
 		/*
 		 * Check if we should continue streaming, or abort at this point.
 		 */
-		if (stream_continue && stream_continue(blockpos, timeline))
+		if (stream_continue && stream_continue(blockpos, timeline, false))
 		{
 			if (walfile != -1)
 				/* Potential error message is written by close_walfile */
 				return close_walfile(walfile, basedir, current_walfile_name,
 									 stream_continue != NULL ?
-									 stream_continue(blockpos, timeline) : false);
+									 stream_continue(blockpos, timeline, false) : false);
 			return true;
 		}
 
@@ -510,7 +510,7 @@ ReceiveXlogStream(PGconn *conn, XLogRecPtr startpos, uint32 timeline, char *sysi
 					 * Callback when the segment finished, and return if it
 					 * told us to.
 					 */
-					if (stream_continue(blockpos, timeline))
+					if (stream_continue(blockpos, timeline, true))
 						return true;
 				}
 			}

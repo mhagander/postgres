@@ -5,7 +5,7 @@
  * finished. Also called when the streaming stops to check
  * whether the current log segment can be treated as a complete one.
  */
-typedef bool (*stream_continue_callback)(XLogRecPtr segendpos, uint32 timeline);
+typedef bool (*stream_continue_callback)(XLogRecPtr segendpos, uint32 timeline, bool segment_finished);
 
 extern bool ReceiveXlogStream(PGconn *conn,
 							  XLogRecPtr startpos,

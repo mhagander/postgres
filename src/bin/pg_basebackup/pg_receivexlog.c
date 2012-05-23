@@ -43,7 +43,7 @@ volatile bool time_to_abort = false;
 static void usage(void);
 static XLogRecPtr FindStreamingStart(XLogRecPtr currentpos, uint32 currenttimeline);
 static void StreamLog();
-static bool continue_streaming(XLogRecPtr segendpos, uint32 timeline);
+static bool continue_streaming(XLogRecPtr segendpos, uint32 timeline, bool segment_finished);
 
 static void
 usage(void)
@@ -69,9 +69,9 @@ usage(void)
 }
 
 static bool
-continue_streaming(XLogRecPtr segendpos, uint32 timeline)
+continue_streaming(XLogRecPtr segendpos, uint32 timeline, bool segment_finished)
 {
-	if (verbose && segendpos.xrecoff % XLOG_SEG_SIZE == 0)
+	if (verbose && segment_finished)
 		fprintf(stderr, _("%s: finished segment at %X/%X (timeline %u)\n"),
 				progname, segendpos.xlogid, segendpos.xrecoff, timeline);
 
