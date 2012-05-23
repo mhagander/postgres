@@ -260,7 +260,7 @@ StreamLog(void)
 
 	ReceiveXlogStream(conn, startpos, timeline, NULL, basedir,
 					  continue_streaming,
-					  standby_message_timeout);
+					  standby_message_timeout, false);
 
 	PQfinish(conn);
 }

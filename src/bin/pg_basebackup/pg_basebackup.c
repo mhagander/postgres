@@ -130,8 +130,6 @@ usage(void)
 
 /*
  * Called in the background process every time data is received.
- * Also called when the streaming stops to check whether
- * the current log segment can be treated as a complete one.
  * On Unix, we check to see if there is any data on our pipe
  * (which would mean we have a stop position), and if it is, check if
  * it is time to stop.
@@ -232,7 +230,7 @@ LogStreamerMain(logstreamer_param * param)
 {
 	if (!ReceiveXlogStream(param->bgconn, param->startptr, param->timeline,
 						   param->sysidentifier, param->xlogdir,
-						   reached_end_position, standby_message_timeout))
+						   reached_end_position, standby_message_timeout, true))
 
 		/*
 		 * Any errors will already have been reported in the function process,

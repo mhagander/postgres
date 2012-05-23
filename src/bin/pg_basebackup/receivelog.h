@@ -2,8 +2,7 @@
 
 /*
  * Called before trying to read more data or when a segment is
- * finished. Also called when the streaming stops to check
- * whether the current log segment can be treated as a complete one.
+ * finished.
  */
 typedef bool (*stream_continue_callback)(XLogRecPtr segendpos, uint32 timeline, bool segment_finished);
 
@@ -13,4 +12,5 @@ extern bool ReceiveXlogStream(PGconn *conn,
 							  char *sysidentifier,
 							  char *basedir,
 							  stream_continue_callback stream_continue,
-							  int standby_message_timeout);
+							  int standby_message_timeout,
+							  bool rename_partial);

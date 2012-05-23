@@ -211,10 +211,6 @@ localGetCurrentTimestamp(void)
  * return. As long as it returns false, streaming will continue
  * indefinitely.
  *
- * The stream_continue callback will also be called when the
- * streaming has stopped to check whether the current log segment
- * can be treated as a complete one.
- *
  * standby_message_timeout controls how often we send a message
  * back to the master letting it know our progress, in seconds.
  * This message will only contain the write location, and never
@@ -223,7 +219,7 @@ localGetCurrentTimestamp(void)
  * Note: The log position *must* be at a log segment start!
  */
 bool
-ReceiveXlogStream(PGconn *conn, XLogRecPtr startpos, uint32 timeline, char *sysidentifier, char *basedir, stream_continue_callback stream_continue, int standby_message_timeout)
+ReceiveXlogStream(PGconn *conn, XLogRecPtr startpos, uint32 timeline, char *sysidentifier, char *basedir, stream_continue_callback stream_continue, int standby_message_timeout, bool rename_partial)
 {
 	char		query[128];
 	char		current_walfile_name[MAXPGPATH];
@@ -301,9 +297,7 @@ ReceiveXlogStream(PGconn *conn, XLogRecPtr startpos, uint32 timeline, char *sysi
 		{
 			if (walfile != -1)
 				/* Potential error message is written by close_walfile */
-				return close_walfile(walfile, basedir, current_walfile_name,
-									 stream_continue != NULL ?
-									 stream_continue(blockpos, timeline, false) : false);
+				return close_walfile(walfile, basedir, current_walfile_name, rename_partial);
 			return true;
 		}
 
