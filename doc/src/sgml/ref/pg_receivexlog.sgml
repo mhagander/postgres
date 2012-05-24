@@ -61,7 +61,7 @@ PostgreSQL documentation
 
   <para>
    If the connection is lost, or if it cannot be initially established,
-   with a non fatal error, <application>pg_receivexlog</application> will
+   with a non-fatal error, <application>pg_receivexlog</application> will
    retry the connection indefinitely, and reestablish streaming as soon
    as possible. To avoid this behavior, use the <literal>-n</literal>
    parameter.
