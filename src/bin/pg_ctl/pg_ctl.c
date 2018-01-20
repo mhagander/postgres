@@ -1708,7 +1708,7 @@ CreateRestrictedProcess(char *cmd, PROCESS_INFORMATION *processInfo, bool as_ser
 	/* Get list of privileges to remove */
 	delPrivs = GetPrivilegesToDelete(origToken);
 	if (delPrivs == NULL)
-		/* The message was output in the function */
+		/* Error message already printed */
 		return 0;
 
 	b = _CreateRestrictedToken(origToken,
@@ -1719,6 +1719,7 @@ CreateRestrictedProcess(char *cmd, PROCESS_INFORMATION *processInfo, bool as_ser
 							   0, NULL,
 							   &restrictedToken);
 
+	free(delPrivs);
 	FreeSid(dropSids[1].Sid);
 	FreeSid(dropSids[0].Sid);
 	CloseHandle(origToken);
@@ -1837,11 +1838,9 @@ CreateRestrictedProcess(char *cmd, PROCESS_INFORMATION *processInfo, bool as_ser
 }
 
 /*
- * Get a list of privileges to delete from the access token.
- * We used to delete all privileges (except SeChangeNotifyName) by passing
- * DISABLE_MAX_PRIVILEGE when we invoke postgres.exe. However, we need to retain
- * SeLockMemoryPrivilege for large pages.
- * So, we delete particular privileges instead by passing.
+ * Get a list of privileges to delete from the access token. We delete all privileges
+ * except SeLockMemoryPrivilege which is needed to use large pages, and
+ * SeChangeNotifyPrivilege which is enabled by default in DISABLE_MAX_PRIVILEGE.
  */
 static PTOKEN_PRIVILEGES
 GetPrivilegesToDelete(HANDLE hToken)

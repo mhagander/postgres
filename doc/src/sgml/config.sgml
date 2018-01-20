@@ -1375,8 +1375,8 @@ include_dir 'conf.d'
 
        <para>
         The use of huge pages results in smaller page tables and less CPU time
-        spent on memory management, increasing performance. For more details on Linux,
-        see <xref linkend="linux-huge-pages"/>.
+        spent on memory management, increasing performance. For more details about
+        using huge pages on Linux, see <xref linkend="linux-huge-pages"/>.
        </para>
 
        <para>
@@ -1386,9 +1386,9 @@ include_dir 'conf.d'
         You can use Windows Group Policy tool (gpedit.msc) to assign the user right
         Lock Pages in Memory.
         To start the database server on the command prompt as a standalone process,
-        not as a Windows service, run the command prompt as an administrator or
-        disable the User Access Control (UAC). When the UAC is enabled, the normal
-        command prompt revokes the user right Lock Pages in Memory.
+        not as a Windows service, the command prompt must be run as an administrator
+        User Access Control (UAC) must be disabled. When the UAC is enabled, the normal
+        command prompt revokes the user right Lock Pages in Memory when started.
        </para>
 
        <para>

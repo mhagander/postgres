@@ -262,8 +262,8 @@ retry:
 				huge_pages == HUGE_PAGES_TRY &&
 				(flProtect & SEC_LARGE_PAGES) != 0)
 			{
-				elog(DEBUG1, "CreateFileMapping(%zu) with SEC_LARGE_PAGES failed "
-					 "due to insufficient large pages, huge pages disabled",
+				elog(DEBUG1, "CreateFileMapping(%zu) with SEC_LARGE_PAGES failed, "
+					 "huge pages disabled",
 					 size);
 
 				/*
