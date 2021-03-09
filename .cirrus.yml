@@ -87,7 +87,11 @@ task:
   docs_script:
     - su postgres -c 'make docs'
   test_script:
-    - su postgres -c 'make -s check-world' || su postgres -c '( for F in ` find . -name initdb.log -o -name regression.diffs ` ; do echo === $F === ; head -1000 $F ; done ; exit 1 )'
+    - su postgres -c 'make -s check-world'
+  always:
+    tap_test_log_artifacts:
+      path: "**/tmp_check/log/*"
+      type: text/plain
 
 # ====== Windows ======
 # This doesn't work.  I think it's the wrong version of Visual Studio and/or
