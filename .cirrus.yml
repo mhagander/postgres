@@ -36,7 +36,7 @@ task:
   on_failure:
     regression_diffs_artifacts:
       path: "**/regression.diffs"
-      type: text/x-diff
+      type: text/plain
     tap_test_log_artifacts:
       path: "**/tmp_check/log/*"
       type: text/plain
@@ -69,7 +69,7 @@ task:
       - for corefile in $(find /cores/ -name 'core.*' 2>/dev/null) ; do lldb -c $corefile --batch -o 'thread backtrace all' -o 'quit' ; done
     regression_diffs_artifacts:
       path: "**/regression.diffs"
-      type: text/x-diff
+      type: text/plain
     tap_test_log_artifacts:
       path: "**/tmp_check/log/*"
       type: text/plain
@@ -95,7 +95,7 @@ task:
   on_failure:
     regression_diffs_artifacts:
       path: "**/regression.diffs"
-      type: text/x-diff
+      type: text/plain
     tap_test_log_artifacts:
       path: "**/tmp_check/log/*"
       type: text/plain
