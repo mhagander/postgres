@@ -34,8 +34,12 @@ task:
   test_script:
     - su postgres -c 'make -s check-world'
   on_failure:
-    debug_script:
-      - for F in ` find . -name initdb.log -o -name regression.diffs -o -name postmaster.log` ; do echo === $F === ; head -1000 $F ; done
+    regression_diffs_artifacts:
+      path: "**/regression.diffs"
+      type: text/x-diff
+    tap_test_log_artifacts:
+      path: "**/tmp_check/log/*"
+      type: text/plain
 
 
 # ====== macOS ======
@@ -62,8 +66,13 @@ task:
     - make -s check
   on_failure:
     debug_script:
-      - for F in ` find . -name initdb.log -o -name regression.diffs -o -name postmaster.log` ; do echo === $F === ; head -1000 $F ; done
       - for corefile in $(find /cores/ -name 'core.*' 2>/dev/null) ; do lldb -c $corefile --batch -o 'thread backtrace all' -o 'quit' ; done
+    regression_diffs_artifacts:
+      path: "**/regression.diffs"
+      type: text/x-diff
+    tap_test_log_artifacts:
+      path: "**/tmp_check/log/*"
+      type: text/plain
 
 # ====== Linux ======
 # TODO: backtrace on crash
@@ -88,7 +97,10 @@ task:
     - su postgres -c 'make docs'
   test_script:
     - su postgres -c 'make -s check-world'
-  always:
+  on_failure:
+    regression_diffs_artifacts:
+      path: "**/regression.diffs"
+      type: text/x-diff
     tap_test_log_artifacts:
       path: "**/tmp_check/log/*"
       type: text/plain
