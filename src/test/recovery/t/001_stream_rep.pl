@@ -52,7 +52,7 @@ $node_standby_1->wait_for_catchup($node_standby_2, 'replay',
 my $result =
   $node_standby_1->safe_psql('postgres', "SELECT count(*) FROM tab_int");
 print "standby 1: $result\n";
-is($result, qq(1002), 'check streamed content on standby 1');
+is($result, qq(102), 'check streamed content on standby 1');
 
 $result =
   $node_standby_2->safe_psql('postgres', "SELECT count(*) FROM tab_int");
